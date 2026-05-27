@@ -8,6 +8,9 @@ export interface Type<T = any> extends Function {
 
 export type Cotr<T = any> = new (...args: any[]) => T;
 
+/** A standalone request dispatcher — the same `(Request) => Response` Hono hands to `Deno.serve`. */
+export type FetchHandler = (req: Request) => Response | Promise<Response>;
+
 export const HttpMethodSchema: z.ZodEnum<["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"]> = z.enum([
   "GET",
   "POST",

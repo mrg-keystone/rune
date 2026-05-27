@@ -1,29 +1,90 @@
-import { Type } from "@types";
+import type { Type } from "@types";
 import { Server } from "@foundation/domain/business/server/mod.ts";
 import { SwaggerBuilder } from "@foundation/domain/business/swagger-builder/mod.ts";
 import { DanetHttpAdapter } from "@foundation/domain/data/http-adapter/mod.ts";
+import { createBackendClient } from "@foundation/domain/business/backend-client/mod.ts";
+import type { BackendClient } from "@foundation/domain/business/backend-client/mod.ts";
+import { log } from "@foundation/domain/business/logger/mod.ts";
+import { DatadogTransport } from "@foundation/domain/data/datadog/mod.ts";
+import { PostmarkAlerter } from "@foundation/domain/data/postmark/mod.ts";
+import { createRequestLoggingMiddleware } from "@foundation/domain/business/request-logger/mod.ts";
 
 interface BootstrapOptions {
   port?: number;
   swagger?: boolean | { filters: string[] };
 }
 
+// Datadog region is fixed; alert routing is read from the environment so internal email
+// addresses stay out of the (public) package source.
+const DATADOG_SITE = "us5.datadoghq.com";
+
+const warned = new Set<string>();
+function warnOnce(message: string) {
+  if (warned.has(message)) return;
+  warned.add(message);
+  console.warn(message);
+}
+
+/**
+ * Builds the logging transports from the environment:
+ * - `DD_API_KEY` → Datadog (site fixed to DATADOG_SITE). Missing ⇒ warn, console only.
+ * - `POSTMARK_SERVER_TOKEN` + `POSTMARK_FROM` (+ optional `POSTMARK_TO`, defaults to `FROM`)
+ *   → failure-alert emails. Missing ⇒ warn, console fallback.
+ */
+function configureLoggingFromEnv(appName: string) {
+  const ddKey = Deno.env.get("DD_API_KEY");
+  const datadog = ddKey
+    ? new DatadogTransport({ apiKey: ddKey, service: appName, site: DATADOG_SITE })
+    : undefined;
+  if (!datadog) {
+    warnOnce(`[${appName}] DD_API_KEY not set — Datadog disabled; logging to console only.`);
+  }
+
+  const pmToken = Deno.env.get("POSTMARK_SERVER_TOKEN");
+  const pmFrom = Deno.env.get("POSTMARK_FROM");
+  const alerter = pmToken && pmFrom
+    ? new PostmarkAlerter({
+      serverToken: pmToken,
+      from: pmFrom,
+      to: Deno.env.get("POSTMARK_TO") ?? undefined,
+    })
+    : undefined;
+  if (!alerter) {
+    warnOnce(
+      `[${appName}] POSTMARK_SERVER_TOKEN/POSTMARK_FROM not set — logger failure email alerts disabled (console fallback still applies).`,
+    );
+  }
+
+  log.configure({ appName, datadog, alerter });
+}
+
 export class BootstrapServer {
   private adapter: DanetHttpAdapter;
   private module: Type;
+  readonly backend: BackendClient;
 
-  private constructor(module: Type, adapter: DanetHttpAdapter) {
+  private constructor(module: Type, adapter: DanetHttpAdapter, backend: BackendClient) {
     this.module = module;
     this.adapter = adapter;
+    this.backend = backend;
   }
 
-  static async create(module: Type, options?: BootstrapOptions) {
+  static async create(
+    appName: string,
+    module: Type,
+    options?: BootstrapOptions,
+  ) {
     const { port = 3000, swagger = true } = options ?? {};
+
+    // Configure the process-wide logger from env before anything can emit.
+    configureLoggingFromEnv(appName);
 
     const server = Server.create();
     server.registerModule(module);
 
     const adapter = new DanetHttpAdapter(port);
+    // Register the logging middleware first so it wraps every route (controllers + swagger).
+    adapter.app.use(createRequestLoggingMiddleware(log));
 
     if (swagger) {
       const filters = typeof swagger === "object" ? swagger.filters : [];
@@ -39,7 +100,11 @@ export class BootstrapServer {
       );
     }
 
-    return new BootstrapServer(module, adapter);
+    // Initialize eagerly so the in-process `backend` client is usable without listen().
+    await adapter.init(module);
+    const backend = createBackendClient(adapter.handler, `http://localhost:${port}`);
+
+    return new BootstrapServer(module, adapter, backend);
   }
 
   listen() {
@@ -51,10 +116,15 @@ export class BootstrapServer {
   }
 }
 
-export async function bootstrapServer(module: Type, options?: BootstrapOptions): Promise<{ listen: () => Promise<void>; stop: () => Promise<void> }> {
-  const server = await BootstrapServer.create(module, options);
+export async function bootstrapServer(
+  appName: string,
+  module: Type,
+  options?: BootstrapOptions,
+): Promise<{ listen: () => Promise<void>; stop: () => Promise<void>; backend: BackendClient }> {
+  const server = await BootstrapServer.create(appName, module, options);
   return {
     listen: () => server.listen(),
     stop: () => server.stop(),
+    backend: server.backend,
   };
 }

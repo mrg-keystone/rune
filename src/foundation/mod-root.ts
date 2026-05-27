@@ -5,3 +5,6 @@ export { setupWithSwagger } from "@foundation/domain/coordinators/setup-with-swa
 export { DanetDocumentBuilder } from "@foundation/domain/business/document-builder/mod.ts";
 export { bootstrapServer } from "@foundation/domain/coordinators/bootstrap-server/mod.ts";
 export { InjectValue, InjectFactory, InjectClass } from "@foundation/domain/business/injectable-builders/mod.ts";
+export { BackendClient, createBackendClient } from "@foundation/domain/business/backend-client/mod.ts";
+export { log, Logger } from "@foundation/domain/business/logger/mod.ts";
+export type { LogLevel, RequestContext } from "@foundation/domain/business/logger/mod.ts";

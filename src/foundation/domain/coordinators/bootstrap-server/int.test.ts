@@ -20,7 +20,7 @@ let portCounter = 7000;
 
 Deno.test("bootstrapServer - returns an object with listen and stop", async () => {
   const port = portCounter++;
-  const server = await bootstrapServer(AppModule, { port });
+  const server = await bootstrapServer("test-app", AppModule, { port });
 
   assertExists(server);
   assertEquals(typeof server.listen, "function");
@@ -29,7 +29,7 @@ Deno.test("bootstrapServer - returns an object with listen and stop", async () =
 
 Deno.test("bootstrapServer - server can listen and respond to HTTP requests", async () => {
   const port = portCounter++;
-  const server = await bootstrapServer(AppModule, { port });
+  const server = await bootstrapServer("test-app", AppModule, { port });
   await server.listen();
 
   const response = await fetch(`http://localhost:${port}/health`);
@@ -42,7 +42,7 @@ Deno.test("bootstrapServer - server can listen and respond to HTTP requests", as
 
 Deno.test("bootstrapServer - enables swagger by default", async () => {
   const port = portCounter++;
-  const server = await bootstrapServer(AppModule, { port });
+  const server = await bootstrapServer("test-app", AppModule, { port });
   await server.listen();
 
   const response = await fetch(`http://localhost:${port}/docs`);
@@ -55,7 +55,7 @@ Deno.test("bootstrapServer - enables swagger by default", async () => {
 
 Deno.test("bootstrapServer - allows disabling swagger", async () => {
   const port = portCounter++;
-  const server = await bootstrapServer(AppModule, { port, swagger: false });
+  const server = await bootstrapServer("test-app", AppModule, { port, swagger: false });
   await server.listen();
 
   const response = await fetch(`http://localhost:${port}/docs`);
@@ -67,7 +67,7 @@ Deno.test("bootstrapServer - allows disabling swagger", async () => {
 
 Deno.test("bootstrapServer - respects custom port", async () => {
   const port = portCounter++;
-  const server = await bootstrapServer(AppModule, { port });
+  const server = await bootstrapServer("test-app", AppModule, { port });
   await server.listen();
 
   const response = await fetch(`http://localhost:${port}/health`);
@@ -79,7 +79,7 @@ Deno.test("bootstrapServer - respects custom port", async () => {
 
 Deno.test("bootstrapServer - stop() cleans up properly", async () => {
   const port = portCounter++;
-  const server = await bootstrapServer(AppModule, { port });
+  const server = await bootstrapServer("test-app", AppModule, { port });
   await server.listen();
 
   const response = await fetch(`http://localhost:${port}/health`);

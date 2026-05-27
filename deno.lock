@@ -2,6 +2,7 @@
   "version": "5",
   "specifiers": {
     "jsr:@danet/core@2": "2.9.6",
+    "jsr:@danet/core@2.9.6": "2.9.6",
     "jsr:@danet/core@^2.5.1": "2.9.6",
     "jsr:@danet/swagger@2": "2.3.2",
     "jsr:@danet/validatte@0.7.4": "0.7.4",
@@ -144,6 +145,7 @@
     "dependencies": [
       "jsr:@danet/core@2",
       "jsr:@danet/swagger@2",
+      "jsr:@hono/hono@4.6.3",
       "jsr:@std/assert@*",
       "npm:handlebars@^4.7.8",
       "npm:openapi3-ts@4.5.0",
