@@ -19,6 +19,8 @@ export {
   createTokenAuthMiddleware,
   createMintUi,
   isLocalRequest,
+  withBasePath,
+  INTERNAL_REQUEST_HEADER,
 } from "@foundation/mod-root.ts";
 export type {
   LogLevel,
@@ -26,6 +28,7 @@ export type {
   TokenPayload,
   TokenAuthConfig,
   MintUiConfig,
+  FetchHandler,
 } from "@foundation/mod-root.ts";
 
 export function safeStart(cb: () => Promise<void>): Promise<void> | undefined {

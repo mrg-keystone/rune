@@ -18,3 +18,5 @@ export { createTokenAuthMiddleware } from "@foundation/domain/business/token-aut
 export type { TokenAuthConfig } from "@foundation/domain/business/token-auth/mod.ts";
 export { createMintUi, isLocalRequest } from "@foundation/domain/business/mint-ui/mod.ts";
 export type { MintUiConfig } from "@foundation/domain/business/mint-ui/mod.ts";
+export { withBasePath } from "@foundation/domain/business/mount/mod.ts";
+export type { FetchHandler } from "@types";

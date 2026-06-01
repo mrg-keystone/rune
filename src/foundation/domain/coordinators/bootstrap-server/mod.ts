@@ -1,4 +1,4 @@
-import type { Type } from "@types";
+import type { Type, FetchHandler } from "@types";
 import { Server } from "@foundation/domain/business/server/mod.ts";
 import { SwaggerBuilder } from "@foundation/domain/business/swagger-builder/mod.ts";
 import { DanetHttpAdapter } from "@foundation/domain/data/http-adapter/mod.ts";
@@ -133,6 +133,16 @@ export class BootstrapServer {
     return new BootstrapServer(module, adapter, backend);
   }
 
+  /**
+   * The standalone request dispatcher — the same `(Request) => Response` that `listen()` serves.
+   * Use it to run on Deno Deploy without binding a port (`Deno.serve(app.handler)` or
+   * `export default { fetch: app.handler }`), or to compose the backend into another app (e.g.
+   * mount it under `/api` alongside a Fresh frontend with `withBasePath`).
+   */
+  get handler(): FetchHandler {
+    return this.adapter.handler;
+  }
+
   listen() {
     return this.adapter.listen(this.module);
   }
@@ -146,11 +156,17 @@ export async function bootstrapServer(
   appName: string,
   module: Type,
   options?: BootstrapOptions,
-): Promise<{ listen: () => Promise<void>; stop: () => Promise<void>; backend: BackendClient }> {
+): Promise<{
+  listen: () => Promise<void>;
+  stop: () => Promise<void>;
+  backend: BackendClient;
+  handler: FetchHandler;
+}> {
   const server = await BootstrapServer.create(appName, module, options);
   return {
     listen: () => server.listen(),
     stop: () => server.stop(),
     backend: server.backend,
+    handler: server.handler,
   };
 }

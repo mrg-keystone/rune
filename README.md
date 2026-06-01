@@ -58,7 +58,13 @@ Creates and configures a server with optional Swagger documentation and request 
 - `options.port` — port number (default: 3000)
 - `options.swagger` — `true` (default), `false`, or `{ filters: string[] }` to exclude modules
 
-Returns `{ listen(), stop(), backend }`.
+Returns `{ listen(), stop(), backend, handler }`:
+
+- `listen()` / `stop()` — start/stop the server on the configured port
+- `backend` — in-process HTTP client (see [`backend`](#backend--in-process-http-client))
+- `handler` — the raw `(Request) => Response` dispatcher (the same pipeline `listen()` serves);
+  use it to serve without binding a port (`Deno.serve(handler)`) or to compose the backend into
+  another app (see [Deployment](#deployment))
 
 #### Logging environment variables
 
@@ -250,6 +256,14 @@ emitted outside a request fire fire-and-forget.
 > response, the alternative is to let the sends complete off the response path (event loop on a
 > long-running server, or `waitUntil` on serverless) — ask and it's a small switch.
 
+### `withBasePath(prefix, handler)`
+
+Wraps a root-based `handler` so it can be mounted under `prefix`: requests whose path is
+`prefix` or starts with `prefix + "/"` are dispatched with the prefix stripped (so the
+root-registered routes still match); anything else returns `404`. Used to expose the backend
+under e.g. `/api` alongside a Fresh frontend while the same handler still serves at root
+standalone — see [Deployment](#deployment).
+
 ### `setupWithSwagger(server)`
 
 Lower-level alternative. Takes an existing `Server` instance and returns a configured `HttpAdapter` with Swagger routes registered, without starting it.
@@ -269,6 +283,94 @@ Generates OpenAPI 3.0 specification objects from module metadata.
 ### `InjectValue`, `InjectFactory`, `InjectClass`
 
 Dependency injection container builders for configuring injectable services.
+
+## Deployment
+
+The same bootstrapped backend runs in two shapes: **standalone** (a normal HTTP server) or
+**embedded** under a Fresh frontend, sharing the in-process client. Both are driven by two
+things `bootstrapServer` returns:
+
+- `handler` — the raw `(Request) => Response` dispatcher (the same pipeline `listen()` serves).
+- `backend` — the in-process client (`backend.fetch(...)`), which bypasses token auth.
+
+Bootstrap once in a shared module (init only — it does **not** `listen()`):
+
+```ts
+// backend.ts
+import "reflect-metadata";
+import { bootstrapServer } from "@mrg-keystone/danet";
+import { AppModule } from "./app.module.ts";
+
+export const api = await bootstrapServer("my-api", AppModule);
+```
+
+### Standalone
+
+Serve the handler directly — works locally and on Deno Deploy:
+
+```ts
+// server.ts
+import { api } from "./backend.ts";
+
+Deno.serve(api.handler);   // or: await api.listen();  (binds the configured port)
+```
+
+Network clients must send a token (`Authorization: Bearer <token>`); see
+[Access tokens & authorization](#access-tokens--authorization).
+
+### Embedded under a Fresh 2 frontend
+
+Fresh owns `/`; the token-gated backend is mounted at `/api/*` with `withBasePath` (which
+strips the prefix so the root-registered routes still match). Register it **before**
+`.fsRoutes()` — the Fresh `App` builder is order-sensitive:
+
+```ts
+// main.ts  (Fresh 2 entry)
+import { App, staticFiles } from "fresh";
+import { withBasePath } from "@mrg-keystone/danet";
+import { api } from "./backend.ts";
+import type { State } from "./utils.ts";
+
+const mountedApi = withBasePath("/api", api.handler);
+
+export const app = new App<State>()
+  .use(staticFiles())
+  .all("/api/*", (ctx) => mountedApi(ctx.req))   // external, token-gated API surface
+  .fsRoutes();
+```
+
+Fresh's server-side code (handlers, loaders) calls the backend **in-process** — no network
+hop, no token needed:
+
+```tsx
+// routes/users.tsx
+import { page } from "fresh";
+import { define } from "../utils.ts";
+import { api } from "../backend.ts";
+
+export const handler = define.handlers({
+  async GET() {
+    const res = await api.backend.fetch("/users");   // in-process; bypasses token auth
+    return page({ users: await res.json() });
+  },
+});
+
+export default define.page<typeof handler>(({ data }) => (
+  <ul>{data.users.map((u) => <li key={u.id}>{u.name}</li>)}</ul>
+));
+```
+
+So one Deno Deploy process serves the Fresh UI at `/`, exposes the token-gated API at `/api/*`
+for external callers, and lets the frontend reach the backend in-process. The backend stays
+fully runnable standalone — same `api`, different entry.
+
+**Deno Deploy notes**
+- Set env vars in the Deploy project: `MANUAL_KEY` (token signing), plus `DD_API_KEY` /
+  `POSTMARK_*` as needed.
+- Fresh requires a build: `deno task build`, then serve `_fresh/server.js` — the backend
+  singleton is imported by Fresh's server code and runs in the same process.
+- The localhost `/_mint` UI is unreachable in production (it `403`s off-localhost). Mint tokens
+  locally, or programmatically with `signToken` (see above).
 
 ## Testing
 
