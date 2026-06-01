@@ -1,5 +1,5 @@
 import { assertEquals, assertExists } from "#assert";
-import { BackendClient, createBackendClient } from "./mod.ts";
+import { BackendClient, createBackendClient, INTERNAL_REQUEST_HEADER } from "./mod.ts";
 import type { FetchHandler } from "@types";
 
 // Records the requests the handler saw, so tests can assert on them.
@@ -76,6 +76,31 @@ Deno.test("baseUrl is used when resolving relative input", async () => {
   await client.fetch("/ping");
 
   assertEquals(calls[0].url, "http://localhost:9999/ping");
+});
+
+Deno.test("fetch: stamps the internal key header when configured", async () => {
+  const { handler, calls } = spyHandler(() => new Response("ok"));
+  const client = new BackendClient(handler, "http://localhost", "secret-internal-key");
+
+  await client.fetch("/health");
+  assertEquals(calls[0].headers.get(INTERNAL_REQUEST_HEADER), "secret-internal-key");
+});
+
+Deno.test("fetch: stamps the internal key on a Request input too", async () => {
+  const { handler, calls } = spyHandler(() => new Response("ok"));
+  const client = new BackendClient(handler, "http://localhost", "secret-internal-key");
+
+  await client.fetch(new Request("http://localhost/ping", { method: "POST" }));
+  assertEquals(calls[0].headers.get(INTERNAL_REQUEST_HEADER), "secret-internal-key");
+  assertEquals(calls[0].method, "POST");
+});
+
+Deno.test("fetch: does not stamp a header when no internal key is configured", async () => {
+  const { handler, calls } = spyHandler(() => new Response("ok"));
+  const client = new BackendClient(handler);
+
+  await client.fetch("/health");
+  assertEquals(calls[0].headers.get(INTERNAL_REQUEST_HEADER), null);
 });
 
 Deno.test("fetch: is a structural match for the global fetch signature", () => {

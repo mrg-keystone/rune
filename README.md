@@ -44,6 +44,8 @@ This starts a server on port 3000 with:
 - `/health` and `/users` endpoints
 - `/docs` landing page with links to per-module Swagger specs
 - ingress/egress logging for every request, shipped to Datadog (when `DD_API_KEY` is set)
+- access-token authorization on every **network** request (in-process and localhost callers are
+  exempt) — see [Access tokens & authorization](#access-tokens--authorization)
 
 ## API
 
@@ -70,6 +72,84 @@ Logging is driven entirely by environment variables — nothing is passed in cod
 | `POSTMARK_TO` | — | alert recipient; defaults to `POSTMARK_FROM` |
 
 The Datadog site is fixed to `us5.datadoghq.com`, and alert emails use a 5-minute cooldown.
+
+#### Authorization environment variable
+
+| Variable | Enables | If missing/blank |
+|---|---|---|
+| `MANUAL_KEY` | the secret that **signs and verifies** access tokens | warns once; tokens can't be minted (mint UI fails closed) and network requests can't be verified (all rejected with 401) — **fails closed** |
+
+`MANUAL_KEY` is the per-app signing secret. It is read from the environment so it never lives
+in the (public) package source. See [Access tokens & authorization](#access-tokens--authorization).
+
+### Access tokens & authorization
+
+Every **network** request must carry a valid, unexpired access token; requests from the
+in-process `backend` client and from `localhost` are trusted and need none.
+
+| Caller | How it's recognized | Token required? |
+|---|---|---|
+| In-process (`backend.fetch(...)`) | a process-private key stamped on the request (`x-danet-internal`) | **No** — trusted |
+| `localhost` | loopback peer address | **No** — trusted |
+| Network (anything else) | neither of the above | **Yes** — `401` without a valid token |
+
+The in-process key is a random value minted at boot (`crypto.randomUUID()`), shared only
+between the `backend` client and the auth middleware. It never leaves the process — not an env
+var, not sent over the network — so a network client cannot forge it. It's compared in constant
+time, and is regenerated every boot.
+
+A network caller authorizes by sending the token in the `Authorization` header:
+
+```
+Authorization: Bearer <token>
+```
+
+A verified token's `source` is attributed to every log emitted during that request (it appears
+as a `source` attribute alongside `requestId`).
+
+#### Token shape
+
+A token is a compact JWT (`HS256`) signing these claims:
+
+```ts
+interface TokenPayload {
+  source: string;   // who the token was minted for — used for log attribution
+  expiry: number;   // Unix epoch in SECONDS; the token is rejected once passed
+  appName: string;  // the app the token grants access to
+}
+```
+
+The signature is keyed by `MANUAL_KEY`, so neither the expiry nor any claim can be altered
+without invalidating the token. `verifyToken` rejects a token that is malformed, mis-signed, or
+expired.
+
+#### Minting tokens — the localhost UI
+
+`bootstrapServer` mounts a token-minting UI at **`GET /_mint`** that works on `localhost` only
+(any non-loopback request gets `403`). Open it in a browser, fill in `source`, `appName`, and
+`expiry`, and submit to receive a token. The signing key is read from `MANUAL_KEY` on the
+server — it is never entered into or returned by the form. If `MANUAL_KEY` is unset, minting
+fails closed.
+
+#### Programmatic sign / verify
+
+The primitives are exported for use outside the UI:
+
+```ts
+import { signToken, verifyToken, TokenError } from "@mrg-keystone/danet";
+
+const token = await signToken(
+  { source: "ci-runner", appName: "my-api", expiry: Math.floor(Date.now() / 1000) + 3600 },
+  Deno.env.get("MANUAL_KEY")!,
+);
+
+try {
+  const payload = await verifyToken(token, Deno.env.get("MANUAL_KEY")!);
+  // payload: { source, appName, expiry }
+} catch (err) {
+  if (err instanceof TokenError) { /* malformed, mis-signed, or expired */ }
+}
+```
 
 ### `backend` — in-process HTTP client
 
@@ -108,6 +188,10 @@ await backend.fetch(new Request("http://localhost/users")); // Request object al
 
 Because it's `typeof fetch`, it's a true drop-in: swap `fetch` → `backend.fetch` and any
 existing client code (your own wrappers, etc.) keeps working, in-process.
+
+Requests made through `backend` are recognized as in-process and **bypass token auth**
+automatically (see [Access tokens & authorization](#access-tokens--authorization)) — no token
+is needed to call your own API from within the process.
 
 ### Logging
 

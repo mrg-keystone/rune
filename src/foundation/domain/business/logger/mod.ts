@@ -7,6 +7,8 @@ export type LogLevel = "debug" | "info" | "warn" | "error";
 export interface RequestContext {
   appName: string;
   requestId: string;
+  /** Set from a verified access token; tags every log emitted during the request. */
+  source?: string;
   /** Datadog sends fired during this request; awaited by `settle()` before the response. */
   pending: Promise<void>[];
 }
@@ -50,6 +52,12 @@ export class Logger {
     return this.als.getStore();
   }
 
+  /** Attribute the current request to a verified token `source`; no-op outside a request. */
+  setSource(source: string) {
+    const ctx = this.currentRequest();
+    if (ctx) ctx.source = source;
+  }
+
   /**
    * Awaits every Datadog send started during the current request. The middleware calls this
    * just before sending the response, so all log requests have returned first. Never rejects.
@@ -84,16 +92,27 @@ export class Logger {
     route: string,
     data?: Record<string, unknown>,
   ) {
-    const id = this.currentRequest()?.requestId ?? "-";
+    const ctx = this.currentRequest();
+    const id = ctx?.requestId ?? "-";
     const message = `[${kind} ${this.appName} ${id}] ${method} ${route}`;
-    this.write(level, message, { kind, method, route, requestId: id, ...data });
+    this.write(level, message, {
+      kind,
+      method,
+      route,
+      requestId: id,
+      ...(ctx?.source ? { source: ctx.source } : {}),
+      ...data,
+    });
   }
 
   private emit(level: LogLevel, msg: string, data?: Record<string, unknown>) {
     const ctx = this.currentRequest();
     const prefix = ctx ? `[${this.appName} ${ctx.requestId}]` : `[${this.appName}]`;
     const attrs: Record<string, unknown> = { ...data };
-    if (ctx) attrs.requestId = ctx.requestId;
+    if (ctx) {
+      attrs.requestId = ctx.requestId;
+      if (ctx.source) attrs.source = ctx.source;
+    }
     this.write(level, `${prefix} ${msg}`, attrs);
   }
 

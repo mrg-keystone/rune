@@ -8,11 +8,17 @@ import { log } from "@foundation/domain/business/logger/mod.ts";
 import { DatadogTransport } from "@foundation/domain/data/datadog/mod.ts";
 import { PostmarkAlerter } from "@foundation/domain/data/postmark/mod.ts";
 import { createRequestLoggingMiddleware } from "@foundation/domain/business/request-logger/mod.ts";
+import { createTokenAuthMiddleware } from "@foundation/domain/business/token-auth/mod.ts";
+import { createMintUi } from "@foundation/domain/business/mint-ui/mod.ts";
 
 interface BootstrapOptions {
   port?: number;
   swagger?: boolean | { filters: string[] };
 }
+
+// The per-app secret used to sign and verify access tokens. Read from the environment so it
+// never lives in the (public) package source.
+const SIGNING_KEY_ENV = "MANUAL_KEY";
 
 // Datadog region is fixed; alert routing is read from the environment so internal email
 // addresses stay out of the (public) package source.
@@ -79,12 +85,32 @@ export class BootstrapServer {
     // Configure the process-wide logger from env before anything can emit.
     configureLoggingFromEnv(appName);
 
+    const signingKey = Deno.env.get(SIGNING_KEY_ENV) ?? "";
+    if (!signingKey) {
+      warnOnce(
+        `[${appName}] ${SIGNING_KEY_ENV} not set — access tokens cannot be minted or verified.`,
+      );
+    }
+
+    // Process-private key that identifies in-process (BackendClient) requests. Minted per boot,
+    // shared only between the in-process client and the auth middleware; never leaves the process.
+    const internalKey = crypto.randomUUID();
+
     const server = Server.create();
     server.registerModule(module);
 
     const adapter = new DanetHttpAdapter(port);
     // Register the logging middleware first so it wraps every route (controllers + swagger).
     adapter.app.use(createRequestLoggingMiddleware(log));
+    // Token auth runs inside the log scope so a verified token's `source` tags the logs.
+    // A token is required on every network request except localhost and in-process callers.
+    adapter.app.use(createTokenAuthMiddleware({ signingKey, logger: log, internalKey }));
+
+    // Localhost-only token minting UI.
+    const mintUi = createMintUi({ appName, signingKey, logger: log });
+    type RouteHandler = (...args: unknown[]) => unknown;
+    adapter.registerRoute("get", "/_mint", mintUi.form as RouteHandler);
+    adapter.registerRoute("post", "/_mint", mintUi.mint as RouteHandler);
 
     if (swagger) {
       const filters = typeof swagger === "object" ? swagger.filters : [];
@@ -102,7 +128,7 @@ export class BootstrapServer {
 
     // Initialize eagerly so the in-process `backend` client is usable without listen().
     await adapter.init(module);
-    const backend = createBackendClient(adapter.handler, `http://localhost:${port}`);
+    const backend = createBackendClient(adapter.handler, `http://localhost:${port}`, internalKey);
 
     return new BootstrapServer(module, adapter, backend);
   }
