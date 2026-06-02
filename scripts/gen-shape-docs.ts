@@ -1,9 +1,10 @@
 /**
- * Generates canonical-shape.md from canonical-paths.json.
+ * Generates canonical-shape.md from the layout in the keywords.json artifact
+ * (keywords.json → canonicalPaths — the single source of truth).
  * Run: deno run --allow-read --allow-write scripts/gen-shape-docs.ts
  */
 
-const SPEC_PATH = "assets/canonical-paths.json";
+const SPEC_PATH = "keywords.json";
 const OUT_PATH = Deno.args[0] ?? "docs/canonical-shape.md";
 
 type Node = Record<string, unknown>;
@@ -68,7 +69,7 @@ function renderTree(node: Node, prefix: string, isLast: boolean[]): string[] {
   return lines;
 }
 
-const spec = JSON.parse(await Deno.readTextFile(SPEC_PATH)) as Node;
+const spec = (JSON.parse(await Deno.readTextFile(SPEC_PATH)) as { canonicalPaths: Node }).canonicalPaths;
 
 const forbiddenDirs = spec["$forbiddenDirNames"] as string[] ?? [];
 const looseNames = spec["$looseFileNames"] as string[] ?? [];

@@ -155,6 +155,10 @@ export async function runSync(args: string[]): Promise<number> {
         ioErrors.push(`${target}: ${errMessage(e)}`);
       }
     }
+    // Make the synced project compile out of the box: ensure deno.json carries
+    // the import aliases the generated code uses (@/, #zod, #std/*).
+    const mapNote = await ensureImportMap(root, ioErrors);
+    if (mapNote) console.log(`\n  ${CYAN}${mapNote}${RESET}`);
   }
 
   report(
@@ -169,6 +173,50 @@ export async function runSync(args: string[]): Promise<number> {
     ioErrors,
   );
   return ioErrors.length > 0 ? 2 : 0;
+}
+
+// Import aliases the generated code relies on; the consuming project's deno.json
+// must define them (@/ → project root, #zod / #std/* → external deps).
+const REQUIRED_IMPORTS: Record<string, string> = {
+  "@/": "./",
+  "#zod": "npm:zod",
+  "#std/assert": "jsr:@std/assert",
+  "#std/path": "jsr:@std/path",
+};
+
+/** Ensure the project's deno.json carries the import map the generated code
+ * needs. Non-destructive: only adds missing keys, never overwrites the user's
+ * values. Creates a minimal deno.json if none exists. Returns a report note. */
+async function ensureImportMap(root: string, ioErrors: string[]): Promise<string | null> {
+  const path = join(root, "deno.json");
+  // deno-lint-ignore no-explicit-any
+  let config: Record<string, any> = {};
+  let existed = false;
+  try {
+    config = JSON.parse(await Deno.readTextFile(path));
+    existed = true;
+  } catch { /* create fresh */ }
+  const imports: Record<string, string> =
+    (config.imports && typeof config.imports === "object") ? config.imports : {};
+  const added: string[] = [];
+  for (const [k, v] of Object.entries(REQUIRED_IMPORTS)) {
+    if (!(k in imports)) {
+      imports[k] = v;
+      added.push(k);
+    }
+  }
+  if (existed && added.length === 0) return null;
+  config.imports = imports;
+  if (!existed && !config.compilerOptions) config.compilerOptions = { strict: true };
+  try {
+    await Deno.writeTextFile(path, JSON.stringify(config, null, 2) + "\n");
+  } catch (e) {
+    ioErrors.push(`deno.json: ${errMessage(e)}`);
+    return null;
+  }
+  return existed
+    ? `updated deno.json import map (added ${added.join(", ")})`
+    : "created deno.json with the import map (project is ready to type-check)";
 }
 
 async function write(

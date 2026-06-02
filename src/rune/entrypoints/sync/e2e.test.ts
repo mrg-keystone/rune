@@ -34,6 +34,12 @@ Deno.test("sync scaffolds, then preserves fill-ins and prunes orphans", async ()
       "cart/mod.ts should be scaffolded",
     );
 
+    // sync makes a fresh project compile out of the box: it writes a deno.json
+    // with the import aliases the generated code uses (@/, #zod, #std/*).
+    const denoJson = JSON.parse(await Deno.readTextFile(join(root, "deno.json")));
+    assertEquals(denoJson.imports["@/"], "./");
+    assertEquals(denoJson.imports["#zod"], "npm:zod");
+
     // Fill in cart, and plant an orphan feature the spec doesn't declare.
     const filled = "// my implementation\nexport class Cart {}\n";
     await Deno.writeTextFile(cartMod, filled);
