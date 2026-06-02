@@ -231,7 +231,8 @@ expired.
 
 `bootstrapServer` mounts a token-minting UI at **`GET /_mint`** that works on `localhost` only
 (any non-loopback request gets `403`). Open it in a browser, fill in `source`, `appName`, and
-`expiry`, and submit to receive a token. The result page also shows a ready-to-share
+`expires in` (seconds from now — with a live Eastern-time preview of the expiry), and submit to
+receive a token (auto-copied to your clipboard). The result page also shows a ready-to-share
 **`…/docs?token=…` link** (with copy buttons) — derived from the page's own location, so it's
 correct whether the app runs standalone or mounted under Fresh at `/api`. The signing key is
 read from `MANUAL_KEY` on the server — it is never entered into or returned by the form. If

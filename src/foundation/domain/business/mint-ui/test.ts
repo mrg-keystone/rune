@@ -21,8 +21,6 @@ function app(signingKey = KEY) {
   };
 }
 
-const future = 4_102_444_800;
-
 Deno.test("GET serves the form on localhost", async () => {
   const res = await app()(new Request("http://localhost/_mint"));
   assertEquals(res.status, 200);
@@ -35,7 +33,7 @@ Deno.test("non-localhost requests are forbidden", async () => {
 
   const body = new FormData();
   body.set("source", "x");
-  body.set("expiry", String(future));
+  body.set("expiresIn", "3600");
   const post = await app()(
     new Request("http://host/_mint", { method: "POST", body }),
     "203.0.113.7",
@@ -56,7 +54,7 @@ Deno.test("POST mints a verifiable token", async () => {
   const body = new FormData();
   body.set("source", "ci-runner");
   body.set("appName", "billing");
-  body.set("expiry", String(future));
+  body.set("expiresIn", "3600");
 
   const res = await app()(new Request("http://localhost/_mint", { method: "POST", body }));
   assertEquals(res.status, 200);
@@ -64,17 +62,19 @@ Deno.test("POST mints a verifiable token", async () => {
   const page = await res.text();
   const token = page.match(/<pre>([^<]+)<\/pre>/)?.[1];
   assertEquals(typeof token, "string");
-  assertEquals(await verifyToken(token!, KEY), {
-    source: "ci-runner",
-    appName: "billing",
-    expiry: future,
-  });
+
+  const payload = await verifyToken(token!, KEY);
+  assertEquals(payload.source, "ci-runner");
+  assertEquals(payload.appName, "billing");
+  // expiry is computed as now + 3600s (the "expires in" duration), not an absolute input.
+  const now = Math.floor(Date.now() / 1000);
+  assertEquals(payload.expiry > now + 3590 && payload.expiry <= now + 3600, true);
 });
 
 Deno.test("POST result page builds a copyable /docs?token= link", async () => {
   const body = new FormData();
   body.set("source", "ci-runner");
-  body.set("expiry", String(future));
+  body.set("expiresIn", "3600");
 
   const res = await app()(new Request("http://localhost/_mint", { method: "POST", body }));
   const page = await res.text();
@@ -85,18 +85,49 @@ Deno.test("POST result page builds a copyable /docs?token= link", async () => {
   assertStringIncludes(page, 'id="copyDocs"');
 });
 
-Deno.test("POST validates source and expiry", async () => {
+Deno.test("POST validates source and the duration", async () => {
+  const bad = new FormData();
+  bad.set("source", "");
+  bad.set("expiresIn", "not-a-number");
+  assertEquals(
+    (await app()(new Request("http://localhost/_mint", { method: "POST", body: bad }))).status,
+    400,
+  );
+
+  const nonPositive = new FormData();
+  nonPositive.set("source", "ci");
+  nonPositive.set("expiresIn", "0");
+  assertEquals(
+    (await app()(new Request("http://localhost/_mint", { method: "POST", body: nonPositive })))
+      .status,
+    400,
+  );
+});
+
+Deno.test("form shows the 'expires in' duration field and an Eastern-time preview", async () => {
+  const res = await app()(new Request("http://localhost/_mint"));
+  const page = await res.text();
+  assertStringIncludes(page, 'name="expiresIn"');
+  assertStringIncludes(page, "seconds from now");
+  assertStringIncludes(page, 'id="expiryPreview"');
+  assertStringIncludes(page, "America/New_York");
+});
+
+Deno.test("result page auto-copies the token and shows expiry in Eastern Time", async () => {
   const body = new FormData();
-  body.set("source", "");
-  body.set("expiry", "not-a-number");
+  body.set("source", "ci");
+  body.set("expiresIn", "3600");
   const res = await app()(new Request("http://localhost/_mint", { method: "POST", body }));
-  assertEquals(res.status, 400);
+  const page = await res.text();
+  assertStringIncludes(page, "navigator.clipboard.writeText(token)"); // auto-copy
+  assertStringIncludes(page, 'id="expiresAt"');
+  assertStringIncludes(page, "America/New_York");
 });
 
 Deno.test("POST without a signing key fails closed", async () => {
   const body = new FormData();
   body.set("source", "ci");
-  body.set("expiry", String(future));
+  body.set("expiresIn", "3600");
   const res = await app("")(new Request("http://localhost/_mint", { method: "POST", body }));
   assertEquals(res.status, 500);
 });

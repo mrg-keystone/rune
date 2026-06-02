@@ -64,15 +64,17 @@ async function mint(c: Context, config: MintUiConfig): Promise<Response> {
   const form = await c.req.formData();
   const source = String(form.get("source") ?? "").trim();
   const appName = String(form.get("appName") ?? "").trim() || config.appName;
-  const expiry = Number(form.get("expiry"));
+  const expiresIn = Number(form.get("expiresIn"));
 
-  if (!source || !Number.isInteger(expiry)) {
+  if (!source || !Number.isInteger(expiresIn) || expiresIn <= 0) {
     return html(
-      resultPage({ error: "`source` is required and `expiry` must be an integer Unix epoch." }),
+      resultPage({ error: "`source` is required and `expires in` must be a positive integer (seconds)." }),
       400,
     );
   }
 
+  // The form takes a duration ("seconds from now"); the token stores an absolute Unix epoch.
+  const expiry = Math.floor(Date.now() / 1000) + expiresIn;
   const payload: TokenPayload = { source, appName, expiry };
   try {
     const token = await signToken(payload, config.signingKey);
@@ -87,10 +89,8 @@ function html(body: string, status = 200): Response {
   return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8" } });
 }
 
-function defaultExpiry(): number {
-  // Pre-fill with "30 days from now" as a convenient default.
-  return Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
-}
+// Default duration pre-filled in the form: 30 days, in seconds.
+const DEFAULT_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 function layout(title: string, inner: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -122,11 +122,35 @@ function formPage(config: MintUiConfig): string {
   <input name="source" placeholder="ci-runner" autofocus required>
   <label>appName</label>
   <input name="appName" value="${escapeAttr(config.appName)}" required>
-  <label>expiry <span class="hint">— Unix epoch (seconds)</span></label>
-  <input name="expiry" type="number" value="${defaultExpiry()}" required>
+  <label>expires in <span class="hint">— seconds from now</span></label>
+  <input name="expiresIn" type="number" min="1" step="1" value="${DEFAULT_TTL_SECONDS}" required>
+  <p class="hint" id="expiryPreview"></p>
   <button type="submit">Mint token</button>
-</form>`,
+</form>
+<script>${expiryPreviewScript()}</script>`,
   );
+}
+
+/** Live "expires at" preview in Eastern Time, recomputed as the duration field changes. */
+function expiryPreviewScript(): string {
+  return `(function(){
+  var input = document.querySelector('input[name="expiresIn"]');
+  var out = document.getElementById("expiryPreview");
+  function fmt(epochMs){
+    try {
+      return new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York", dateStyle: "medium", timeStyle: "short", timeZoneName: "short",
+      }).format(new Date(epochMs));
+    } catch (e) { return new Date(epochMs).toISOString(); }
+  }
+  function update(){
+    var secs = Number(input.value);
+    if (!Number.isInteger(secs) || secs <= 0) { out.textContent = ""; return; }
+    out.textContent = "Expires " + fmt(Date.now() + secs * 1000) + " (Eastern)";
+  }
+  input.addEventListener("input", update);
+  update();
+})();`;
 }
 
 function resultPage(
@@ -139,10 +163,13 @@ function resultPage(
     );
   }
   const token = result.token ?? "";
+  const expiry = result.payload?.expiry ?? 0;
   return layout(
     "Token minted",
     `<h1>Token minted</h1>
 <p class="hint">${escapeHtml(JSON.stringify(result.payload))}</p>
+<p class="hint" id="expiresAt"></p>
+<p id="copyStatus" class="hint"></p>
 
 <label>Token</label>
 <pre>${escapeHtml(token)}</pre>
@@ -156,6 +183,15 @@ function resultPage(
 <script>
 (function(){
   var token = ${JSON.stringify(token)};
+  var expiry = ${expiry};
+  // Show the expiry in Eastern Time.
+  if (expiry) {
+    try {
+      document.getElementById("expiresAt").textContent = "Expires " + new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York", dateStyle: "medium", timeStyle: "short", timeZoneName: "short",
+      }).format(new Date(expiry * 1000)) + " (Eastern)";
+    } catch (e) { /* ignore */ }
+  }
   // Derive the docs URL from this page's own location so it works standalone (/_mint → /docs)
   // and when mounted under Fresh (/api/_mint → /api/docs).
   var base = window.location.pathname.replace("/_mint", "/docs");
@@ -172,6 +208,13 @@ function resultPage(
   }
   copier("copyDocs", docsUrl);
   copier("copyToken", token);
+  // Auto-copy the token on mint.
+  var status = document.getElementById("copyStatus");
+  navigator.clipboard.writeText(token).then(function(){
+    status.textContent = "✓ Token copied to clipboard";
+  }).catch(function(){
+    status.textContent = "Press “Copy token” to copy it to your clipboard.";
+  });
 })();
 </script>`,
   );
