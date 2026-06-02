@@ -38,12 +38,6 @@ enum Commands {
         check: bool,
     },
 
-    /// Initialize a new rune project
-    Init {
-        /// Project name
-        name: String,
-    },
-
     /// Install Rune (LSP, parser, editor integration)
     Install {
         /// Skip interactive prompts (defaults to neovim, zsh, yazi)
@@ -63,17 +57,6 @@ enum Commands {
         /// Shell to generate completions for
         #[arg(value_enum)]
         shell: Shell,
-    },
-
-    /// Render a .rune file as beautiful HTML for embedding
-    Render {
-        /// Input .rune file
-        #[arg(value_hint = ValueHint::FilePath)]
-        input: PathBuf,
-
-        /// Output HTML file (defaults to stdout)
-        #[arg(short, long, value_hint = ValueHint::FilePath)]
-        output: Option<PathBuf>,
     },
 }
 
@@ -124,16 +107,6 @@ fn main() -> ExitCode {
             }
         }
 
-        Commands::Init { name } => {
-            match commands::init(&name) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    ExitCode::FAILURE
-                }
-            }
-        }
-
         Commands::Install { yes } => {
             match commands::install(yes) {
                 Ok(()) => ExitCode::SUCCESS,
@@ -158,16 +131,6 @@ fn main() -> ExitCode {
         Commands::Completions { shell } => {
             generate(shell, &mut Cli::command(), "rune-syntax", &mut io::stdout());
             ExitCode::SUCCESS
-        }
-
-        Commands::Render { input, output } => {
-            match commands::render(&input, output.as_deref()) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    ExitCode::FAILURE
-                }
-            }
         }
     }
 }

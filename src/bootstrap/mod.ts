@@ -15,9 +15,7 @@ USAGE
   rune manifest <file.rune>  one-shot generate (no prune)
   rune validate <art.json>   validate a keywords.json artifact
   rune lsp                   start the language server (editor integration)
-  rune render <file.rune>    render a spec to HTML
   rune fmt <file.rune>       format a spec
-  rune init <name>           scaffold a new project
 
 Generation is Deno/TypeScript. Edit the language in Rune Studio
 (\`deno task studio\`) — it writes keywords.json, the single source of truth.`);
@@ -70,10 +68,8 @@ if (Deno.args[0] === "lsp") {
 
 // Fast syntax/authoring commands -> the Rust `rune-syntax` helper (verbatim passthrough).
 const SYNTAX_CMDS = new Set([
-  "render",
   "format",
   "fmt",
-  "init",
   "install",
   "uninstall",
   "completions",
