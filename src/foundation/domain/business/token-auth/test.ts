@@ -21,6 +21,7 @@ function appWith(
   signingKey = KEY,
   firebaseVerifier?: { verify: (t: string) => Promise<{ uid: string; email?: string }> },
   publicPaths?: string[],
+  trustLocalhost?: boolean,
 ) {
   const logger = new Logger();
   logger.configure({ appName: "test" });
@@ -33,6 +34,7 @@ function appWith(
       internalKey: INTERNAL,
       firebaseVerifier,
       publicPaths,
+      trustLocalhost,
     }),
   );
   app.get("/protected", (c) => {
@@ -96,6 +98,19 @@ Deno.test("network request with a mis-signed token is rejected with 401", async 
 
 Deno.test("localhost callers are trusted and need no token", async () => {
   assertEquals((await appWith().fromLocalhost(req())).status, 200);
+});
+
+Deno.test("trustLocalhost:false requires a token from localhost (internal key still trusted)", async () => {
+  const app = appWith(KEY, undefined, undefined, false);
+  // localhost now needs a token
+  assertEquals((await app.fromLocalhost(req())).status, 401);
+  const token = await signToken({ source: "svc", appName: "test", expiry: future }, KEY);
+  assertEquals((await app.fromLocalhost(req(bearer(token)))).status, 200);
+  // in-process internal key is still trusted regardless
+  assertEquals(
+    (await app.fromLocalhost(req({ headers: { [INTERNAL_REQUEST_HEADER]: INTERNAL } }))).status,
+    200,
+  );
 });
 
 Deno.test("public paths bypass auth (docs exempt, prefix and sub-paths)", async () => {

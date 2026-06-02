@@ -6,8 +6,61 @@
  * spec request, and wiped if the server replies `401`.
  */
 
+import type { Context } from "#hono";
+import type { Logger } from "@foundation/domain/business/logger/mod.ts";
+import type { FirebaseVerifier } from "@foundation/domain/business/firebase-auth/mod.ts";
+import {
+  extractBearer,
+  isTrustedOrigin,
+  validateCredential,
+} from "@foundation/domain/business/token-auth/mod.ts";
+
 const STORAGE_KEY = "danet_docs_token";
 const SWAGGER_UI_VERSION = "5";
+
+export interface DocsJsonHandlerOptions {
+  /** The serialized OpenAPI document to serve. */
+  specJson: string;
+  signingKey: string;
+  /** Process-private key identifying in-process callers (trusted, no token). */
+  internalKey: string;
+  firebaseVerifier?: FirebaseVerifier;
+  logger: Logger;
+  /** Whether localhost callers are served without a token. Defaults to true. */
+  trustLocalhost?: boolean;
+}
+
+/**
+ * Builds the handler for a gated `/docs/<module>/json` endpoint. Trusted origins (localhost and
+ * in-process callers) are served without a token; any other (network) request must present a
+ * valid signed or Firebase token via `Authorization: Bearer` or the `?token` query param.
+ */
+export function createDocsJsonHandler(
+  opts: DocsJsonHandlerOptions,
+): (c: Context) => Promise<Response> {
+  const json = () =>
+    new Response(opts.specJson, {
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+
+  const trustLocalhost = opts.trustLocalhost ?? true;
+  return async (c) => {
+    if (isTrustedOrigin(c, opts.internalKey, trustLocalhost)) return json();
+
+    const credential = extractBearer(c.req.header("authorization")) ?? c.req.query("token");
+    const identity = credential
+      ? await validateCredential(credential, {
+        signingKey: opts.signingKey,
+        firebaseVerifier: opts.firebaseVerifier,
+      })
+      : null;
+    if (!identity) {
+      return c.json({ error: "unauthorized", message: "Invalid or missing docs token." }, 401);
+    }
+    opts.logger.setSource(identity.source);
+    return json();
+  };
+}
 
 /**
  * Client JS (no `<script>` wrapper) shared by every doc page: seed the token from `?token`,

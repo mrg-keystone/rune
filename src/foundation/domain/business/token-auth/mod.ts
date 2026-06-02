@@ -29,6 +29,12 @@ export interface TokenAuthConfig {
   /** Optional Firebase ID token verifier. When set, a valid Firebase token also authorizes. */
   firebaseVerifier?: FirebaseVerifier;
   /**
+   * Whether loopback (localhost) callers are trusted without a token. Defaults to true. Set to
+   * false (e.g. behind a same-host reverse proxy, or to test the gated path) to require a token
+   * even from localhost. The in-process key trust is unaffected.
+   */
+  trustLocalhost?: boolean;
+  /**
    * Path prefixes that bypass auth entirely (public). A prefix matches a request whose path
    * equals it or starts with `prefix + "/"`, e.g. `/docs` exempts the Swagger docs. Matched
    * against the path the handler sees, so a mounted `/api/docs` (prefix stripped by
@@ -41,9 +47,10 @@ const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
 export function createTokenAuthMiddleware(config: TokenAuthConfig): MiddlewareHandler {
   const { signingKey, logger, internalKey, firebaseVerifier, publicPaths = [] } = config;
+  const trustLocalhost = config.trustLocalhost ?? true;
 
   return async (c, next) => {
-    if (isTrustedOrigin(c, internalKey)) return next();
+    if (isTrustedOrigin(c, internalKey, trustLocalhost)) return next();
     if (isPublicPath(c.req.path, publicPaths)) return next();
 
     const token = bearer(c.req.header("authorization"));
@@ -117,10 +124,15 @@ export async function validateCredential(
  * peer) are trusted. A network request neither knows the internal key nor reports a loopback
  * peer, so it is never trusted.
  */
-function isTrustedOrigin(c: Context, internalKey: string): boolean {
+export function isTrustedOrigin(
+  c: Context,
+  internalKey: string,
+  trustLocalhost = true,
+): boolean {
   const stamped = c.req.header(INTERNAL_REQUEST_HEADER);
   if (stamped !== undefined && safeEqual(stamped, internalKey)) return true;
 
+  if (!trustLocalhost) return false;
   const peer = remoteHostname(c);
   return peer !== undefined && LOOPBACK_HOSTS.has(peer);
 }

@@ -1,8 +1,16 @@
 import type { Context, MiddlewareHandler } from "#hono";
 import type { Logger } from "@foundation/domain/business/logger/mod.ts";
+import { INTERNAL_REQUEST_HEADER } from "@foundation/domain/business/backend-client/mod.ts";
 
 const REQUEST_ID_HEADERS = ["x-request-id", "x-correlation-id"];
-const REDACTED_HEADERS = new Set(["authorization", "cookie", "set-cookie"]);
+// Redact credentials so they never land in logs — including the process-private in-process key,
+// which would otherwise let anyone with log access forge in-process trust.
+const REDACTED_HEADERS = new Set([
+  "authorization",
+  "cookie",
+  "set-cookie",
+  INTERNAL_REQUEST_HEADER,
+]);
 const LOGGABLE_BODY = /(application\/json|text\/)/i;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_REQUEST_ID_LENGTH = 128;

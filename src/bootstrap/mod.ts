@@ -23,6 +23,7 @@ export {
   INTERNAL_REQUEST_HEADER,
   createFirebaseVerifier,
   FirebaseAuthError,
+  createDocsJsonHandler,
   docsSeedScript,
   injectDocsScript,
   swaggerShellHtml,
@@ -37,6 +38,7 @@ export type {
   FirebaseClaims,
   FirebaseVerifier,
   FirebaseVerifierOptions,
+  DocsJsonHandlerOptions,
 } from "@foundation/mod-root.ts";
 
 export function safeStart(cb: () => Promise<void>): Promise<void> | undefined {

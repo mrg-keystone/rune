@@ -30,7 +30,9 @@ export type {
   FirebaseVerifierOptions,
 } from "@foundation/domain/business/firebase-auth/mod.ts";
 export {
+  createDocsJsonHandler,
   docsSeedScript,
   injectDocsScript,
   swaggerShellHtml,
 } from "@foundation/domain/business/docs-ui/mod.ts";
+export type { DocsJsonHandlerOptions } from "@foundation/domain/business/docs-ui/mod.ts";

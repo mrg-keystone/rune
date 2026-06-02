@@ -8,15 +8,14 @@ import { log } from "@foundation/domain/business/logger/mod.ts";
 import { DatadogTransport } from "@foundation/domain/data/datadog/mod.ts";
 import { PostmarkAlerter } from "@foundation/domain/data/postmark/mod.ts";
 import { createRequestLoggingMiddleware } from "@foundation/domain/business/request-logger/mod.ts";
-import type { Context } from "#hono";
-import {
-  createTokenAuthMiddleware,
-  extractBearer,
-  validateCredential,
-} from "@foundation/domain/business/token-auth/mod.ts";
+import { createTokenAuthMiddleware } from "@foundation/domain/business/token-auth/mod.ts";
 import { createMintUi } from "@foundation/domain/business/mint-ui/mod.ts";
 import { createFirebaseVerifier } from "@foundation/domain/business/firebase-auth/mod.ts";
-import { injectDocsScript, swaggerShellHtml } from "@foundation/domain/business/docs-ui/mod.ts";
+import {
+  createDocsJsonHandler,
+  injectDocsScript,
+  swaggerShellHtml,
+} from "@foundation/domain/business/docs-ui/mod.ts";
 
 interface BootstrapOptions {
   port?: number;
@@ -116,6 +115,10 @@ export class BootstrapServer {
     // shared only between the in-process client and the auth middleware; never leaves the process.
     const internalKey = crypto.randomUUID();
 
+    // Localhost callers are trusted (no token) by default. Set TRUST_LOCALHOST=false to require
+    // a token even from localhost — e.g. behind a same-host reverse proxy, or to test the gate.
+    const trustLocalhost = (Deno.env.get("TRUST_LOCALHOST") ?? "true").toLowerCase() !== "false";
+
     const server = Server.create();
     server.registerModule(module);
 
@@ -133,6 +136,7 @@ export class BootstrapServer {
         logger: log,
         internalKey,
         firebaseVerifier,
+        trustLocalhost,
         publicPaths,
       }),
     );
@@ -153,26 +157,20 @@ export class BootstrapServer {
 
       for (const { path, doc } of swaggerDocs) {
         const title = `API · ${path.replace(/^\//, "")}`;
-        const specJson = JSON.stringify(doc);
         // Public shell: always loads; fetches the spec over XHR with the stored token.
         adapter.registerRoute("get", `/docs${path}`, () => html(swaggerShellHtml(title)));
-        // Gated spec: requires a valid signed/Firebase token (Authorization header or ?token).
+        // Gated spec: trusted origins (localhost / in-process) need no token; network callers
+        // must present a valid signed/Firebase token (Authorization header or ?token).
         adapter.registerRoute(
           "get",
           `/docs${path}/json`,
-          (async (c: Context) => {
-            const credential = extractBearer(c.req.header("authorization")) ??
-              c.req.query("token");
-            const identity = credential
-              ? await validateCredential(credential, { signingKey, firebaseVerifier })
-              : null;
-            if (!identity) {
-              return c.json({ error: "unauthorized", message: "Invalid or missing docs token." }, 401);
-            }
-            log.setSource(identity.source);
-            return new Response(specJson, {
-              headers: { "content-type": "application/json; charset=utf-8" },
-            });
+          createDocsJsonHandler({
+            specJson: JSON.stringify(doc),
+            signingKey,
+            internalKey,
+            firebaseVerifier,
+            logger: log,
+            trustLocalhost,
           }) as RouteHandler,
         );
       }

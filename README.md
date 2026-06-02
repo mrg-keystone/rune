@@ -85,6 +85,7 @@ The Datadog site is fixed to `us5.datadoghq.com`, and alert emails use a 5-minut
 |---|---|---|
 | `MANUAL_KEY` | the secret that **signs and verifies** signed access tokens | warns once; tokens can't be minted (mint UI fails closed) and signed tokens can't be verified |
 | `FIREBASE_PROJECT_ID` | accepting **Firebase Auth** ID tokens as an alternative credential | warns once; Firebase path off (signed tokens only) |
+| `TRUST_LOCALHOST` | set to `false` to require a token even from localhost (in-process key trust unaffected) | defaults to `true` — localhost callers are trusted |
 
 `MANUAL_KEY` is the per-app signing secret; `FIREBASE_PROJECT_ID` is your Firebase project id
 (only the project id is needed — ID tokens are verified against Google's public certs, so no
@@ -108,8 +109,18 @@ works. The localhost `/_mint` UI is always blocked from the network.
 
 The in-process key is a random value minted at boot (`crypto.randomUUID()`), shared only
 between the `backend` client and the auth middleware. It never leaves the process — not an env
-var, not sent over the network — so a network client cannot forge it. It's compared in constant
-time, and is regenerated every boot.
+var, not sent over the network, and redacted from logs — so a network client cannot forge it.
+It's compared in constant time, and is regenerated every boot.
+
+> **On localhost trust.** The loopback check uses the connection's real TCP peer address
+> (`remoteAddr`), never the spoofable `X-Forwarded-For` header. A remote client cannot make a
+> connection appear to come from `127.0.0.1` (the OS drops loopback-sourced packets from external
+> interfaces, and TCP can't complete a handshake against a spoofed source). The one caveat is a
+> reverse proxy **running on the same host**: it connects over loopback, so its remote clients
+> would ride in on a genuinely-local connection and bypass the token. Don't front the app with a
+> same-host loopback proxy while relying on this — expose it directly, or set
+> **`TRUST_LOCALHOST=false`** to require a token even from localhost (the in-process key trust
+> stays, so SSR / `backend.fetch` keeps working). It's also handy for testing the gated path.
 
 A network caller authorizes by sending a credential in the `Authorization` header:
 
@@ -151,9 +162,11 @@ expired.
 
 `bootstrapServer` mounts a token-minting UI at **`GET /_mint`** that works on `localhost` only
 (any non-loopback request gets `403`). Open it in a browser, fill in `source`, `appName`, and
-`expiry`, and submit to receive a token. The signing key is read from `MANUAL_KEY` on the
-server — it is never entered into or returned by the form. If `MANUAL_KEY` is unset, minting
-fails closed.
+`expiry`, and submit to receive a token. The result page also shows a ready-to-share
+**`…/docs?token=…` link** (with copy buttons) — derived from the page's own location, so it's
+correct whether the app runs standalone or mounted under Fresh at `/api`. The signing key is
+read from `MANUAL_KEY` on the server — it is never entered into or returned by the form. If
+`MANUAL_KEY` is unset, minting fails closed.
 
 #### Docs access
 

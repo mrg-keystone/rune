@@ -138,12 +138,42 @@ function resultPage(
       `<h1>Mint failed</h1><p class="err">${escapeHtml(result.error)}</p><p><a href="">Back</a></p>`,
     );
   }
+  const token = result.token ?? "";
   return layout(
     "Token minted",
     `<h1>Token minted</h1>
 <p class="hint">${escapeHtml(JSON.stringify(result.payload))}</p>
-<pre>${escapeHtml(result.token ?? "")}</pre>
-<p><a href="">Mint another</a></p>`,
+
+<label>Token</label>
+<pre>${escapeHtml(token)}</pre>
+
+<label>Docs link <span class="hint">— opens the API docs with this token</span></label>
+<pre id="docsLink"></pre>
+<button type="button" id="copyDocs">Copy docs link</button>
+<button type="button" id="copyToken">Copy token</button>
+
+<p><a href="">Mint another</a></p>
+<script>
+(function(){
+  var token = ${JSON.stringify(token)};
+  // Derive the docs URL from this page's own location so it works standalone (/_mint → /docs)
+  // and when mounted under Fresh (/api/_mint → /api/docs).
+  var base = window.location.pathname.replace("/_mint", "/docs");
+  var docsUrl = window.location.origin + base + "?token=" + encodeURIComponent(token);
+  document.getElementById("docsLink").textContent = docsUrl;
+  function copier(id, text){
+    var btn = document.getElementById(id);
+    btn.addEventListener("click", function(){
+      navigator.clipboard.writeText(text).then(function(){
+        var label = btn.textContent; btn.textContent = "Copied!";
+        setTimeout(function(){ btn.textContent = label; }, 1200);
+      });
+    });
+  }
+  copier("copyDocs", docsUrl);
+  copier("copyToken", token);
+})();
+</script>`,
   );
 }
 

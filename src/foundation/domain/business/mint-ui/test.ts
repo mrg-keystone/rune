@@ -59,6 +59,20 @@ Deno.test("POST mints a verifiable token", async () => {
   });
 });
 
+Deno.test("POST result page builds a copyable /docs?token= link", async () => {
+  const body = new FormData();
+  body.set("source", "ci-runner");
+  body.set("expiry", String(future));
+
+  const res = await app()(new Request("http://localhost/_mint", { method: "POST", body }));
+  const page = await res.text();
+
+  assertStringIncludes(page, 'replace("/_mint", "/docs")'); // derives docs path from location
+  assertStringIncludes(page, '"?token=" + encodeURIComponent(token)');
+  assertStringIncludes(page, 'id="docsLink"');
+  assertStringIncludes(page, 'id="copyDocs"');
+});
+
 Deno.test("POST validates source and expiry", async () => {
   const body = new FormData();
   body.set("source", "");
