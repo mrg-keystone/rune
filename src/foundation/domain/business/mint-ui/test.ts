@@ -68,7 +68,29 @@ Deno.test("POST mints a verifiable token", async () => {
   assertEquals(payload.appName, "billing");
   // expiry is computed as now + 3600s (the "expires in" duration), not an absolute input.
   const now = Math.floor(Date.now() / 1000);
-  assertEquals(payload.expiry > now + 3590 && payload.expiry <= now + 3600, true);
+  const exp = payload.expiry!;
+  assertEquals(exp > now + 3590 && exp <= now + 3600, true);
+});
+
+Deno.test("POST with 'never expires' mints a token with no expiry", async () => {
+  const body = new FormData();
+  body.set("source", "ci-runner");
+  body.set("neverExpires", "on");
+  // expiresIn intentionally omitted (the field is disabled when 'never expires' is checked)
+
+  const res = await app()(new Request("http://localhost/_mint", { method: "POST", body }));
+  assertEquals(res.status, 200);
+
+  const page = await res.text();
+  const token = page.match(/<pre>([^<]+)<\/pre>/)?.[1];
+  const payload = await verifyToken(token!, KEY, 10_000_000_000); // far future — still valid
+  assertEquals(payload.expiry, undefined);
+  assertStringIncludes(page, "Expires: never");
+});
+
+Deno.test("form has a 'never expires' checkbox", async () => {
+  const res = await app()(new Request("http://localhost/_mint"));
+  assertStringIncludes(await res.text(), 'name="neverExpires"');
 });
 
 Deno.test("POST result page builds a copyable /docs?token= link", async () => {

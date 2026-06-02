@@ -240,11 +240,16 @@ A token is a compact JWT (`HS256`) signing these claims:
 
 ```ts
 interface TokenPayload {
-  source: string;   // who the token was minted for — used for log attribution
-  expiry: number;   // Unix epoch in SECONDS; the token is rejected once passed
-  appName: string;  // the app the token grants access to
+  source: string;    // who the token was minted for — used for log attribution
+  expiry?: number;   // Unix epoch in SECONDS; the token is rejected once passed.
+                     // OMIT for a token that never expires.
+  appName: string;   // the app the token grants access to
+  roles?: string[];  // namespaced `appName:role` entries, checked by @Roles
 }
 ```
+
+> A token with no `expiry` **never expires** and can only be invalidated by rotating `MANUAL_KEY`
+> (which invalidates all signed tokens). Mint these sparingly.
 
 The signature is keyed by `MANUAL_KEY`, so neither the expiry nor any claim can be altered
 without invalidating the token. `verifyToken` rejects a token that is malformed, mis-signed, or
@@ -254,8 +259,9 @@ expired.
 
 `bootstrapServer` mounts a token-minting UI at **`GET /_mint`** that works on `localhost` only
 (any non-loopback request gets `403`). Open it in a browser, fill in `source`, `appName`, and
-`expires in` (seconds from now — with a live Eastern-time preview of the expiry), and submit to
-receive a token (auto-copied to your clipboard). The result page also shows a ready-to-share
+`expires in` (seconds from now — with a live Eastern-time preview of the expiry, or tick **never
+expires**), and submit to receive a token (auto-copied to your clipboard). The result page also
+shows a ready-to-share
 **`…/docs?token=…` link** (with copy buttons) — derived from the page's own location, so it's
 correct whether the app runs standalone or mounted under Fresh at `/api`. The signing key is
 read from `MANUAL_KEY` on the server — it is never entered into or returned by the form. If

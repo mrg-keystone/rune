@@ -11,8 +11,9 @@
 export interface TokenPayload {
   /** Who the token was minted for — used for log attribution on the receiving app. */
   source: string;
-  /** Unix epoch (seconds) after which the token is rejected. */
-  expiry: number;
+  /** Unix epoch (seconds) after which the token is rejected. Omit for a token that never
+   *  expires (no `exp` claim). */
+  expiry?: number;
   /** The app the token grants access to. */
   appName: string;
   /** Roles granted to this token — checked by `@Roles`. Optional. */
@@ -64,22 +65,27 @@ export async function verifyToken(
 
   const claims = decodeSegment(payloadSeg);
   const payload = fromClaims(claims);
-  if (payload.expiry <= now) throw new TokenError("Token expired.");
+  if (payload.expiry !== undefined && payload.expiry <= now) throw new TokenError("Token expired.");
   return payload;
 }
 
 function toClaims(p: TokenPayload): Record<string, unknown> {
-  const claims: Record<string, unknown> = { source: p.source, appName: p.appName, exp: p.expiry };
+  const claims: Record<string, unknown> = { source: p.source, appName: p.appName };
+  if (typeof p.expiry === "number") claims.exp = p.expiry; // omitted ⇒ never expires
   if (p.roles && p.roles.length) claims.roles = p.roles;
   return claims;
 }
 
 function fromClaims(claims: Record<string, unknown>): TokenPayload {
   const { source, appName, exp, roles } = claims;
-  if (typeof source !== "string" || typeof appName !== "string" || typeof exp !== "number") {
+  if (typeof source !== "string" || typeof appName !== "string") {
     throw new TokenError("Malformed token: missing or invalid claims.");
   }
-  const payload: TokenPayload = { source, appName, expiry: exp };
+  if (exp !== undefined && typeof exp !== "number") {
+    throw new TokenError("Malformed token: invalid `exp`.");
+  }
+  const payload: TokenPayload = { source, appName };
+  if (typeof exp === "number") payload.expiry = exp;
   if (Array.isArray(roles)) payload.roles = roles.filter((r): r is string => typeof r === "string");
   return payload;
 }
@@ -91,7 +97,9 @@ function assertKey(key: string) {
 function assertPayload(p: TokenPayload) {
   if (!p.source) throw new TokenError("`source` is required.");
   if (!p.appName) throw new TokenError("`appName` is required.");
-  if (!Number.isInteger(p.expiry)) throw new TokenError("`expiry` must be a Unix epoch in seconds.");
+  if (p.expiry !== undefined && !Number.isInteger(p.expiry)) {
+    throw new TokenError("`expiry` must be a Unix epoch in seconds.");
+  }
 }
 
 async function hmac(data: string, key: string): Promise<Uint8Array> {

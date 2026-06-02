@@ -16,6 +16,14 @@ Deno.test("signToken → verifyToken round-trips roles", async () => {
   assertEquals(await verifyToken(token, KEY), withRoles);
 });
 
+Deno.test("a token with no expiry never expires", async () => {
+  const token = await signToken({ source: "ci-runner", appName: "billing" }, KEY);
+  // Verify far in the future — still valid because there's no `exp` claim.
+  const verified = await verifyToken(token, KEY, 10_000_000_000);
+  assertEquals(verified, { source: "ci-runner", appName: "billing" });
+  assertEquals(verified.expiry, undefined);
+});
+
 Deno.test("verifyToken rejects a token signed with a different key", async () => {
   const token = await signToken(payload, KEY);
   await assertRejects(() => verifyToken(token, "other-key"), TokenError, "Invalid signature");
