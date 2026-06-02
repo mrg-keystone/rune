@@ -298,9 +298,9 @@ mod tests {
         let dist_dir = temp.path().join("dist.rune");
         assert!(dist_dir.join("dto/get-recording-dto.ts").exists());
         assert!(dist_dir.join("dto/id-dto.ts").exists());
-        assert!(dist_dir.join("integration/recording-register").exists());
-        assert!(dist_dir.join("integration/recording-register/recording-register.ts").exists());
-        assert!(dist_dir.join("integration/recording-register/recording-register_test.ts").exists());
+        assert!(dist_dir.join("integration/register-recording").exists());
+        assert!(dist_dir.join("integration/register-recording/register-recording.ts").exists());
+        assert!(dist_dir.join("integration/register-recording/register-recording_test.ts").exists());
         assert!(dist_dir.join("pure").exists());
         assert!(dist_dir.join("impure").exists());
     }
