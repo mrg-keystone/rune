@@ -5,6 +5,25 @@ import { suggestForResults } from "@rune/domain/data/llm/openai.ts";
 import { canonicalPaths as SHAPE } from "@rune/domain/business/artifact/canonical-paths.ts";
 import type { EntryResult } from "@core/dto/types.ts";
 
+// ---- help ----
+if (["-h", "--help", "help"].includes(Deno.args[0] ?? "")) {
+  console.log(`rune — design a spec, generate the code, keep it honest.
+
+USAGE
+  rune [dir]                 lint a project (default: current dir)
+  rune sync <file.rune>      generate/update a module from its spec
+  rune manifest <file.rune>  one-shot generate (no prune)
+  rune validate <art.json>   validate a keywords.json artifact
+  rune lsp                   start the language server (editor integration)
+  rune render <file.rune>    render a spec to HTML
+  rune fmt <file.rune>       format a spec
+  rune init <name>           scaffold a new project
+
+Generation is Deno/TypeScript. Edit the language in Rune Studio
+(\`deno task studio\`) — it writes keywords.json, the single source of truth.`);
+  Deno.exit(0);
+}
+
 // ---- delegation to the fast Rust helpers (rune-lsp / rune-syntax) ----
 // `rune` is the single front door; the speed-critical paths (LSP, parse/format/
 // highlight/render) are the Rust binaries it ships alongside. Codegen + lint

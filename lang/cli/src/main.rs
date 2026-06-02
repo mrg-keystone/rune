@@ -42,10 +42,6 @@ enum Commands {
     Init {
         /// Project name
         name: String,
-
-        /// Configuration to use
-        #[arg(short, long, default_value = "ts-deno-native-class-validator-esm", value_parser = ["ts-deno-native-class-validator-esm"])]
-        config: String,
     },
 
     /// Install Rune (LSP, parser, editor integration)
@@ -128,8 +124,8 @@ fn main() -> ExitCode {
             }
         }
 
-        Commands::Init { name, config } => {
-            match commands::init(&name, &config) {
+        Commands::Init { name } => {
+            match commands::init(&name) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     eprintln!("Error: {}", e);

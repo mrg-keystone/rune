@@ -87,14 +87,6 @@ export const LintRuleSchema = z.object({
   owner: z.string().optional(),
 });
 
-// ---- codegen profiles (D7) -------------------------------------------------
-
-export const ProfileSchema = z.object({
-  id: z.string().min(1),
-  label: z.string().optional(),
-  vars: z.record(z.string(), z.unknown()),
-});
-
 // ---- bindings: canonical-path placeholder -> rune element (WO-4a) ----------
 
 export const RUNE_ELEMENT_SOURCES = [
@@ -141,8 +133,6 @@ export const ArtifactSchema = z.object({
   name: z.string(),
   schemaVersion: semver,
   description: z.string().optional(),
-  // target var defaults (per-profile overrides live in profiles[])
-  vars: z.record(z.string(), z.unknown()).optional(),
   palette: z.record(z.string(), z.unknown()).optional(),
   // language (target-independent)
   tags: z.array(TagSchema).min(1),
@@ -159,15 +149,12 @@ export const ArtifactSchema = z.object({
   // canonical folder layout (the `structure` rule's spec); folded in from the
   // former assets/canonical-paths.json so the artifact is the one source.
   canonicalPaths: z.record(z.string(), z.unknown()).optional(),
-  // codegen profiles (optional today; one baked target lives in vars + tag.codegen)
-  profiles: z.array(ProfileSchema).optional(),
 });
 
 export type CodegenTemplate = z.infer<typeof CodegenTemplateSchema>;
 export type Tag = z.infer<typeof TagSchema>;
 export type Modifier = z.infer<typeof ModifierSchema>;
 export type LintRule = z.infer<typeof LintRuleSchema>;
-export type Profile = z.infer<typeof ProfileSchema>;
 export type Binding = z.infer<typeof BindingSchema>;
 export type TemplatePolicy = z.infer<typeof TemplatePolicySchema>;
 export type Codegen = z.infer<typeof CodegenSchema>;

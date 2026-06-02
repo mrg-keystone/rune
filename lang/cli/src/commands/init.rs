@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 
 /// Initialize a new rune project
-pub fn init(project_name: &str, config_name: &str) -> Result<(), String> {
+pub fn init(project_name: &str) -> Result<(), String> {
     let project_dir = Path::new(project_name);
 
     if project_dir.exists() {
@@ -41,18 +41,8 @@ pub fn init(project_name: &str, config_name: &str) -> Result<(), String> {
     fs::write(project_dir.join("example.rune"), example_content)
         .map_err(|e| format!("Failed to write example.rune: {}", e))?;
 
-    // Create .runerc (config file)
-    let config_content = format!(r#"{{
-  "config": "{}"
-}}
-"#, config_name);
-
-    fs::write(project_dir.join(".runerc"), config_content)
-        .map_err(|e| format!("Failed to write .runerc: {}", e))?;
-
     println!("Created rune project: {}", project_name);
     println!("  - example.rune (example specification)");
-    println!("  - .runerc (config: {})", config_name);
     println!();
     println!("To generate code:");
     println!("  cd {}", project_name);
@@ -71,15 +61,11 @@ mod tests {
         let temp = tempdir().unwrap();
         let project_name = temp.path().join("my-project");
 
-        let result = init(
-            project_name.to_str().unwrap(),
-            "ts-deno-native-class-validator-esm",
-        );
+        let result = init(project_name.to_str().unwrap());
 
         assert!(result.is_ok());
         assert!(project_name.exists());
         assert!(project_name.join("example.rune").exists());
-        assert!(project_name.join(".runerc").exists());
     }
 
     #[test]
@@ -90,26 +76,9 @@ mod tests {
         // Create the directory first
         fs::create_dir(&project_name).unwrap();
 
-        let result = init(
-            project_name.to_str().unwrap(),
-            "ts-deno-native-class-validator-esm",
-        );
+        let result = init(project_name.to_str().unwrap());
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("already exists"));
-    }
-
-    #[test]
-    fn runerc_contains_config() {
-        let temp = tempdir().unwrap();
-        let project_name = temp.path().join("my-project");
-
-        init(
-            project_name.to_str().unwrap(),
-            "ts-deno-native-class-validator-esm",
-        ).unwrap();
-
-        let config_content = fs::read_to_string(project_name.join(".runerc")).unwrap();
-        assert!(config_content.contains("ts-deno-native-class-validator-esm"));
     }
 }

@@ -56,17 +56,6 @@ Deno.test("rejects a bad schemaVersion structurally", () => {
   assertEquals(r.errors.some((e) => e.path.includes("schemaVersion")), true);
 });
 
-Deno.test("flags a profile gap (inconsistent var keys)", () => {
-  const a = base();
-  a.profiles = [
-    { id: "deno", vars: { runtime: "deno", ext: "ts" } },
-    { id: "node", vars: { runtime: "node" } },
-  ];
-  const r = validateArtifact(a);
-  assert(!r.ok);
-  assert(r.errors.some((e) => e.message.includes("gap")));
-});
-
 // ---- canonical layout folded into the artifact (single source of truth) ----
 
 Deno.test("canonicalPaths is sourced from the keywords.json artifact", async () => {

@@ -12,13 +12,6 @@
     "description": {
       "type": "string"
     },
-    "vars": {
-      "type": "object",
-      "propertyNames": {
-        "type": "string"
-      },
-      "additionalProperties": {}
-    },
     "palette": {
       "type": "object",
       "propertyNames": {
@@ -75,25 +68,6 @@
           },
           "description": {
             "type": "string"
-          },
-          "codegen": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "path": {
-                  "type": "string"
-                },
-                "body": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "path",
-                "body"
-              ],
-              "additionalProperties": false
-            }
           },
           "group": {
             "type": "string"
@@ -321,6 +295,28 @@
           "additionalProperties": {
             "type": "string"
           }
+        },
+        "policies": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "lifecycle": {
+                "type": "string",
+                "enum": [
+                  "regenerate",
+                  "create-once"
+                ]
+              },
+              "prunable": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "required": [
@@ -328,32 +324,12 @@
       ],
       "additionalProperties": false
     },
-    "profiles": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "minLength": 1
-          },
-          "label": {
-            "type": "string"
-          },
-          "vars": {
-            "type": "object",
-            "propertyNames": {
-              "type": "string"
-            },
-            "additionalProperties": {}
-          }
-        },
-        "required": [
-          "id",
-          "vars"
-        ],
-        "additionalProperties": false
-      }
+    "canonicalPaths": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
     }
   },
   "required": [

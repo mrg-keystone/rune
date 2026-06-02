@@ -8,7 +8,6 @@ export {
   FOLLOWS,
   LintRuleSchema,
   ModifierSchema,
-  ProfileSchema,
   RUNE_ELEMENT_SOURCES,
   TagSchema,
 } from "./schema.ts";
@@ -19,7 +18,6 @@ export type {
   CodegenTemplate,
   LintRule,
   Modifier,
-  Profile,
   Tag,
 } from "./schema.ts";
 export { loadArtifact, semanticErrors, validateArtifact } from "./validate.ts";

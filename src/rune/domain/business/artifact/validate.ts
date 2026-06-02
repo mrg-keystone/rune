@@ -90,21 +90,6 @@ export function semanticErrors(a: Artifact): ArtifactError[] {
     }
   }
 
-  // profile gaps (D7): if profiles[] exist, every profile must define the same
-  // var keys — a key present in one profile but missing in another is a gap.
-  const profiles = a.profiles ?? [];
-  if (profiles.length > 1) {
-    const allKeys = new Set<string>();
-    for (const p of profiles) for (const k of Object.keys(p.vars)) allKeys.add(k);
-    for (const p of profiles) {
-      for (const k of allKeys) {
-        if (!(k in p.vars)) {
-          errors.push({ path: `profiles.${p.id}.vars`, message: `profile "${p.id}" is missing var "${k}" defined by another profile (gap)` });
-        }
-      }
-    }
-  }
-
   return errors;
 }
 
