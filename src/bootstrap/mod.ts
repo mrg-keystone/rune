@@ -1,9 +1,68 @@
-import { resolve, join } from "#std/path";
+import { dirname, fromFileUrl, join, resolve } from "#std/path";
 import { rules, runPipeline, parseArgs, printHeader, printResults, printJson, runManifest, runSync, runValidate } from "@rune/mod-root.ts";
 import { getIgnoredPaths } from "@rune/domain/data/project/mod.ts";
 import { suggestForResults } from "@rune/domain/data/llm/openai.ts";
 import { canonicalPaths as SHAPE } from "@rune/domain/business/artifact/canonical-paths.ts";
 import type { EntryResult } from "@core/dto/types.ts";
+
+// ---- delegation to the fast Rust helpers (rune-lsp / rune-syntax) ----
+// `rune` is the single front door; the speed-critical paths (LSP, parse/format/
+// highlight/render) are the Rust binaries it ships alongside. Codegen + lint
+// stay here in Deno. We resolve the helper next to this binary (installed),
+// from a RUNE_BIN_DIR override, from the repo's lang/target (dev), or PATH.
+function helperPath(name: string): string {
+  const candidates: string[] = [];
+  const env = Deno.env.get("RUNE_BIN_DIR");
+  if (env) candidates.push(join(env, name));
+  try {
+    candidates.push(join(dirname(Deno.execPath()), name)); // installed: next to `rune`
+  } catch { /* ignore */ }
+  const repo = dirname(dirname(dirname(fromFileUrl(import.meta.url)))); // src/bootstrap/mod.ts -> repo root
+  candidates.push(join(repo, "lang", "target", "release", name));
+  candidates.push(join(repo, "lang", "target", "debug", name));
+  for (const c of candidates) {
+    try {
+      if (Deno.statSync(c).isFile) return c;
+    } catch { /* keep looking */ }
+  }
+  return name; // last resort: rely on PATH
+}
+
+async function delegate(name: string, args: string[]): Promise<number> {
+  try {
+    const child = new Deno.Command(helperPath(name), {
+      args,
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    }).spawn();
+    return (await child.status).code;
+  } catch (e) {
+    console.error(`rune: could not run helper '${name}': ${e instanceof Error ? e.message : e}`);
+    console.error(`(build it with \`cd lang && cargo build\`, or set RUNE_BIN_DIR)`);
+    return 127;
+  }
+}
+
+// `rune lsp …` -> the Rust LSP server.
+if (Deno.args[0] === "lsp") {
+  Deno.exit(await delegate("rune-lsp", Deno.args.slice(1)));
+}
+
+// Fast syntax/authoring commands -> the Rust `rune-syntax` helper (verbatim passthrough).
+const SYNTAX_CMDS = new Set([
+  "render",
+  "format",
+  "fmt",
+  "init",
+  "install",
+  "uninstall",
+  "completions",
+]);
+if (SYNTAX_CMDS.has(Deno.args[0])) {
+  const sub = Deno.args[0] === "fmt" ? "format" : Deno.args[0];
+  Deno.exit(await delegate("rune-syntax", [sub, ...Deno.args.slice(1)]));
+}
 
 // Subcommand dispatch.
 if (Deno.args[0] === "manifest") {

@@ -4,8 +4,10 @@
     "check": "deno run --allow-read --allow-write --allow-net --allow-env --allow-run src/bootstrap/mod.ts",
     "gen": "deno run --allow-read --allow-write generate.mjs",
     "studio": "cd rune-studio && deno task dev",
+    "build:rust": "cd lang && cargo build --release",
     "compile": "deno task setup && deno compile --allow-read --allow-write --allow-net --allow-env --allow-run -o dist/rune src/bootstrap/mod.ts",
-    "install": "deno task compile && cp dist/rune ~/.deno/bin/rune",
+    "build": "deno task compile && deno task build:rust && mkdir -p dist && cp lang/target/release/rune-lsp lang/target/release/rune-syntax dist/",
+    "install": "deno task build && cp dist/rune dist/rune-lsp dist/rune-syntax ~/.deno/bin/",
     "verify": "deno run -A scripts/verify.ts"
   },
   "imports": {

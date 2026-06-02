@@ -8,11 +8,10 @@ use clap::{CommandFactory, Parser, Subcommand, ValueHint};
 use clap_complete::{generate, Shell};
 
 use rune_cli::commands;
-use rune_cli::configs::list_configs;
 
 #[derive(Parser)]
-#[command(name = "rune")]
-#[command(about = "Generate scaffolded code from .rune specification files")]
+#[command(name = "rune-syntax")]
+#[command(about = "Rune syntax tooling (parse/validate/format/render) — internal helper invoked by the `rune` CLI; codegen lives in the rune engine")]
 #[command(version)]
 struct Cli {
     #[command(subcommand)]
@@ -21,21 +20,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Generate code from a .rune file
-    Generate {
-        /// Input .rune file
-        #[arg(value_hint = ValueHint::FilePath)]
-        input: PathBuf,
-
-        /// Configuration to use (run `rune configs` to list)
-        #[arg(value_parser = ["ts-deno-native-class-validator-esm"])]
-        config: String,
-
-        /// Output directory (defaults to input file directory)
-        #[arg(short, long, value_hint = ValueHint::DirPath)]
-        output: Option<PathBuf>,
-    },
-
     /// Validate a .rune file
     Validate {
         /// Input .rune file
@@ -63,9 +47,6 @@ enum Commands {
         #[arg(short, long, default_value = "ts-deno-native-class-validator-esm", value_parser = ["ts-deno-native-class-validator-esm"])]
         config: String,
     },
-
-    /// List available configurations
-    Configs,
 
     /// Install Rune (LSP, parser, editor integration)
     Install {
@@ -104,19 +85,6 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Generate { input, config, output } => {
-            match commands::generate(&input, &config, output.as_deref()) {
-                Ok(()) => {
-                    println!("Generated code in dist.rune/");
-                    ExitCode::SUCCESS
-                }
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    ExitCode::FAILURE
-                }
-            }
-        }
-
         Commands::Validate { input } => {
             match commands::validate(&input) {
                 Ok(errors) => {
@@ -170,14 +138,6 @@ fn main() -> ExitCode {
             }
         }
 
-        Commands::Configs => {
-            println!("Available configurations:");
-            for config in list_configs() {
-                println!("  - {}", config);
-            }
-            ExitCode::SUCCESS
-        }
-
         Commands::Install { yes } => {
             match commands::install(yes) {
                 Ok(()) => ExitCode::SUCCESS,
@@ -200,7 +160,7 @@ fn main() -> ExitCode {
         }
 
         Commands::Completions { shell } => {
-            generate(shell, &mut Cli::command(), "rune", &mut io::stdout());
+            generate(shell, &mut Cli::command(), "rune-syntax", &mut io::stdout());
             ExitCode::SUCCESS
         }
 

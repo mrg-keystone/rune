@@ -56,7 +56,7 @@ pub fn init(project_name: &str, config_name: &str) -> Result<(), String> {
     println!();
     println!("To generate code:");
     println!("  cd {}", project_name);
-    println!("  rune generate example.rune -c {}", config_name);
+    println!("  rune sync example.rune   # codegen via the rune engine");
 
     Ok(())
 }
