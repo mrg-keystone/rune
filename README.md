@@ -122,6 +122,29 @@ It's compared in constant time, and is regenerated every boot.
 > **`TRUST_LOCALHOST=false`** to require a token even from localhost (the in-process key trust
 > stays, so SSR / `backend.fetch` keeps working). It's also handy for testing the gated path.
 
+> ### ⚠️ Security: the in-process bypass and how to mount safely
+>
+> `backend.fetch(...)` is a **trusted channel** — anything dispatched through it skips auth (that's
+> how SSR calls your own API without a token). This is correct for *originating* your own calls, but
+> it is a footgun if you use it to **proxy inbound network traffic**: routing external requests
+> through `backend.fetch` would serve them auth-exempt. **Never route inbound requests through
+> `backend.fetch`.** To expose the API over the network, mount **`api.handler`** (via `Deno.serve`
+> or `withBasePath`) — that's the network entry point.
+>
+> The framework makes the safe path safe by construction:
+> - **`api.handler` strips the in-process trust header** from every inbound request. So a network
+>   request — whatever it sends, however it's mounted or proxied — can **never** impersonate an
+>   in-process call. In-process trust is only granted to `backend.fetch`, which dispatches through a
+>   separate non-stripping path.
+> - **Swagger docs do not honor the in-process bypass at all.** The spec (`/docs/<module>/json`) is
+>   served only to a genuine loopback caller or a valid token — so even if you wrongly route docs
+>   through `backend.fetch`, the API surface stays gated.
+> - The in-process key is unguessable, never sent to the network, and redacted from logs.
+>
+> Net: if you mount with `api.handler`, an integrator **cannot** accidentally expose the API or the
+> docs. The only way to bypass auth is to deliberately pipe inbound traffic through `backend.fetch`
+> — don't.
+
 A network caller authorizes by sending a credential in the `Authorization` header:
 
 ```

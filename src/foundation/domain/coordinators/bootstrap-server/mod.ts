@@ -157,7 +157,6 @@ export class BootstrapServer {
           createDocsJsonHandler({
             specJson: JSON.stringify(doc),
             signingKey,
-            internalKey,
             firebaseVerifier,
             logger: log,
             trustLocalhost,
@@ -184,7 +183,13 @@ export class BootstrapServer {
     // deno-lint-ignore no-explicit-any
     await (adapter.app as any).injector.registerInjectables([{ token: GLOBAL_GUARD, useValue: guard }]);
 
-    const backend = createBackendClient(adapter.handler, `http://localhost:${port}`, internalKey);
+    // The in-process client dispatches via the non-stripping handler so its trust marker is
+    // honored; the public `handler` (and what integrators mount) strips it.
+    const backend = createBackendClient(
+      adapter.inProcessHandler,
+      `http://localhost:${port}`,
+      internalKey,
+    );
 
     return new BootstrapServer(module, adapter, backend);
   }

@@ -240,7 +240,16 @@ export function isTrustedOrigin(
   const stamped = c.req.header(INTERNAL_REQUEST_HEADER);
   if (stamped !== undefined && safeEqual(stamped, internalKey)) return true;
 
-  if (!trustLocalhost) return false;
+  return trustLocalhost && isLoopbackRequest(c);
+}
+
+/**
+ * True only when the connecting socket is a loopback address. Unlike the in-process key (a
+ * header), this comes from the real TCP peer and cannot be set by a network client. Note the
+ * network `handler` strips the in-process header from inbound requests, so a network request
+ * can never be in-process-trusted regardless of what it sends.
+ */
+export function isLoopbackRequest(c: Context): boolean {
   const peer = remoteHostname(c);
   return peer !== undefined && LOOPBACK_HOSTS.has(peer);
 }

@@ -42,13 +42,7 @@ function jsonApp(trustLocalhost?: boolean) {
   const app = new Hono();
   app.get(
     "/docs/app/json",
-    createDocsJsonHandler({
-      specJson: SPEC,
-      signingKey: KEY,
-      internalKey: INTERNAL,
-      logger,
-      trustLocalhost,
-    }),
+    createDocsJsonHandler({ specJson: SPEC, signingKey: KEY, logger, trustLocalhost }),
   );
   const at = (hostname?: string, init?: RequestInit, query = "") => {
     const env = hostname === undefined ? undefined : { remoteAddr: { hostname } };
@@ -63,11 +57,13 @@ Deno.test("docs json: localhost callers need no token", async () => {
   assertEquals((await res.json()).openapi, "3.0.0");
 });
 
-Deno.test("docs json: in-process callers (internal key) need no token", async () => {
+Deno.test("docs json: the in-process key does NOT bypass the docs gate", async () => {
+  // Even with the in-process trust header, a non-loopback caller must present a token — so
+  // routing docs through backend.fetch can never expose the spec.
   const res = await jsonApp().at("203.0.113.4", {
     headers: { [INTERNAL_REQUEST_HEADER]: INTERNAL },
   });
-  assertEquals(res.status, 200);
+  assertEquals(res.status, 401);
 });
 
 Deno.test("docs json: network callers without a token get 401", async () => {

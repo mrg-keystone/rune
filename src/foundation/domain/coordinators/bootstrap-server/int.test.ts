@@ -3,6 +3,7 @@ import { assertEquals, assertExists, assertStringIncludes } from "#assert";
 import { bootstrapServer } from "./mod.ts";
 import { signToken } from "@foundation/domain/business/token/mod.ts";
 import { Public } from "@foundation/domain/business/public-route/mod.ts";
+import { INTERNAL_REQUEST_HEADER } from "@foundation/domain/business/backend-client/mod.ts";
 import { Controller, Get, Module } from "#danet/core";
 
 @Controller("health")
@@ -107,6 +108,26 @@ Deno.test("global guard: deny-by-default for controllers, @Public exempts", asyn
     // deno-lint-ignore no-explicit-any
     const local = await server.handler(new Request("http://app/secret"), loopback as any);
     assertEquals(local.status, 200);
+  } finally {
+    Deno.env.delete("MANUAL_KEY");
+  }
+});
+
+Deno.test("a forged in-process header on a network request cannot bypass auth (stripped)", async () => {
+  Deno.env.set("MANUAL_KEY", "strip-test-key");
+  try {
+    const port = portCounter++;
+    const server = await bootstrapServer("test-app", GuardModule, { port, swagger: false });
+    const remote = { remoteAddr: { transport: "tcp", hostname: "203.0.113.5", port: 1 } };
+
+    // Attacker (or a mis-mounted proxy) sends the in-process trust header over the network.
+    const res = await server.handler(
+      new Request("http://app/secret", { headers: { [INTERNAL_REQUEST_HEADER]: "anything" } }),
+      // deno-lint-ignore no-explicit-any
+      remote as any,
+    );
+    // The network handler strips it, so it's treated as an unauthenticated network request.
+    assertEquals(res.status, 401);
   } finally {
     Deno.env.delete("MANUAL_KEY");
   }

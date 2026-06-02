@@ -11,7 +11,7 @@ import type { Logger } from "@foundation/domain/business/logger/mod.ts";
 import type { FirebaseVerifier } from "@foundation/domain/business/firebase-auth/mod.ts";
 import {
   extractBearer,
-  isTrustedOrigin,
+  isLoopbackRequest,
   validateCredential,
 } from "@foundation/domain/business/token-auth/mod.ts";
 
@@ -22,18 +22,18 @@ export interface DocsJsonHandlerOptions {
   /** The serialized OpenAPI document to serve. */
   specJson: string;
   signingKey: string;
-  /** Process-private key identifying in-process callers (trusted, no token). */
-  internalKey: string;
   firebaseVerifier?: FirebaseVerifier;
   logger: Logger;
-  /** Whether localhost callers are served without a token. Defaults to true. */
+  /** Whether genuine localhost callers are served without a token. Defaults to true. */
   trustLocalhost?: boolean;
 }
 
 /**
- * Builds the handler for a gated `/docs/<module>/json` endpoint. Trusted origins (localhost and
- * in-process callers) are served without a token; any other (network) request must present a
- * valid signed or Firebase token via `Authorization: Bearer` or the `?token` query param.
+ * Builds the handler for a gated `/docs/<module>/json` endpoint. The OpenAPI spec is the API
+ * surface, so this is deliberately strict: only a **genuine loopback** caller (the dev machine)
+ * or a valid signed/Firebase token (`Authorization: Bearer` or `?token`) is served. It does NOT
+ * honor the in-process trust marker — so routing docs through `backend.fetch` cannot expose the
+ * spec — and the network `handler` strips that marker anyway.
  */
 export function createDocsJsonHandler(
   opts: DocsJsonHandlerOptions,
@@ -45,7 +45,7 @@ export function createDocsJsonHandler(
 
   const trustLocalhost = opts.trustLocalhost ?? true;
   return async (c) => {
-    if (isTrustedOrigin(c, opts.internalKey, trustLocalhost)) return json();
+    if (trustLocalhost && isLoopbackRequest(c)) return json();
 
     const credential = extractBearer(c.req.header("authorization")) ?? c.req.query("token");
     const identity = credential
