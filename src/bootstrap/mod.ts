@@ -36,6 +36,7 @@ export {
   createCredentialGuard,
   getIdentity,
   IDENTITY_CONTEXT_KEY,
+  scopeRoles,
 } from "@foundation/mod-root.ts";
 export type {
   LogLevel,

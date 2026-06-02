@@ -174,6 +174,7 @@ export class BootstrapServer {
     // Register the credential auth as Danet's global guard — it governs every controller route
     // and honors `@Public()`. A pre-built instance is bound to the GLOBAL_GUARD token.
     const guard = createCredentialGuard({
+      appName,
       signingKey,
       internalKey,
       firebaseVerifier,

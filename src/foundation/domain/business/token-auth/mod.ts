@@ -95,6 +95,9 @@ export function extractBearer(header: string | undefined): string | undefined {
 }
 
 export interface CredentialGuardConfig {
+  /** This app's name. Roles are namespaced `appName:role` in the credential; the guard scopes
+   *  to this app, so `@Roles("admin")` here matches the claim `<appName>:admin`. */
+  appName: string;
   /** The secret signing key (env variable). Empty ⇒ signed tokens cannot be verified. */
   signingKey: string;
   /** Process-private key identifying in-process (BackendClient) callers. */
@@ -103,6 +106,12 @@ export interface CredentialGuardConfig {
   logger: Logger;
   /** Whether loopback callers are trusted without a credential. Defaults to true. */
   trustLocalhost?: boolean;
+}
+
+/** Scopes namespaced `appName:role` claims to this app, returning the bare role names. */
+export function scopeRoles(roles: string[], appName: string): string[] {
+  const prefix = `${appName}:`;
+  return roles.filter((r) => r.startsWith(prefix)).map((r) => r.slice(prefix.length));
 }
 
 /** A Danet guard: returns true to allow, throws to reject. */
@@ -144,11 +153,13 @@ export function createCredentialGuard(config: CredentialGuardConfig): DanetGuard
 
       let identity: Identity | null = null;
       if (credential) {
-        identity = await validateCredential(credential, {
+        const resolved = await validateCredential(credential, {
           signingKey: config.signingKey,
           firebaseVerifier: config.firebaseVerifier,
         });
-        if (identity) {
+        if (resolved) {
+          // Scope the namespaced `appName:role` claims down to this app's bare roles.
+          identity = { source: resolved.source, roles: scopeRoles(resolved.roles, config.appName) };
           config.logger.setSource(identity.source);
           if (typeof ctx.set === "function") ctx.set(IDENTITY_CONTEXT_KEY, identity);
         } else if (!isPublic) {

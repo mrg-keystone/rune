@@ -26,6 +26,7 @@ export {
   createCredentialGuard,
   getIdentity,
   IDENTITY_CONTEXT_KEY,
+  scopeRoles,
 } from "@foundation/domain/business/token-auth/mod.ts";
 export type {
   CredentialGuardConfig,

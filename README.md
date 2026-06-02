@@ -190,19 +190,26 @@ class UsersController {
 - Method-level `@Roles` overrides class-level; trusted origins (in-process / localhost) bypass it
   like all auth (use `TRUST_LOCALHOST=false` to enforce roles locally too).
 
-**Where roles come from.** Roles ride *in* the verified credential — no extra lookup:
+**Roles are namespaced `appName:role`.** A single user can hold roles across several apps, so each
+role is stored prefixed with the app it belongs to (e.g. `billing:admin`, `orders:editor`). The
+guard knows its own `appName` and **scopes** to it: `@Roles("admin")` on the `billing` app matches
+the claim `billing:admin` and ignores `orders:*`. `getIdentity(ctx)` returns the scoped (bare)
+roles for this app.
+
+**Where roles come from** — they ride *in* the verified credential, no extra lookup:
 
 - **Firebase**: set them as **custom claims** with the Admin SDK (from your admin tooling /
   Cloud Function — verifying needs only `FIREBASE_PROJECT_ID`, setting needs the service account):
   ```ts
-  admin.auth().setCustomUserClaims(uid, { roles: ["admin"] });  // or { role: "admin" }
+  admin.auth().setCustomUserClaims(uid, { roles: ["billing:admin", "orders:viewer"] });
   ```
   The backend reads `roles` (array) and/or `role` (string) from the ID token. Note custom-claim
   changes only apply once the client's ID token refreshes.
-- **Signed tokens**: include `roles` in the payload — `signToken({ source, appName, expiry, roles: ["admin"] }, key)`.
+- **Signed tokens**: include namespaced `roles` in the payload —
+  `signToken({ source, appName, expiry, roles: ["billing:admin"] }, key)`.
 
 The resolved caller is attached to the request; read it in a handler with `getIdentity(ctx)` →
-`{ source, roles }`.
+`{ source, roles }` (roles scoped to this app).
 
 #### Token shape
 

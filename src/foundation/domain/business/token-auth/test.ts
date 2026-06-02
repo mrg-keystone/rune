@@ -201,7 +201,7 @@ function guard(signingKey = KEY) {
   const logger = new Logger();
   logger.configure({ appName: "test" });
   const sources: (string | undefined)[] = [];
-  const g = createCredentialGuard({ signingKey, internalKey: INTERNAL, logger });
+  const g = createCredentialGuard({ appName: "test", signingKey, internalKey: INTERNAL, logger });
   return { g, logger, sources };
 }
 
@@ -227,7 +227,7 @@ Deno.test("guard: @Public ignores an invalid credential (auth-optional)", async 
 Deno.test("guard: valid token authorizes a protected route and sets source", async () => {
   const logger = new Logger();
   logger.configure({ appName: "test" });
-  const g = createCredentialGuard({ signingKey: KEY, internalKey: INTERNAL, logger });
+  const g = createCredentialGuard({ appName: "test", signingKey: KEY, internalKey: INTERNAL, logger });
   const token = await signToken({ source: "svc", appName: "test", expiry: future }, KEY);
   const ctx = guardCtx({ hostname: "203.0.113.1", headers: { authorization: `Bearer ${token}` } });
   // run inside a request scope so setSource records
@@ -267,15 +267,25 @@ Deno.test("guard: WS connection accepts a token from the query param", async () 
 
 Deno.test("guard: @Roles allows a caller holding the role", async () => {
   const { g } = guard();
-  const token = await signToken({ source: "u", appName: "test", expiry: future, roles: ["admin"] }, KEY);
+  // Claim is namespaced `appName:role`; the guard scopes it to this app ("test").
+  const token = await signToken({ source: "u", appName: "test", expiry: future, roles: ["test:admin"] }, KEY);
   const ctx = guardCtx({ hostname: "203.0.113.1", roles: ["admin"], headers: { authorization: `Bearer ${token}` } });
   // deno-lint-ignore no-explicit-any
   assertEquals(await g.canActivate(ctx as any), true);
 });
 
+Deno.test("guard: a role for a different app does not satisfy @Roles", async () => {
+  const { g } = guard();
+  // "other:admin" belongs to another app; this app is "test".
+  const token = await signToken({ source: "u", appName: "test", expiry: future, roles: ["other:admin"] }, KEY);
+  const ctx = guardCtx({ hostname: "203.0.113.1", roles: ["admin"], headers: { authorization: `Bearer ${token}` } });
+  // deno-lint-ignore no-explicit-any
+  await assertRejects(() => Promise.resolve(g.canActivate(ctx as any)), ForbiddenException);
+});
+
 Deno.test("guard: @Roles rejects a caller missing the role with 403", async () => {
   const { g } = guard();
-  const token = await signToken({ source: "u", appName: "test", expiry: future, roles: ["editor"] }, KEY);
+  const token = await signToken({ source: "u", appName: "test", expiry: future, roles: ["test:editor"] }, KEY);
   const ctx = guardCtx({ hostname: "203.0.113.1", roles: ["admin"], headers: { authorization: `Bearer ${token}` } });
   // deno-lint-ignore no-explicit-any
   await assertRejects(() => Promise.resolve(g.canActivate(ctx as any)), ForbiddenException);
@@ -290,7 +300,7 @@ Deno.test("guard: @Roles without any credential is 401 (auth required first)", a
 
 Deno.test("guard: @Roles is satisfied by any one of several listed roles", async () => {
   const { g } = guard();
-  const token = await signToken({ source: "u", appName: "test", expiry: future, roles: ["editor"] }, KEY);
+  const token = await signToken({ source: "u", appName: "test", expiry: future, roles: ["test:editor"] }, KEY);
   const ctx = guardCtx({ hostname: "203.0.113.1", roles: ["admin", "editor"], headers: { authorization: `Bearer ${token}` } });
   // deno-lint-ignore no-explicit-any
   assertEquals(await g.canActivate(ctx as any), true);
@@ -298,10 +308,11 @@ Deno.test("guard: @Roles is satisfied by any one of several listed roles", async
 
 Deno.test("guard: attaches the resolved identity to the context", async () => {
   const { g } = guard();
-  const token = await signToken({ source: "svc", appName: "test", expiry: future, roles: ["admin"] }, KEY);
+  const token = await signToken({ source: "svc", appName: "test", expiry: future, roles: ["test:admin", "other:x"] }, KEY);
   const ctx = guardCtx({ hostname: "203.0.113.1", headers: { authorization: `Bearer ${token}` } });
   // deno-lint-ignore no-explicit-any
   await g.canActivate(ctx as any);
+  // Identity exposes only this app's roles (scoped, prefix stripped).
   // deno-lint-ignore no-explicit-any
   assertEquals(getIdentity(ctx as any), { source: "svc", roles: ["admin"] });
 });
