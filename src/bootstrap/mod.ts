@@ -23,6 +23,9 @@ export {
   INTERNAL_REQUEST_HEADER,
   createFirebaseVerifier,
   FirebaseAuthError,
+  docsSeedScript,
+  injectDocsScript,
+  swaggerShellHtml,
 } from "@foundation/mod-root.ts";
 export type {
   LogLevel,

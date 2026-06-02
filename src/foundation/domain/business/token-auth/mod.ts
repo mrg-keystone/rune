@@ -79,6 +79,39 @@ export function createTokenAuthMiddleware(config: TokenAuthConfig): MiddlewareHa
   };
 }
 
+/** Extracts the bearer credential from an `Authorization` header value, if present. */
+export function extractBearer(header: string | undefined): string | undefined {
+  return bearer(header);
+}
+
+/**
+ * Validates a bearer credential as EITHER a signed access token OR (when a Firebase verifier is
+ * configured) a Firebase ID token. Returns the resolved identity (`source`), or null if neither
+ * validates. Used by the auth middleware and by the gated docs `/json` endpoint.
+ */
+export async function validateCredential(
+  credential: string,
+  opts: { signingKey: string; firebaseVerifier?: FirebaseVerifier },
+): Promise<{ source: string } | null> {
+  if (opts.signingKey) {
+    try {
+      const payload = await verifyToken(credential, opts.signingKey);
+      return { source: payload.source };
+    } catch {
+      // try Firebase next
+    }
+  }
+  if (opts.firebaseVerifier) {
+    try {
+      const claims = await opts.firebaseVerifier.verify(credential);
+      return { source: claims.email ?? claims.uid };
+    } catch {
+      // neither validated
+    }
+  }
+  return null;
+}
+
 /**
  * In-process requests (carrying the matching internal key) and localhost callers (loopback
  * peer) are trusted. A network request neither knows the internal key nor reports a loopback

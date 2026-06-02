@@ -103,9 +103,8 @@ Every **network** request must present a valid credential; requests from the in-
 | `localhost` | loopback peer address | **No** — trusted |
 | Network (anything else) | neither of the above | **Yes** — `401` without a valid credential |
 
-The Swagger docs (`/docs`, and `/api/docs` when mounted under Fresh) are **public** when Swagger
-is enabled — they bypass the credential gate so the API reference stays browsable. The localhost
-`/_mint` UI is **not** exempt: it stays blocked from the network.
+The Swagger docs are **token-gated** — see [Docs access](#docs-access) for how the browser flow
+works. The localhost `/_mint` UI is always blocked from the network.
 
 The in-process key is a random value minted at boot (`crypto.randomUUID()`), shared only
 between the `backend` client and the auth middleware. It never leaves the process — not an env
@@ -155,6 +154,25 @@ expired.
 `expiry`, and submit to receive a token. The signing key is read from `MANUAL_KEY` on the
 server — it is never entered into or returned by the form. If `MANUAL_KEY` is unset, minting
 fails closed.
+
+#### Docs access
+
+The Swagger docs are gated, but a browser navigating to `/docs` can't send an `Authorization`
+header — so docs use a **query-param → localStorage** flow:
+
+- The doc pages (`/docs` and the per-module Swagger UI shells) are served **publicly** so they
+  always load. The actual OpenAPI spec lives at a **gated** `/docs/<module>/json` endpoint.
+- Open any doc page with `?token=<signed token>`. A small inline script saves the token to
+  `localStorage` and strips it from the URL.
+- Swagger UI then fetches the spec over XHR with `Authorization: Bearer <token>` from
+  `localStorage` — which **persists across same-origin navigation**, so once seeded you can move
+  between modules without re-supplying it.
+- If the spec request returns `401` (token missing, invalid, or expired), the script **wipes**
+  the stored token and shows a message to reopen with a fresh `?token=…` link.
+
+So you share a `…/docs?token=…` link once; the token is reused from `localStorage` until it
+stops working. This also works mounted under Fresh — the shell derives the spec URL from its own
+path, so `/api/docs/<module>` fetches `/api/docs/<module>/json`.
 
 #### Programmatic sign / verify
 

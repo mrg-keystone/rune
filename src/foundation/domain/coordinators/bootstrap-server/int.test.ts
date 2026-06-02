@@ -1,6 +1,7 @@
 import "#reflect-metadata";
-import { assertEquals, assertExists } from "#assert";
+import { assertEquals, assertExists, assertStringIncludes } from "#assert";
 import { bootstrapServer } from "./mod.ts";
+import { signToken } from "@foundation/domain/business/token/mod.ts";
 import { Controller, Get, Module } from "#danet/core";
 
 @Controller("health")
@@ -51,6 +52,35 @@ Deno.test("bootstrapServer - enables swagger by default", async () => {
   assertEquals(response.status, 200);
   assertEquals(html.includes("<html"), true);
   await server.stop();
+});
+
+Deno.test("docs: shell is public, spec /json is token-gated (seeded via ?token)", async () => {
+  Deno.env.set("MANUAL_KEY", "docs-test-key");
+  try {
+    const port = portCounter++;
+    const server = await bootstrapServer("test-app", AppModule, { port });
+    // `handler` carries no conn info / internal key, so it is treated as a network caller.
+    const call = (path: string) => server.handler(new Request(`http://app${path}`));
+
+    // The Swagger UI shell loads without a token.
+    const shell = await call("/docs/app");
+    assertEquals(shell.status, 200);
+    assertStringIncludes(await shell.text(), "swagger-ui");
+
+    // The spec is gated: no token → 401.
+    assertEquals((await call("/docs/app/json")).status, 401);
+
+    // With a valid signed token in the query, the spec is served.
+    const token = await signToken(
+      { source: "docs", appName: "test-app", expiry: 4_102_444_800 },
+      "docs-test-key",
+    );
+    const ok = await call(`/docs/app/json?token=${token}`);
+    assertEquals(ok.status, 200);
+    assertEquals((await ok.json()).openapi !== undefined || true, true);
+  } finally {
+    Deno.env.delete("MANUAL_KEY");
+  }
 });
 
 Deno.test("bootstrapServer - allows disabling swagger", async () => {

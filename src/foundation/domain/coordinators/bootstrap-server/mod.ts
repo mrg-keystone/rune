@@ -8,9 +8,15 @@ import { log } from "@foundation/domain/business/logger/mod.ts";
 import { DatadogTransport } from "@foundation/domain/data/datadog/mod.ts";
 import { PostmarkAlerter } from "@foundation/domain/data/postmark/mod.ts";
 import { createRequestLoggingMiddleware } from "@foundation/domain/business/request-logger/mod.ts";
-import { createTokenAuthMiddleware } from "@foundation/domain/business/token-auth/mod.ts";
+import type { Context } from "#hono";
+import {
+  createTokenAuthMiddleware,
+  extractBearer,
+  validateCredential,
+} from "@foundation/domain/business/token-auth/mod.ts";
 import { createMintUi } from "@foundation/domain/business/mint-ui/mod.ts";
 import { createFirebaseVerifier } from "@foundation/domain/business/firebase-auth/mod.ts";
+import { injectDocsScript, swaggerShellHtml } from "@foundation/domain/business/docs-ui/mod.ts";
 
 interface BootstrapOptions {
   port?: number;
@@ -141,14 +147,37 @@ export class BootstrapServer {
       const filters = typeof swagger === "object" ? swagger.filters : [];
       const builder = new SwaggerBuilder(...filters);
       const { swaggerDocs, docsIndexHtml } = await builder.build(server);
+
+      const html = (body: string) =>
+        new Response(body, { headers: { "content-type": "text/html; charset=utf-8" } });
+
       for (const { path, doc } of swaggerDocs) {
-        adapter.registerSwaggerDocument(`/docs${path}`, doc);
+        const title = `API · ${path.replace(/^\//, "")}`;
+        const specJson = JSON.stringify(doc);
+        // Public shell: always loads; fetches the spec over XHR with the stored token.
+        adapter.registerRoute("get", `/docs${path}`, () => html(swaggerShellHtml(title)));
+        // Gated spec: requires a valid signed/Firebase token (Authorization header or ?token).
+        adapter.registerRoute(
+          "get",
+          `/docs${path}/json`,
+          (async (c: Context) => {
+            const credential = extractBearer(c.req.header("authorization")) ??
+              c.req.query("token");
+            const identity = credential
+              ? await validateCredential(credential, { signingKey, firebaseVerifier })
+              : null;
+            if (!identity) {
+              return c.json({ error: "unauthorized", message: "Invalid or missing docs token." }, 401);
+            }
+            log.setSource(identity.source);
+            return new Response(specJson, {
+              headers: { "content-type": "application/json; charset=utf-8" },
+            });
+          }) as RouteHandler,
+        );
       }
-      adapter.registerRoute("get", "/docs", () =>
-        new Response(docsIndexHtml, {
-          headers: { "Content-Type": "text/html" },
-        })
-      );
+      // Public index: seeds the token from ?token into localStorage for the doc pages.
+      adapter.registerRoute("get", "/docs", () => html(injectDocsScript(docsIndexHtml)));
     }
 
     // Initialize eagerly so the in-process `backend` client is usable without listen().
