@@ -1,0 +1,66 @@
+{
+  "module": "checkout",
+  "reqs": [
+    {
+      "noun": "order",
+      "verb": "place",
+      "input": "PlaceOrderDto",
+      "output": "ReceiptDto",
+      "steps": [
+        {
+          "kind": "boundary",
+          "tag": "db",
+          "noun": "order",
+          "verb": "save",
+          "params": [
+            "PlaceOrderDto"
+          ],
+          "output": "ReceiptDto",
+          "isStatic": false,
+          "faults": [
+            "timeout"
+          ],
+          "line": 5
+        },
+        {
+          "kind": "ret",
+          "value": "ReceiptDto",
+          "line": 7
+        }
+      ],
+      "line": 4
+    }
+  ],
+  "ents": [
+    {
+      "surface": "http",
+      "action": "placeOrder",
+      "input": "PlaceOrderDto",
+      "output": "ReceiptDto",
+      "line": 2
+    }
+  ],
+  "dtos": [
+    {
+      "name": "PlaceOrderDto",
+      "properties": [
+        "items"
+      ],
+      "description": "an order to place",
+      "isCore": false,
+      "line": 9
+    },
+    {
+      "name": "ReceiptDto",
+      "properties": [
+        "id"
+      ],
+      "description": "the receipt for a placed order",
+      "isCore": false,
+      "line": 12
+    }
+  ],
+  "typs": [],
+  "nons": [],
+  "errors": []
+}

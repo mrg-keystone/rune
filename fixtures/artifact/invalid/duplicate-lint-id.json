@@ -1,0 +1,67 @@
+{
+  "name": "Test",
+  "schemaVersion": "1.0.0",
+  "tags": [
+    {
+      "id": "dto",
+      "tag": "[DTO]",
+      "label": "DTO",
+      "indent": 0,
+      "follows": "dtodef"
+    },
+    {
+      "id": "ply",
+      "tag": "[PLY]",
+      "label": "Poly",
+      "indent": 4,
+      "follows": "poly"
+    },
+    {
+      "id": "cse",
+      "tag": "[CSE]",
+      "label": "Case",
+      "indent": 8,
+      "follows": "case"
+    }
+  ],
+  "modifiers": [
+    {
+      "id": "core",
+      "token": ":core",
+      "appliesTo": [
+        "dto"
+      ]
+    }
+  ],
+  "boundaries": {
+    "prefixes": [
+      "db:"
+    ]
+  },
+  "builtins": [
+    "string"
+  ],
+  "tokens": {},
+  "lint": [
+    {
+      "id": "dto-suffix",
+      "type": "name-suffix",
+      "target": "spec",
+      "severity": "error",
+      "enabled": true,
+      "params": {
+        "tag": "dto"
+      },
+      "message": "x"
+    },
+    {
+      "id": "dto-suffix",
+      "type": "unused",
+      "target": "spec",
+      "severity": "warning",
+      "enabled": true,
+      "params": {},
+      "message": "y"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "module": "",
+  "rune": "corpus/valid/all-tags.rune",
+  "toCreate": [],
+  "toRegenerate": [],
+  "toSkip": [],
+  "errors": [
+    "corpus/valid/all-tags.rune: no [MOD] directive and could not derive module name"
+  ]
+}

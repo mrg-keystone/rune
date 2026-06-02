@@ -1,0 +1,151 @@
+{
+  "module": null,
+  "reqs": [
+    {
+      "noun": "sync",
+      "verb": "run",
+      "input": "SyncDto",
+      "output": "ResultDto",
+      "steps": [
+        {
+          "kind": "boundary",
+          "tag": "db",
+          "noun": "store",
+          "verb": "read",
+          "params": [
+            "IdDto"
+          ],
+          "output": "RecordDto",
+          "isStatic": false,
+          "faults": [
+            "not-found"
+          ],
+          "line": 1
+        },
+        {
+          "kind": "boundary",
+          "tag": "fs",
+          "noun": "disk",
+          "verb": "load",
+          "params": [
+            "IdDto"
+          ],
+          "output": "RecordDto",
+          "isStatic": false,
+          "faults": [
+            "not-found"
+          ],
+          "line": 3
+        },
+        {
+          "kind": "boundary",
+          "tag": "mq",
+          "noun": "queue",
+          "verb": "publish",
+          "params": [
+            "RecordDto"
+          ],
+          "output": "void",
+          "isStatic": false,
+          "faults": [
+            "timeout"
+          ],
+          "line": 5
+        },
+        {
+          "kind": "boundary",
+          "tag": "ex",
+          "noun": "api",
+          "verb": "fetch",
+          "params": [
+            "IdDto"
+          ],
+          "output": "RecordDto",
+          "isStatic": false,
+          "faults": [
+            "timeout",
+            "not-found"
+          ],
+          "line": 7
+        },
+        {
+          "kind": "boundary",
+          "tag": "os",
+          "noun": "blob",
+          "verb": "put",
+          "params": [
+            "RecordDto"
+          ],
+          "output": "void",
+          "isStatic": false,
+          "faults": [
+            "timeout"
+          ],
+          "line": 9
+        },
+        {
+          "kind": "boundary",
+          "tag": "lg",
+          "noun": "audit",
+          "verb": "write",
+          "params": [
+            "RecordDto"
+          ],
+          "output": "void",
+          "isStatic": false,
+          "faults": [],
+          "line": 11
+        },
+        {
+          "kind": "ret",
+          "value": "ResultDto",
+          "line": 12
+        }
+      ],
+      "line": 0
+    }
+  ],
+  "ents": [],
+  "dtos": [
+    {
+      "name": "SyncDto",
+      "properties": [
+        "id"
+      ],
+      "description": "what to sync",
+      "isCore": false,
+      "line": 14
+    },
+    {
+      "name": "IdDto",
+      "properties": [
+        "id"
+      ],
+      "description": "an identifier",
+      "isCore": false,
+      "line": 17
+    },
+    {
+      "name": "RecordDto",
+      "properties": [
+        "id",
+        "payload"
+      ],
+      "description": "a stored record",
+      "isCore": false,
+      "line": 20
+    },
+    {
+      "name": "ResultDto",
+      "properties": [
+        "id"
+      ],
+      "description": "the sync result",
+      "isCore": false,
+      "line": 23
+    }
+  ],
+  "typs": [],
+  "nons": [],
+  "errors": []
+}

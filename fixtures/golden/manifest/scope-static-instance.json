@@ -1,0 +1,10 @@
+{
+  "module": "",
+  "rune": "corpus/valid/scope-static-instance.rune",
+  "toCreate": [],
+  "toRegenerate": [],
+  "toSkip": [],
+  "errors": [
+    "corpus/valid/scope-static-instance.rune: no [MOD] directive and could not derive module name"
+  ]
+}

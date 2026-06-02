@@ -1,0 +1,21 @@
+{
+  "tasks": {
+    "setup": "deno run --allow-read --allow-run --allow-write src/bootstrap/config.ts && deno run --allow-read --allow-write scripts/gen-shape-docs.ts",
+    "check": "deno run --allow-read --allow-write --allow-net --allow-env --allow-run src/bootstrap/mod.ts",
+    "gen": "deno run --allow-read --allow-write generate.mjs",
+    "studio": "cd rune-studio && deno task dev",
+    "compile": "deno task setup && deno compile --allow-read --allow-write --allow-net --allow-env --allow-run -o dist/rune src/bootstrap/mod.ts",
+    "install": "deno task compile && cp dist/rune ~/.deno/bin/rune",
+    "verify": "deno run -A scripts/verify.ts"
+  },
+  "imports": {
+    "@/": "./src/",
+    "@core/": "./src/core/",
+    "@rune/": "./src/rune/",
+    "@assets/": "./assets/",
+    "#zod": "npm:zod",
+    "#std/assert": "jsr:@std/assert",
+    "#std/path": "jsr:@std/path"
+  },
+  "compilerOptions": { "strict": true }
+}

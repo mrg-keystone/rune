@@ -1,0 +1,10 @@
+{
+  "module": "",
+  "rune": "corpus/valid/faults-0-1-many.rune",
+  "toCreate": [],
+  "toRegenerate": [],
+  "toSkip": [],
+  "errors": [
+    "corpus/valid/faults-0-1-many.rune: no [MOD] directive and could not derive module name"
+  ]
+}

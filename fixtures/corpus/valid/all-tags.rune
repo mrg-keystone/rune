@@ -1,0 +1,25 @@
+[REQ] order.place(PlaceOrderDto): ReceiptDto
+    [NEW] cart
+    cart.total(): PriceDto
+      empty-cart
+    db:order.save(PlaceOrderDto): IdDto
+      timeout network-error
+    [RET] ReceiptDto
+
+[NON] cart
+    a shopping cart holding line items before checkout
+
+[TYP] price: number
+    a positive monetary amount
+
+[DTO] PlaceOrderDto: items
+    the order the customer wants to place
+
+[DTO] PriceDto: price
+    a computed price
+
+[DTO] IdDto: id
+    a persisted order identifier
+
+[DTO] ReceiptDto: id, price
+    the receipt returned to the customer

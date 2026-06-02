@@ -1,0 +1,4 @@
+[RET] FooDto
+
+[DTO] FooDto: a
+    a value returned from nowhere — [RET] is only valid inside a [REQ]

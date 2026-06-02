@@ -1,0 +1,267 @@
+import { dirname, join, relative, resolve } from "#std/path";
+import { planSync } from "@rune/domain/business/rune-sync/mod.ts";
+import {
+  artifactToOptions,
+  type ManifestOptions,
+} from "@rune/domain/business/rune-manifest/mod.ts";
+import { loadArtifact } from "@rune/domain/business/artifact/mod.ts";
+
+const RED = "\x1b[31m";
+const GREEN = "\x1b[32m";
+const YELLOW = "\x1b[33m";
+const CYAN = "\x1b[36m";
+const BOLD = "\x1b[1m";
+const RESET = "\x1b[0m";
+
+interface SyncArgs {
+  runePath: string;
+  root: string;
+  dryRun: boolean;
+  force: boolean;
+  artifactPath: string | null;
+}
+
+function parseSyncArgs(args: string[]): SyncArgs | null {
+  let runePath: string | null = null;
+  let root = ".";
+  let dryRun = false;
+  let force = false;
+  let artifactPath: string | null = null;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--dry-run") dryRun = true;
+    else if (a === "--force") force = true;
+    else if (a === "--root") root = args[++i] ?? ".";
+    else if (a === "--artifact") artifactPath = args[++i] ?? null;
+    else if (!a.startsWith("--") && runePath === null) runePath = a;
+  }
+  if (runePath === null) return null;
+  return { runePath, root, dryRun, force, artifactPath };
+}
+
+// Load the artifact's manifest options (bindings + codegen templates + policies)
+// from --artifact, so a policy edited in the Studio drives sync. Returns null on
+// a read/parse/validation failure (caller has already printed the diagnostic).
+async function loadOptions(
+  artifactPath: string | null,
+): Promise<ManifestOptions | null | "error"> {
+  if (!artifactPath) return null; // no artifact → engine defaults
+  let raw: string;
+  try {
+    raw = await Deno.readTextFile(resolve(artifactPath));
+  } catch (e) {
+    console.error(
+      `${RED}error: cannot read artifact ${artifactPath}: ${
+        errMessage(e)
+      }${RESET}`,
+    );
+    return "error";
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.error(
+      `${RED}error: ${artifactPath} is not valid JSON: ${
+        errMessage(e)
+      }${RESET}`,
+    );
+    return "error";
+  }
+  const artifact = loadArtifact(parsed, artifactPath); // prints its own diagnostics
+  if (!artifact) return "error";
+  return artifactToOptions(artifact);
+}
+
+function errMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+// Reconcile a .rune spec with the project tree: scaffold new code, prune orphans
+// the spec no longer declares, and preserve everything already filled in.
+export async function runSync(args: string[]): Promise<number> {
+  const parsed = parseSyncArgs(args);
+  if (!parsed) {
+    console.error(
+      "Usage: rune sync <rune-file> [--root <dir>] [--artifact <keywords.json>] [--dry-run] [--force]",
+    );
+    return 2;
+  }
+
+  const root = resolve(parsed.root);
+  const absRune = resolve(parsed.runePath);
+  const relRune = relative(root, absRune);
+
+  let runeText: string;
+  try {
+    runeText = await Deno.readTextFile(absRune);
+  } catch (e) {
+    console.error(
+      `${RED}error: cannot read ${parsed.runePath}: ${errMessage(e)}${RESET}`,
+    );
+    return 2;
+  }
+
+  const opts = await loadOptions(parsed.artifactPath);
+  if (opts === "error") return 2;
+
+  const existingFiles = await collectFiles(root);
+  const plan = planSync(relRune, runeText, existingFiles, opts ?? {});
+
+  if (plan.errors.length > 0) {
+    console.error(`${RED}parse error in ${relRune}:${RESET}`);
+    for (const e of plan.errors) console.error(`  ${e}`);
+    return 2;
+  }
+
+  const created: string[] = [];
+  const regenerated: string[] = [];
+  const pruned: string[] = [];
+  const ioErrors: string[] = [];
+
+  // Dev-owned orphans (hand-written bodies) are only deleted with --force; without
+  // it they're held back so a spec edit can never silently drop your code.
+  const ownedSet = new Set(plan.toPruneOwned);
+  const blocked = parsed.force
+    ? []
+    : plan.toPrune.filter((p) => ownedSet.has(p));
+  const deletable = parsed.force
+    ? plan.toPrune
+    : plan.toPrune.filter((p) => !ownedSet.has(p));
+
+  if (parsed.dryRun) {
+    created.push(...plan.toCreate.map((f) => f.path));
+    regenerated.push(...plan.toRegenerate.map((f) => f.path));
+    pruned.push(...deletable);
+  } else {
+    for (const file of plan.toCreate) {
+      if (await write(root, file.path, file.content, ioErrors)) {
+        created.push(file.path);
+      }
+    }
+    // Spec-owned signatures: rewritten every run, even if they exist.
+    for (const file of plan.toRegenerate) {
+      if (await write(root, file.path, file.content, ioErrors)) {
+        regenerated.push(file.path);
+      }
+    }
+    for (const target of deletable) {
+      const abs = join(root, target);
+      try {
+        const info = await Deno.lstat(abs);
+        await Deno.remove(abs, { recursive: info.isDirectory });
+        pruned.push(target);
+      } catch (e) {
+        ioErrors.push(`${target}: ${errMessage(e)}`);
+      }
+    }
+  }
+
+  report(
+    relRune,
+    plan.module,
+    parsed.dryRun,
+    created,
+    regenerated,
+    plan.toSkip.length,
+    pruned,
+    blocked,
+    ioErrors,
+  );
+  return ioErrors.length > 0 ? 2 : 0;
+}
+
+async function write(
+  root: string,
+  rel: string,
+  content: string,
+  ioErrors: string[],
+): Promise<boolean> {
+  const abs = join(root, rel);
+  try {
+    await Deno.mkdir(dirname(abs), { recursive: true });
+    await Deno.writeTextFile(abs, content);
+    return true;
+  } catch (e) {
+    ioErrors.push(`${rel}: ${errMessage(e)}`);
+    return false;
+  }
+}
+
+function report(
+  relRune: string,
+  module: string,
+  dryRun: boolean,
+  created: string[],
+  regenerated: string[],
+  preserved: number,
+  pruned: string[],
+  blocked: string[],
+  ioErrors: string[],
+): void {
+  console.log(
+    `${BOLD}sync ${relRune} (module: ${module})${
+      dryRun ? " — dry run" : ""
+    }${RESET}`,
+  );
+  if (created.length > 0) {
+    console.log(`\n  ${GREEN}Created ${created.length} file(s):${RESET}`);
+    for (const p of created) console.log(`    ${GREEN}+ ${p}${RESET}`);
+  }
+  if (regenerated.length > 0) {
+    console.log(
+      `\n  ${CYAN}Regenerated ${regenerated.length} signature(s):${RESET}`,
+    );
+    for (const p of regenerated) console.log(`    ${CYAN}~ ${p}${RESET}`);
+  }
+  if (preserved > 0) {
+    console.log(
+      `\n  ${YELLOW}Preserved ${preserved} existing file(s).${RESET}`,
+    );
+  }
+  if (pruned.length > 0) {
+    console.log(`\n  ${RED}Pruned ${pruned.length} orphan(s):${RESET}`);
+    for (const p of pruned) console.log(`    ${RED}- ${p}${RESET}`);
+  }
+  if (blocked.length > 0) {
+    console.log(
+      `\n  ${YELLOW}Held back ${blocked.length} dev-owned orphan(s) — re-run with --force to delete:${RESET}`,
+    );
+    for (const p of blocked) console.log(`    ${YELLOW}? ${p}${RESET}`);
+  }
+  if (ioErrors.length > 0) {
+    console.log(`\n  ${RED}I/O errors:${RESET}`);
+    for (const e of ioErrors) console.log(`    ${RED}! ${e}${RESET}`);
+  }
+  if (
+    created.length === 0 && pruned.length === 0 && blocked.length === 0 &&
+    ioErrors.length === 0
+  ) {
+    console.log(`\n  ${CYAN}In sync — nothing to create or prune.${RESET}`);
+  }
+  console.log(
+    `\n  ${CYAN}Next: run \`deno check\` to surface method-level drift.${RESET}`,
+  );
+}
+
+async function collectFiles(root: string): Promise<Set<string>> {
+  const SKIP = new Set([".git", "node_modules", "dist", ".playwright-mcp"]);
+  const files = new Set<string>();
+  async function walk(dir: string, prefix: string): Promise<void> {
+    let entries: AsyncIterable<Deno.DirEntry>;
+    try {
+      entries = Deno.readDir(dir);
+    } catch {
+      return;
+    }
+    for await (const entry of entries) {
+      if (SKIP.has(entry.name) || entry.name.startsWith(".")) continue;
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const abs = join(dir, entry.name);
+      if (entry.isDirectory) await walk(abs, rel);
+      else if (entry.isFile) files.add(rel);
+    }
+  }
+  await walk(root, "");
+  return files;
+}

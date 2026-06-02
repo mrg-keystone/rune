@@ -1,0 +1,101 @@
+# Canonical Project Shape
+
+> **Auto-generated** from `canonical-paths.json`. Do not edit manually.
+
+## Rules
+
+- **Allowed root files** (by stem): `deno`, `deno.lock`, `README`, `.gitignore`, `TODOS`
+- **Forbidden directory names** (anywhere): `lib`, `modules`, `internal`
+- **Loose file names** (flagged anywhere): `utils`, `helpers`, `common`, `shared`, `util`, `helper`
+
+## Structure
+
+```
+bootstrap/  # Composition root — wires modules, starts the app
+    ├── mod.ts  # app entry point and module wiring
+    └── config.ts  # environment and configuration loading
+src/
+    ├── core/  # Shared kernel — importable from any module
+    │   ├── business/
+    │   │   └── <feature>/
+    │   │       ├── # variant 1
+    │   │       │   ├── template.html (optional)  # HTML template for UI rendering
+    │   │       │   ├── styles.css (optional)  # scoped styles for this feature
+    │   │       │   ├── mod.ts  # pure logic, no I/O or side effects
+    │   │       │   └── test.ts  # unit tests for the sibling mod
+    │   │       └── # variant 2
+    │   │           ├── base/
+    │   │           │   ├── mod.ts  # shared base implementation across variants
+    │   │           │   └── test.ts  # tests for the base implementation
+    │   │           ├── implementations/
+    │   │           │   └── <variant-name>/
+    │   │           │       ├── mod.ts  # variant-specific implementation
+    │   │           │       └── test.ts  # tests for this variant
+    │   │           └── poly-mod.ts  # barrel re-export for the active variant
+    │   ├── data/
+    │   │   └── <service>/
+    │   │       ├── mod.ts  # adapter for an external system
+    │   │       └── smk.test.ts  # smoke test, verifies connectivity
+    │   └── dto/
+    │       └── <name>.ts  # Zod schema and type definition
+    └── <module-name>/  # Isolated module — imports only from core or itself
+        ├── mod-root.ts  # public API, only external import surface
+        ├── domain/
+        │   ├── business/
+        │   │   └── <feature>/
+        │   │       ├── # variant 1
+        │   │       │   ├── template.html|.tsx (optional)  # HTML template for UI rendering
+        │   │       │   ├── styles.css (optional)  # scoped styles for this feature
+        │   │       │   ├── mod.ts  # pure logic, no I/O or side effects
+        │   │       │   └── test.ts  # unit tests for the sibling mod
+        │   │       └── # variant 2
+        │   │           ├── base/
+        │   │           │   ├── mod.ts  # shared base implementation across variants
+        │   │           │   └── test.ts  # tests for the base implementation
+        │   │           ├── implementations/
+        │   │           │   └── <variant-name>/
+        │   │           │       ├── mod.ts  # variant-specific implementation
+        │   │           │       └── test.ts  # tests for this variant
+        │   │           └── poly-mod.ts  # barrel re-export for the active variant
+        │   ├── data/
+        │   │   └── <service>/
+        │   │       ├── mod.ts  # adapter for an external system
+        │   │       └── smk.test.ts  # smoke test, verifies connectivity
+        │   └── coordinators/
+        │       └── <process>/
+        │           ├── template.html|.tsx (optional)  # HTML template for UI rendering
+        │           ├── styles.css (optional)  # scoped styles
+        │           ├── mod.ts  # orchestrates business + data layers
+        │           └── int.test.ts  # integration test for the workflow
+        ├── entrypoints/
+        │   └── <name>/
+        │       ├── template.html|.tsx (optional)  # HTML template for UI rendering
+        │       ├── styles.css (optional)  # scoped styles
+        │       ├── mod.ts  # exposes functionality to the outside world
+        │       └── e2e.test.ts  # cypress end-to-end tests for this entry point
+        └── dto/
+            └── <name>.ts  # class validator and class transformer type definition
+specs/  # Rune spec files — one per module
+    └── <name>.rune  # rune spec for a module
+fixtures/
+    └── <category>/
+assets/
+    └── <category>/
+        └── <name>.*  # static asset
+dist/  # Compiled output — not source-controlled
+```
+
+## Key Conventions
+
+- `/` suffix in spec keys = folder
+- File objects with `ext` = enforced extensions, `optional: true` = not required
+- `<name>` = wildcard, matches any name
+- `mod.ts` — main module file
+- `mod-root.ts` — module's public API (only external import surface)
+- `poly-mod.ts` — polymorphic barrel export
+- `test.ts` — unit tests (co-located)
+- `int.test.ts` — integration tests (coordinators)
+- `smk.test.ts` — smoke tests (data layer)
+- `e2e.test.ts` — end-to-end tests (entrypoints)
+- `./` imports for same-directory, `@` aliases for cross-directory
+- `#` aliases for external packages (npm/jsr)

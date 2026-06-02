@@ -1,0 +1,10 @@
+{
+  "module": "",
+  "rune": "corpus/valid/boundaries.rune",
+  "toCreate": [],
+  "toRegenerate": [],
+  "toSkip": [],
+  "errors": [
+    "corpus/valid/boundaries.rune: no [MOD] directive and could not derive module name"
+  ]
+}

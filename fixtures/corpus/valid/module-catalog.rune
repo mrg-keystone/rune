@@ -1,0 +1,12 @@
+[MOD] catalog
+
+[REQ] product.list(ListDto): ProductsDto
+    db:product.query(ListDto): ProductsDto
+      timeout
+    [RET] ProductsDto
+
+[DTO] ListDto: page
+    a paged product listing request
+
+[DTO] ProductsDto: items
+    a page of products

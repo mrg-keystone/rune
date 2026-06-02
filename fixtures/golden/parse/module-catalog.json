@@ -1,0 +1,58 @@
+{
+  "module": "catalog",
+  "reqs": [
+    {
+      "noun": "product",
+      "verb": "list",
+      "input": "ListDto",
+      "output": "ProductsDto",
+      "steps": [
+        {
+          "kind": "boundary",
+          "tag": "db",
+          "noun": "product",
+          "verb": "query",
+          "params": [
+            "ListDto"
+          ],
+          "output": "ProductsDto",
+          "isStatic": false,
+          "faults": [
+            "timeout"
+          ],
+          "line": 3
+        },
+        {
+          "kind": "ret",
+          "value": "ProductsDto",
+          "line": 5
+        }
+      ],
+      "line": 2
+    }
+  ],
+  "ents": [],
+  "dtos": [
+    {
+      "name": "ListDto",
+      "properties": [
+        "page"
+      ],
+      "description": "a paged product listing request",
+      "isCore": false,
+      "line": 7
+    },
+    {
+      "name": "ProductsDto",
+      "properties": [
+        "items"
+      ],
+      "description": "a page of products",
+      "isCore": false,
+      "line": 10
+    }
+  ],
+  "typs": [],
+  "nons": [],
+  "errors": []
+}

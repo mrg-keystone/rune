@@ -1,0 +1,18 @@
+[REQ] account.open(OpenDto): AccountDto
+    id::create(OpenDto): IdDto
+    [NEW] account
+    account.activate(IdDto): AccountDto
+      already-active
+    [RET] AccountDto
+
+[NON] account
+    a customer account
+
+[DTO] OpenDto: name
+    a request to open an account
+
+[DTO] IdDto: id
+    a generated identifier
+
+[DTO] AccountDto: id, name
+    an opened account

@@ -1,0 +1,16 @@
+[REQ] notify.send(NotifyDto): ReceiptDto
+    [NEW] channel
+    [PLY] channel.deliver(NotifyDto): ReceiptDto
+        [CSE] email
+        ex:smtp.send(NotifyDto): ReceiptDto
+          timeout
+    [RET] ReceiptDto
+
+[NON] channel
+    a delivery channel for notifications
+
+[DTO] NotifyDto: message
+    a message to deliver
+
+[DTO] ReceiptDto: id
+    a delivery receipt

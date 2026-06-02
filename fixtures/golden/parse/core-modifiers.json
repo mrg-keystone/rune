@@ -1,0 +1,44 @@
+{
+  "module": null,
+  "reqs": [],
+  "ents": [],
+  "dtos": [
+    {
+      "name": "AuditDto",
+      "properties": [
+        "id",
+        "timestamp"
+      ],
+      "description": "a shared audit record usable from any module",
+      "isCore": true,
+      "line": 6
+    },
+    {
+      "name": "LocalDto",
+      "properties": [
+        "id"
+      ],
+      "description": "a module-local contract that references a core type",
+      "isCore": false,
+      "line": 9
+    }
+  ],
+  "typs": [
+    {
+      "name": "id",
+      "typeName": "string",
+      "description": "a globally shared identifier type",
+      "isCore": true,
+      "line": 0
+    },
+    {
+      "name": "timestamp",
+      "typeName": "number",
+      "description": "an epoch-millis timestamp shared across modules",
+      "isCore": true,
+      "line": 3
+    }
+  ],
+  "nons": [],
+  "errors": []
+}

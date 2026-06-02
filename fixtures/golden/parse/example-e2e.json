@@ -1,0 +1,496 @@
+{
+  "module": null,
+  "reqs": [
+    {
+      "noun": "recording",
+      "verb": "register",
+      "input": "GetRecordingDto",
+      "output": "IdDto",
+      "steps": [
+        {
+          "kind": "step",
+          "noun": "id",
+          "verb": "create",
+          "params": [
+            "providerName",
+            "externalId"
+          ],
+          "output": "id",
+          "isStatic": true,
+          "faults": [],
+          "line": 1
+        },
+        {
+          "kind": "step",
+          "noun": "provider",
+          "verb": "pick",
+          "params": [
+            "providerName"
+          ],
+          "output": "provider",
+          "isStatic": true,
+          "faults": [
+            "not-found"
+          ],
+          "line": 2
+        },
+        {
+          "kind": "ply",
+          "noun": "provider",
+          "verb": "getRecording",
+          "params": [
+            "externalId"
+          ],
+          "output": "data",
+          "isStatic": false,
+          "cases": [
+            {
+              "name": "genie",
+              "steps": [
+                {
+                  "kind": "boundary",
+                  "tag": "ex",
+                  "noun": "provider",
+                  "verb": "search",
+                  "params": [
+                    "externalId"
+                  ],
+                  "output": "SearchDto",
+                  "isStatic": false,
+                  "faults": [
+                    "not-found",
+                    "timeout",
+                    "invalid-id"
+                  ],
+                  "line": 6
+                },
+                {
+                  "kind": "boundary",
+                  "tag": "ex",
+                  "noun": "provider",
+                  "verb": "download",
+                  "params": [
+                    "url"
+                  ],
+                  "output": "data",
+                  "isStatic": false,
+                  "faults": [
+                    "not-found",
+                    "timeout"
+                  ],
+                  "line": 8
+                }
+              ],
+              "line": 5
+            },
+            {
+              "name": "fiveNine",
+              "steps": [
+                {
+                  "kind": "boundary",
+                  "tag": "ex",
+                  "noun": "provider",
+                  "verb": "search",
+                  "params": [
+                    "externalId"
+                  ],
+                  "output": "SearchDto",
+                  "isStatic": false,
+                  "faults": [
+                    "not-found",
+                    "timeout",
+                    "invalid-id"
+                  ],
+                  "line": 11
+                },
+                {
+                  "kind": "boundary",
+                  "tag": "ex",
+                  "noun": "provider",
+                  "verb": "download",
+                  "params": [
+                    "url"
+                  ],
+                  "output": "data",
+                  "isStatic": false,
+                  "faults": [
+                    "not-found",
+                    "timeout"
+                  ],
+                  "line": 13
+                }
+              ],
+              "line": 10
+            }
+          ],
+          "line": 4
+        },
+        {
+          "kind": "ctr",
+          "className": "metadata",
+          "line": 15
+        },
+        {
+          "kind": "step",
+          "noun": "metadata",
+          "verb": "toDto",
+          "params": [],
+          "output": "MetadataDto",
+          "isStatic": false,
+          "faults": [],
+          "line": 16
+        },
+        {
+          "kind": "boundary",
+          "tag": "db",
+          "noun": "metadata",
+          "verb": "set",
+          "params": [
+            "IdDto",
+            "MetadataDto"
+          ],
+          "output": "void",
+          "isStatic": false,
+          "faults": [
+            "timeout",
+            "network-error"
+          ],
+          "line": 17
+        },
+        {
+          "kind": "ctr",
+          "className": "storage",
+          "line": 19
+        },
+        {
+          "kind": "boundary",
+          "tag": "os",
+          "noun": "storage",
+          "verb": "save",
+          "params": [
+            "IdDto",
+            "data"
+          ],
+          "output": "void",
+          "isStatic": false,
+          "faults": [
+            "timeout",
+            "network-error"
+          ],
+          "line": 20
+        },
+        {
+          "kind": "step",
+          "noun": "id",
+          "verb": "toDto",
+          "params": [],
+          "output": "IdDto",
+          "isStatic": false,
+          "faults": [],
+          "line": 22
+        }
+      ],
+      "line": 0
+    },
+    {
+      "noun": "recording",
+      "verb": "get",
+      "input": "GetRecordingDto",
+      "output": "RecordingDto",
+      "steps": [
+        {
+          "kind": "step",
+          "noun": "id",
+          "verb": "create",
+          "params": [
+            "providerName",
+            "externalId"
+          ],
+          "output": "id",
+          "isStatic": true,
+          "faults": [
+            "invalid"
+          ],
+          "line": 26
+        },
+        {
+          "kind": "ctr",
+          "className": "storage",
+          "line": 28
+        },
+        {
+          "kind": "step",
+          "noun": "id",
+          "verb": "toDto",
+          "params": [],
+          "output": "IdDto",
+          "isStatic": false,
+          "faults": [],
+          "line": 29
+        },
+        {
+          "kind": "boundary",
+          "tag": "os",
+          "noun": "storage",
+          "verb": "load",
+          "params": [
+            "IdDto"
+          ],
+          "output": "DataDto",
+          "isStatic": false,
+          "faults": [
+            "woof",
+            "timeout",
+            "network-error"
+          ],
+          "line": 30
+        },
+        {
+          "kind": "ctr",
+          "className": "metadata",
+          "line": 32
+        },
+        {
+          "kind": "boundary",
+          "tag": "db",
+          "noun": "metadata",
+          "verb": "get",
+          "params": [
+            "IdDto"
+          ],
+          "output": "MetadataDto",
+          "isStatic": false,
+          "faults": [
+            "not-found",
+            "timeout",
+            "network-error"
+          ],
+          "line": 33
+        },
+        {
+          "kind": "step",
+          "noun": "recording",
+          "verb": "create",
+          "params": [
+            "DataDto",
+            "MetadataDto"
+          ],
+          "output": "recording",
+          "isStatic": true,
+          "faults": [
+            "invalid-data",
+            "invalid-metadata"
+          ],
+          "line": 35
+        },
+        {
+          "kind": "step",
+          "noun": "recording",
+          "verb": "toDto",
+          "params": [],
+          "output": "RecordingDto",
+          "isStatic": false,
+          "faults": [],
+          "line": 37
+        }
+      ],
+      "line": 25
+    },
+    {
+      "noun": "recordingMetadata",
+      "verb": "set",
+      "input": "SetMetadataDto",
+      "output": "MetadataDto",
+      "steps": [
+        {
+          "kind": "step",
+          "noun": "id",
+          "verb": "create",
+          "params": [
+            "providerName",
+            "externalId"
+          ],
+          "output": "id",
+          "isStatic": true,
+          "faults": [
+            "invalid"
+          ],
+          "line": 41
+        },
+        {
+          "kind": "ctr",
+          "className": "metadata",
+          "line": 43
+        },
+        {
+          "kind": "boundary",
+          "tag": "db",
+          "noun": "metadata",
+          "verb": "get",
+          "params": [
+            "IdDto"
+          ],
+          "output": "MetadataDto",
+          "isStatic": false,
+          "faults": [
+            "not-found",
+            "timeout",
+            "network-error"
+          ],
+          "line": 44
+        },
+        {
+          "kind": "boundary",
+          "tag": "db",
+          "noun": "metadata",
+          "verb": "set",
+          "params": [
+            "IdDto",
+            "MetadataDto"
+          ],
+          "output": "void",
+          "isStatic": false,
+          "faults": [
+            "timeout",
+            "network-error"
+          ],
+          "line": 46
+        },
+        {
+          "kind": "ret",
+          "value": "MetadataDto",
+          "line": 48
+        }
+      ],
+      "line": 40
+    }
+  ],
+  "ents": [],
+  "dtos": [
+    {
+      "name": "SearchDto",
+      "properties": [
+        "url(s)"
+      ],
+      "description": "a list of URLs returned by provider search",
+      "isCore": false,
+      "line": 78
+    },
+    {
+      "name": "GetRecordingDto",
+      "properties": [
+        "providerName",
+        "externalId"
+      ],
+      "description": "input for retrieving a recording by provider and external ID",
+      "isCore": false,
+      "line": 80
+    },
+    {
+      "name": "SetMetadataDto",
+      "properties": [
+        "GetRecordingDto",
+        "MetadataDto?"
+      ],
+      "description": "input for setting metadata on a recording",
+      "isCore": false,
+      "line": 82
+    },
+    {
+      "name": "DataDto",
+      "properties": [
+        "data"
+      ],
+      "description": "wrapper for binary recording data",
+      "isCore": false,
+      "line": 84
+    },
+    {
+      "name": "MetadataDto",
+      "properties": [
+        "metadata?"
+      ],
+      "description": "wrapper for recording metadata",
+      "isCore": false,
+      "line": 86
+    },
+    {
+      "name": "RecordingDto",
+      "properties": [
+        "data",
+        "metadata?"
+      ],
+      "description": "complete recording with data and metadata",
+      "isCore": false,
+      "line": 88
+    },
+    {
+      "name": "IdDto",
+      "properties": [
+        "providerName",
+        "externalId"
+      ],
+      "description": "unique identifier combining provider and external ID",
+      "isCore": false,
+      "line": 90
+    }
+  ],
+  "typs": [
+    {
+      "name": "url",
+      "typeName": "string",
+      "description": "a URL string",
+      "isCore": false,
+      "line": 66
+    },
+    {
+      "name": "providerName",
+      "typeName": "\"genie\" | \"fiveNine\"",
+      "description": "the name of the provider from which the recording is sourced",
+      "isCore": false,
+      "line": 68
+    },
+    {
+      "name": "externalId",
+      "typeName": "string",
+      "description": "the identifier used by the provider to reference the recording",
+      "isCore": false,
+      "line": 71
+    },
+    {
+      "name": "data",
+      "typeName": "Uint8Array",
+      "description": "the binary data of the recording",
+      "isCore": false,
+      "line": 74
+    }
+  ],
+  "nons": [
+    {
+      "name": "storage",
+      "description": "a class representing the storage system used to save and retrieve recording data",
+      "line": 51
+    },
+    {
+      "name": "metadata",
+      "description": "a key-value pair object containing metadata about the recording",
+      "line": 54
+    },
+    {
+      "name": "recording",
+      "description": "a class representing a recording, which includes both the binary data and associated metadata",
+      "line": 57
+    },
+    {
+      "name": "id",
+      "description": "a unique identifier for the recording generated by the system",
+      "line": 60
+    },
+    {
+      "name": "provider",
+      "description": "an instance of the provider class",
+      "line": 63
+    }
+  ],
+  "errors": []
+}

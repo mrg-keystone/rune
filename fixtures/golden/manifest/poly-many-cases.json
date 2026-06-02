@@ -1,0 +1,10 @@
+{
+  "module": "",
+  "rune": "corpus/valid/poly-many-cases.rune",
+  "toCreate": [],
+  "toRegenerate": [],
+  "toSkip": [],
+  "errors": [
+    "corpus/valid/poly-many-cases.rune: no [MOD] directive and could not derive module name"
+  ]
+}

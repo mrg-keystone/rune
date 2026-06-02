@@ -1,0 +1,25 @@
+[REQ] sync.run(SyncDto): ResultDto
+    db:store.read(IdDto): RecordDto
+      not-found
+    fs:disk.load(IdDto): RecordDto
+      not-found
+    mq:queue.publish(RecordDto): void
+      timeout
+    ex:api.fetch(IdDto): RecordDto
+      timeout not-found
+    os:blob.put(RecordDto): void
+      timeout
+    lg:audit.write(RecordDto): void
+    [RET] ResultDto
+
+[DTO] SyncDto: id
+    what to sync
+
+[DTO] IdDto: id
+    an identifier
+
+[DTO] RecordDto: id, payload
+    a stored record
+
+[DTO] ResultDto: id
+    the sync result

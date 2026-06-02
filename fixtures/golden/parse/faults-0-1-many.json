@@ -1,0 +1,103 @@
+{
+  "module": null,
+  "reqs": [
+    {
+      "noun": "payment",
+      "verb": "charge",
+      "input": "ChargeDto",
+      "output": "ChargeResultDto",
+      "steps": [
+        {
+          "kind": "step",
+          "noun": "card",
+          "verb": "validate",
+          "params": [
+            "ChargeDto"
+          ],
+          "output": "ChargeDto",
+          "isStatic": false,
+          "faults": [],
+          "line": 1
+        },
+        {
+          "kind": "boundary",
+          "tag": "ex",
+          "noun": "gateway",
+          "verb": "authorize",
+          "params": [
+            "ChargeDto"
+          ],
+          "output": "AuthDto",
+          "isStatic": false,
+          "faults": [
+            "declined"
+          ],
+          "line": 2
+        },
+        {
+          "kind": "boundary",
+          "tag": "db",
+          "noun": "ledger",
+          "verb": "record",
+          "params": [
+            "AuthDto"
+          ],
+          "output": "ChargeResultDto",
+          "isStatic": false,
+          "faults": [
+            "timeout",
+            "network-error",
+            "conflict"
+          ],
+          "line": 4
+        },
+        {
+          "kind": "ret",
+          "value": "ChargeResultDto",
+          "line": 6
+        }
+      ],
+      "line": 0
+    }
+  ],
+  "ents": [],
+  "dtos": [
+    {
+      "name": "ChargeDto",
+      "properties": [
+        "amount"
+      ],
+      "description": "a request to charge a card",
+      "isCore": false,
+      "line": 11
+    },
+    {
+      "name": "AuthDto",
+      "properties": [
+        "token"
+      ],
+      "description": "an authorization from the gateway",
+      "isCore": false,
+      "line": 14
+    },
+    {
+      "name": "ChargeResultDto",
+      "properties": [
+        "token",
+        "amount"
+      ],
+      "description": "the settled charge",
+      "isCore": false,
+      "line": 17
+    }
+  ],
+  "typs": [],
+  "nons": [
+    {
+      "name": "card",
+      "description": "a payment card presented by the customer",
+      "line": 8
+    }
+  ],
+  "errors": []
+}

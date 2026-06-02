@@ -1,0 +1,35 @@
+{
+  "name": "Test",
+  "schemaVersion": "1.0.0",
+  "modifiers": [
+    {
+      "id": "core",
+      "token": ":core",
+      "appliesTo": [
+        "dto"
+      ]
+    }
+  ],
+  "boundaries": {
+    "prefixes": [
+      "db:"
+    ]
+  },
+  "builtins": [
+    "string"
+  ],
+  "tokens": {},
+  "lint": [
+    {
+      "id": "dto-suffix",
+      "type": "name-suffix",
+      "target": "spec",
+      "severity": "error",
+      "enabled": true,
+      "params": {
+        "tag": "dto"
+      },
+      "message": "x"
+    }
+  ]
+}

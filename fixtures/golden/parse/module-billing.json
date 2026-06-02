@@ -1,0 +1,60 @@
+{
+  "module": "billing",
+  "reqs": [
+    {
+      "noun": "invoice",
+      "verb": "issue",
+      "input": "IssueDto",
+      "output": "InvoiceDto",
+      "steps": [
+        {
+          "kind": "boundary",
+          "tag": "db",
+          "noun": "invoice",
+          "verb": "save",
+          "params": [
+            "IssueDto"
+          ],
+          "output": "InvoiceDto",
+          "isStatic": false,
+          "faults": [
+            "timeout"
+          ],
+          "line": 3
+        },
+        {
+          "kind": "ret",
+          "value": "InvoiceDto",
+          "line": 5
+        }
+      ],
+      "line": 2
+    }
+  ],
+  "ents": [],
+  "dtos": [
+    {
+      "name": "IssueDto",
+      "properties": [
+        "customerId",
+        "amount"
+      ],
+      "description": "a request to issue an invoice",
+      "isCore": false,
+      "line": 7
+    },
+    {
+      "name": "InvoiceDto",
+      "properties": [
+        "id",
+        "amount"
+      ],
+      "description": "an issued invoice",
+      "isCore": false,
+      "line": 10
+    }
+  ],
+  "typs": [],
+  "nons": [],
+  "errors": []
+}

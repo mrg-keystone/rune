@@ -1,0 +1,74 @@
+[
+  {
+    "rule": "external-imports",
+    "path": "src/app/domain/business/widget/mod.ts",
+    "line": 0,
+    "message": "Direct \"npm:zod\" import is not allowed — add a # alias in deno.json and import via the alias instead"
+  },
+  {
+    "rule": "import-aliases",
+    "path": "src/app/domain/business/widget/mod.ts",
+    "line": 0,
+    "message": "\"../\" import is not allowed — use an @ alias instead (../../../../shared/helper.ts)"
+  },
+  {
+    "rule": "module-fragmentation",
+    "path": "src/app",
+    "line": 0,
+    "message": "Module has only one business feature (widget) — it may not need its own module"
+  },
+  {
+    "rule": "module-fragmentation",
+    "path": "src/app",
+    "line": 0,
+    "message": "Module only has 2 source files — consider merging it into a related module"
+  },
+  {
+    "rule": "module-fragmentation",
+    "path": "src/app",
+    "line": 0,
+    "message": "Module only uses 1 layer(s) (business) — consider merging into a module that uses more of the architecture"
+  },
+  {
+    "rule": "module-isolation",
+    "path": "src/app/domain/business/widget/mod.ts",
+    "line": 0,
+    "message": "Cross-module import from \"app\" into \"shared\" is forbidden — extract shared code to core/ instead (src/shared/helper.ts)"
+  },
+  {
+    "rule": "structure",
+    "path": "src/app",
+    "line": 0,
+    "message": "Missing required file \"mod-root\" (.ts) — public API, only external import surface"
+  },
+  {
+    "rule": "structure",
+    "path": "src/app/domain/business/widget",
+    "line": 0,
+    "message": "This folder is not allowed by the project structure spec\n\nExpected structure:\n  Folders: <feature>/"
+  },
+  {
+    "rule": "structure",
+    "path": "src/app/domain/business/widget/mod.ts",
+    "line": 0,
+    "message": "This file is not allowed here — parent folder is not in the spec"
+  },
+  {
+    "rule": "structure",
+    "path": "src/app/shared",
+    "line": 0,
+    "message": "\"shared\" contains loose/vague word \"shared\" — use a more specific name"
+  },
+  {
+    "rule": "structure",
+    "path": "src/app/shared",
+    "line": 0,
+    "message": "This folder is not allowed by the project structure spec\n\nExpected structure:\n  Isolated module — imports only from core or itself\n  Folders: domain/, entrypoints/, dto/\n  mod-root.ts — public API, only external import surface"
+  },
+  {
+    "rule": "structure",
+    "path": "src/app/shared/helper.ts",
+    "line": 0,
+    "message": "This file is not allowed here — parent folder is not in the spec"
+  }
+]

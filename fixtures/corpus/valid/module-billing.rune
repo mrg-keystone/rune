@@ -1,0 +1,12 @@
+[MOD] billing
+
+[REQ] invoice.issue(IssueDto): InvoiceDto
+    db:invoice.save(IssueDto): InvoiceDto
+      timeout
+    [RET] InvoiceDto
+
+[DTO] IssueDto: customerId, amount
+    a request to issue an invoice
+
+[DTO] InvoiceDto: id, amount
+    an issued invoice

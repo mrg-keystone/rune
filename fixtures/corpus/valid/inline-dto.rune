@@ -1,0 +1,10 @@
+[REQ] search.run({query, page}): ResultsDto
+    db:index.query(QueryDto): ResultsDto
+      timeout
+    [RET] ResultsDto
+
+[DTO] QueryDto: query, page
+    a search query with pagination
+
+[DTO] ResultsDto: items
+    the matched results

@@ -1,0 +1,10 @@
+{
+  "module": "",
+  "rune": "corpus/valid/example-e2e.rune",
+  "toCreate": [],
+  "toRegenerate": [],
+  "toSkip": [],
+  "errors": [
+    "corpus/valid/example-e2e.rune: no [MOD] directive and could not derive module name"
+  ]
+}

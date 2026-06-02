@@ -1,0 +1,34 @@
+[MOD] lists
+
+[REQ] list.create(CreateListDto): ListDto
+    id::generate(): id
+    [NEW] list
+    list.fill(name): list
+    db:list.save(ListDto): void
+      timeout
+    list.toDto(): ListDto
+
+[REQ] list.addTask(AddTaskDto): ListDto
+    db:list.load(id): ListDto
+      not-found
+    list.append(taskId): list
+    db:list.save(ListDto): void
+      timeout
+    list.toDto(): ListDto
+
+[TYP] id: string
+    a unique list identifier
+[TYP] name: string
+    the list name
+[TYP] taskId: string
+    an id of a task placed on the list
+
+[DTO] CreateListDto: name
+    input to create a new list
+[DTO] AddTaskDto: id, taskId
+    input to add a task to a list
+[DTO] ListDto: id, name, taskIds
+    a persisted list record
+
+[NON] list
+    a named collection of tasks

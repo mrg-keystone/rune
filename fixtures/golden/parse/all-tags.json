@@ -1,0 +1,109 @@
+{
+  "module": null,
+  "reqs": [
+    {
+      "noun": "order",
+      "verb": "place",
+      "input": "PlaceOrderDto",
+      "output": "ReceiptDto",
+      "steps": [
+        {
+          "kind": "ctr",
+          "className": "cart",
+          "line": 1
+        },
+        {
+          "kind": "step",
+          "noun": "cart",
+          "verb": "total",
+          "params": [],
+          "output": "PriceDto",
+          "isStatic": false,
+          "faults": [
+            "empty-cart"
+          ],
+          "line": 2
+        },
+        {
+          "kind": "boundary",
+          "tag": "db",
+          "noun": "order",
+          "verb": "save",
+          "params": [
+            "PlaceOrderDto"
+          ],
+          "output": "IdDto",
+          "isStatic": false,
+          "faults": [
+            "timeout",
+            "network-error"
+          ],
+          "line": 4
+        },
+        {
+          "kind": "ret",
+          "value": "ReceiptDto",
+          "line": 6
+        }
+      ],
+      "line": 0
+    }
+  ],
+  "ents": [],
+  "dtos": [
+    {
+      "name": "PlaceOrderDto",
+      "properties": [
+        "items"
+      ],
+      "description": "the order the customer wants to place",
+      "isCore": false,
+      "line": 14
+    },
+    {
+      "name": "PriceDto",
+      "properties": [
+        "price"
+      ],
+      "description": "a computed price",
+      "isCore": false,
+      "line": 17
+    },
+    {
+      "name": "IdDto",
+      "properties": [
+        "id"
+      ],
+      "description": "a persisted order identifier",
+      "isCore": false,
+      "line": 20
+    },
+    {
+      "name": "ReceiptDto",
+      "properties": [
+        "id",
+        "price"
+      ],
+      "description": "the receipt returned to the customer",
+      "isCore": false,
+      "line": 23
+    }
+  ],
+  "typs": [
+    {
+      "name": "price",
+      "typeName": "number",
+      "description": "a positive monetary amount",
+      "isCore": false,
+      "line": 11
+    }
+  ],
+  "nons": [
+    {
+      "name": "cart",
+      "description": "a shopping cart holding line items before checkout",
+      "line": 8
+    }
+  ],
+  "errors": []
+}

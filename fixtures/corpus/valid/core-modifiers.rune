@@ -1,0 +1,11 @@
+[TYP:core] id: string
+    a globally shared identifier type
+
+[TYP:core] timestamp: number
+    an epoch-millis timestamp shared across modules
+
+[DTO:core] AuditDto: id, timestamp
+    a shared audit record usable from any module
+
+[DTO] LocalDto: id
+    a module-local contract that references a core type

@@ -1,0 +1,59 @@
+{
+  "module": null,
+  "reqs": [
+    {
+      "noun": "search",
+      "verb": "run",
+      "input": "{query, page}",
+      "output": "ResultsDto",
+      "steps": [
+        {
+          "kind": "boundary",
+          "tag": "db",
+          "noun": "index",
+          "verb": "query",
+          "params": [
+            "QueryDto"
+          ],
+          "output": "ResultsDto",
+          "isStatic": false,
+          "faults": [
+            "timeout"
+          ],
+          "line": 1
+        },
+        {
+          "kind": "ret",
+          "value": "ResultsDto",
+          "line": 3
+        }
+      ],
+      "line": 0
+    }
+  ],
+  "ents": [],
+  "dtos": [
+    {
+      "name": "QueryDto",
+      "properties": [
+        "query",
+        "page"
+      ],
+      "description": "a search query with pagination",
+      "isCore": false,
+      "line": 5
+    },
+    {
+      "name": "ResultsDto",
+      "properties": [
+        "items"
+      ],
+      "description": "the matched results",
+      "isCore": false,
+      "line": 8
+    }
+  ],
+  "typs": [],
+  "nons": [],
+  "errors": []
+}

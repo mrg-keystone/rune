@@ -1,0 +1,10 @@
+{
+  "duplicate-tag-id": "duplicate tag id",
+  "duplicate-lint-id": "duplicate lint rule id",
+  "unknown-modifier-target": "applies to unknown tag id",
+  "lint-unknown-tag": "references unknown tag id",
+  "contradictory-indent": "contradictory indent",
+  "missing-tags": "tags",
+  "bad-schema-version": "semver",
+  "profile-gap": "gap"
+}

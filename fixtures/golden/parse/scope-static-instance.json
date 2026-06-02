@@ -1,0 +1,90 @@
+{
+  "module": null,
+  "reqs": [
+    {
+      "noun": "account",
+      "verb": "open",
+      "input": "OpenDto",
+      "output": "AccountDto",
+      "steps": [
+        {
+          "kind": "step",
+          "noun": "id",
+          "verb": "create",
+          "params": [
+            "OpenDto"
+          ],
+          "output": "IdDto",
+          "isStatic": true,
+          "faults": [],
+          "line": 1
+        },
+        {
+          "kind": "ctr",
+          "className": "account",
+          "line": 2
+        },
+        {
+          "kind": "step",
+          "noun": "account",
+          "verb": "activate",
+          "params": [
+            "IdDto"
+          ],
+          "output": "AccountDto",
+          "isStatic": false,
+          "faults": [
+            "already-active"
+          ],
+          "line": 3
+        },
+        {
+          "kind": "ret",
+          "value": "AccountDto",
+          "line": 5
+        }
+      ],
+      "line": 0
+    }
+  ],
+  "ents": [],
+  "dtos": [
+    {
+      "name": "OpenDto",
+      "properties": [
+        "name"
+      ],
+      "description": "a request to open an account",
+      "isCore": false,
+      "line": 10
+    },
+    {
+      "name": "IdDto",
+      "properties": [
+        "id"
+      ],
+      "description": "a generated identifier",
+      "isCore": false,
+      "line": 13
+    },
+    {
+      "name": "AccountDto",
+      "properties": [
+        "id",
+        "name"
+      ],
+      "description": "an opened account",
+      "isCore": false,
+      "line": 16
+    }
+  ],
+  "typs": [],
+  "nons": [
+    {
+      "name": "account",
+      "description": "a customer account",
+      "line": 7
+    }
+  ],
+  "errors": []
+}

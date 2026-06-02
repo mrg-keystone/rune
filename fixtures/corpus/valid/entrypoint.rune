@@ -1,0 +1,14 @@
+[MOD] checkout
+
+[ENT] http.placeOrder(PlaceOrderDto): ReceiptDto
+
+[REQ] order.place(PlaceOrderDto): ReceiptDto
+    db:order.save(PlaceOrderDto): ReceiptDto
+      timeout
+    [RET] ReceiptDto
+
+[DTO] PlaceOrderDto: items
+    an order to place
+
+[DTO] ReceiptDto: id
+    the receipt for a placed order

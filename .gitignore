@@ -1,20 +1,13 @@
-# Build artifacts
-grammar/node_modules/
-grammar/*.dylib
-grammar/*.so
-grammar/*.wasm
-target/
-lsp/target/
-parser/target/
-cli/target/
+# build / deps
+node_modules/
+rune-studio/_fresh/
+dist/
+out/
+lang/target/
 
-# Generated output
-dist.rune/
+# generated
+src/core/dto/lsp-config.ts
 
-# Editor
+# scratch / os
+.playwright-mcp/
 .DS_Store
-*.swp
-*.swo
-docs/src/
-dist.rune/
-

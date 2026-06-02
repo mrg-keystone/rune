@@ -1,0 +1,133 @@
+{
+  "module": null,
+  "reqs": [
+    {
+      "noun": "notify",
+      "verb": "send",
+      "input": "NotifyDto",
+      "output": "ReceiptDto",
+      "steps": [
+        {
+          "kind": "ctr",
+          "className": "channel",
+          "line": 1
+        },
+        {
+          "kind": "ply",
+          "noun": "channel",
+          "verb": "deliver",
+          "params": [
+            "NotifyDto"
+          ],
+          "output": "ReceiptDto",
+          "isStatic": false,
+          "cases": [
+            {
+              "name": "email",
+              "steps": [
+                {
+                  "kind": "boundary",
+                  "tag": "ex",
+                  "noun": "smtp",
+                  "verb": "send",
+                  "params": [
+                    "NotifyDto"
+                  ],
+                  "output": "ReceiptDto",
+                  "isStatic": false,
+                  "faults": [
+                    "timeout",
+                    "invalid-address"
+                  ],
+                  "line": 4
+                }
+              ],
+              "line": 3
+            },
+            {
+              "name": "sms",
+              "steps": [
+                {
+                  "kind": "boundary",
+                  "tag": "ex",
+                  "noun": "carrier",
+                  "verb": "send",
+                  "params": [
+                    "NotifyDto"
+                  ],
+                  "output": "ReceiptDto",
+                  "isStatic": false,
+                  "faults": [
+                    "timeout",
+                    "invalid-number"
+                  ],
+                  "line": 7
+                }
+              ],
+              "line": 6
+            },
+            {
+              "name": "push",
+              "steps": [
+                {
+                  "kind": "boundary",
+                  "tag": "ex",
+                  "noun": "push",
+                  "verb": "send",
+                  "params": [
+                    "NotifyDto"
+                  ],
+                  "output": "ReceiptDto",
+                  "isStatic": false,
+                  "faults": [
+                    "timeout",
+                    "unregistered"
+                  ],
+                  "line": 10
+                }
+              ],
+              "line": 9
+            }
+          ],
+          "line": 2
+        },
+        {
+          "kind": "ret",
+          "value": "ReceiptDto",
+          "line": 12
+        }
+      ],
+      "line": 0
+    }
+  ],
+  "ents": [],
+  "dtos": [
+    {
+      "name": "NotifyDto",
+      "properties": [
+        "message"
+      ],
+      "description": "a message to deliver",
+      "isCore": false,
+      "line": 17
+    },
+    {
+      "name": "ReceiptDto",
+      "properties": [
+        "id"
+      ],
+      "description": "a delivery receipt",
+      "isCore": false,
+      "line": 20
+    }
+  ],
+  "typs": [],
+  "nons": [
+    {
+      "name": "channel",
+      "description": "a delivery channel for notifications",
+      "line": 14
+    }
+  ],
+  "errors": []
+}

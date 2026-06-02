@@ -1,0 +1,19 @@
+[REQ] payment.charge(ChargeDto): ChargeResultDto
+    card.validate(ChargeDto): ChargeDto
+    ex:gateway.authorize(ChargeDto): AuthDto
+      declined
+    db:ledger.record(AuthDto): ChargeResultDto
+      timeout network-error conflict
+    [RET] ChargeResultDto
+
+[NON] card
+    a payment card presented by the customer
+
+[DTO] ChargeDto: amount
+    a request to charge a card
+
+[DTO] AuthDto: token
+    an authorization from the gateway
+
+[DTO] ChargeResultDto: token, amount
+    the settled charge
