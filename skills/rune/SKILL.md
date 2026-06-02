@@ -58,9 +58,55 @@ codes. The canonical reference is `lang/docs/spec.md`; the enforced rules are in
     a single todo item
 ```
 
-Polymorphism (`[PLY]`/`[CSE]`) and `[RET]` exist too — see `lang/docs/spec.md`.
+`[RET]` (return a value created earlier in the flow) exists too — see
+`lang/docs/spec.md`. `[PLY]`/`[CSE]` (polymorphism) is covered below.
 
-### The rules that bite (from constraints.md)
+## What becomes a [REQ] (granularity — decide this first)
+
+Syntax is the easy part. The modeling decision an LLM gets wrong *first and worst*
+is **scale** — how much belongs in one `[REQ]`. There is no syntax error for
+getting it wrong: a too-shallow spec and a too-deep one both lint clean, so the
+model fills the vacuum by guessing, inconsistently. Decide it deliberately:
+
+**One `[REQ]` = one endpoint.** A `[REQ]` models an *externally-triggerable entry
+point* — an HTTPS function, a scheduled/cron job, a queue or Firestore trigger, a
+webhook. The system's **endpoint inventory is the source of truth** for how many
+REQs a module has and what they're named (e.g. the functions wired in `index.ts` /
+the router / the trigger manifest). Domain and internal logic is expressed as
+**steps inside** a REQ — never as its own REQ. **If it isn't independently callable
+from outside, it isn't a REQ; it's a step.**
+
+- *Too shallow (wrong):* a whole qualification engine collapsed into one
+  `qualifier.runGates()` step — the endpoint is one call, but its real work (the
+  gates) should be the visible steps.
+- *Too deep (wrong):* every internal operation promoted to its own `[REQ]` — those
+  aren't endpoints, they're steps of the endpoint that invokes them.
+
+**Author from the wiring, not the prose.** Start from the endpoint/transport
+manifest (the file that registers the functions), not architecture prose. Prose
+compresses many endpoints into one sentence and hides the real count; the wiring
+file is the actual contract for REQ count and names.
+
+**`[MOD]` = one deployable surface / service area** — not one per concept or per
+doc folder. Map one rune to a service the system ships, against its function
+surface (not its documentation structure).
+
+### `[PLY]` is runtime dispatch, NOT a catalog
+
+`[PLY]`/`[CSE]` models **runtime polymorphic dispatch**: this *one* call is handled
+by exactly one of N implementations (per-provider fetch, per-channel send,
+per-transport encode). The natural-but-wrong reading is "I have N of something → N
+cases." Don't. **The test: does exactly one arm execute per call (→ `[PLY]`), or do
+they all execute and combine (→ a single step, looped in the body)?**
+
+- ✓ `[PLY] channel.deliver(...)` with `[CSE] email` / `[CSE] push` — one channel is
+  chosen per send. (This is the `notify` example. Note it's polymorphic *and* a
+  small catalog, which is exactly why it's easy to overgeneralize from.)
+- ✗ Eleven qualification predicates that **all** evaluate and combine by AND are
+  **one step** (e.g. `gate.evaluate(CandidateDto): ResultDto`, predicates in the
+  body), **not** eleven `[CSE]`s. "There are 11 things" ≠ "there are 11 branches."
+
+## The rules that bite (from constraints.md)
 
 These are the ones that cause "won't parse / won't lint" surprises:
 
