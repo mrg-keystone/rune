@@ -1,6 +1,6 @@
 import { assertEquals } from "#std/assert";
 import { applyCase, bindings, processName, transformName } from "./mod.ts";
-import SHAPE from "@assets/canonical-paths.json" with { type: "json" };
+import { canonicalPaths as SHAPE } from "@rune/domain/business/artifact/canonical-paths.ts";
 
 Deno.test("applyCase — kebab", () => {
   assertEquals(applyCase("GetRecordingDto", "kebab"), "get-recording-dto");

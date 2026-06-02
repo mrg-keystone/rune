@@ -156,6 +156,9 @@ export const ArtifactSchema = z.object({
   // codegen: layout bindings (placeholder -> rune element) + engine templates
   bindings: z.record(z.string(), BindingSchema).optional(),
   codegen: CodegenSchema.optional(),
+  // canonical folder layout (the `structure` rule's spec); folded in from the
+  // former assets/canonical-paths.json so the artifact is the one source.
+  canonicalPaths: z.record(z.string(), z.unknown()).optional(),
   // codegen profiles (optional today; one baked target lives in vars + tag.codegen)
   profiles: z.array(ProfileSchema).optional(),
 });

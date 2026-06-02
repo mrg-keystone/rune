@@ -12,7 +12,7 @@
     "@/": "./src/",
     "@core/": "./src/core/",
     "@rune/": "./src/rune/",
-    "@assets/": "./assets/",
+    "@keywords": "./keywords.json",
     "#zod": "npm:zod",
     "#std/assert": "jsr:@std/assert",
     "#std/path": "jsr:@std/path"

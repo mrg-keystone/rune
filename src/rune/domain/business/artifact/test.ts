@@ -66,3 +66,16 @@ Deno.test("flags a profile gap (inconsistent var keys)", () => {
   assert(!r.ok);
   assert(r.errors.some((e) => e.message.includes("gap")));
 });
+
+// ---- canonical layout folded into the artifact (single source of truth) ----
+
+Deno.test("canonicalPaths is sourced from the keywords.json artifact", async () => {
+  const { canonicalPaths } = await import("./canonical-paths.ts");
+  // the structure rule depends on these top-level keys + the module node
+  assert(canonicalPaths, "canonicalPaths present in the artifact");
+  assert(Array.isArray(canonicalPaths["$rootFiles"]), "$rootFiles list present");
+  assert("<module-name>/" in canonicalPaths["src/"], "module node present under src/");
+  // and it must match what the artifact actually carries (no drift)
+  const kw = JSON.parse(await Deno.readTextFile(new URL("../../../../../keywords.json", import.meta.url)));
+  assertEquals(canonicalPaths, kw.canonicalPaths);
+});

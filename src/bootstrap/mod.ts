@@ -2,7 +2,7 @@ import { resolve, join } from "#std/path";
 import { rules, runPipeline, parseArgs, printHeader, printResults, printJson, runManifest, runSync, runValidate } from "@rune/mod-root.ts";
 import { getIgnoredPaths } from "@rune/domain/data/project/mod.ts";
 import { suggestForResults } from "@rune/domain/data/llm/openai.ts";
-import SHAPE from "@assets/canonical-paths.json" with { type: "json" };
+import { canonicalPaths as SHAPE } from "@rune/domain/business/artifact/canonical-paths.ts";
 import type { EntryResult } from "@core/dto/types.ts";
 
 // Subcommand dispatch.

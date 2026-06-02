@@ -1,4 +1,4 @@
-import SHAPE from "@assets/canonical-paths.json" with { type: "json" };
+import { canonicalPaths as SHAPE } from "@rune/domain/business/artifact/canonical-paths.ts";
 import type { PipelineContext, EntryTarget } from "@/core/dto/types.ts";
 
 const FORBIDDEN_DIRS = new Set(
