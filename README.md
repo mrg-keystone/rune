@@ -4,7 +4,33 @@ Design a module as a tiny `.rune` spec, generate a typed scaffold from it, fill 
 the bodies, and keep the whole thing honest with the architecture linter. The spec
 is the source of truth — you regenerate from it, you don't hand-edit the structure.
 
-## Quick start
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/theTechGoose/rune/main/install.sh | sh
+rune --help
+```
+
+This pulls the latest prebuilt release (`rune` + the `rune-lsp` / `rune-syntax`
+helpers) into `~/.deno/bin` — no Deno or Rust toolchain required. Options:
+
+- `RUNE_INSTALL=/usr/local/bin` — install somewhere else (must be on your `PATH`).
+- `RUNE_VERSION=v0.1.0` — pin a specific snapshot instead of the rolling latest.
+
+Supported targets: Apple-silicon macOS, Intel macOS, Linux x86-64. On macOS the
+script de-quarantines the binaries so Gatekeeper doesn't block them.
+
+### Claude Code skill (optional)
+
+Authoring `.rune` specs with Claude Code? Install the bundled skill so Claude
+knows the syntax, lifecycle, and pitfalls:
+
+```sh
+git clone https://github.com/theTechGoose/rune     # if you don't have it already
+ln -s "$PWD/rune/skills/rune" ~/.claude/skills/rune  # user-scope install
+```
+
+## Build from source (contributors)
 
 ```sh
 deno task build          # compiles dist/rune (+ rune-lsp, rune-syntax helpers)
