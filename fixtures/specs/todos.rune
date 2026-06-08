@@ -1,0 +1,56 @@
+[MOD] todos
+
+[REQ] todo.add(CreateTodoDto): TodoDto
+    id::generate(): id
+    [NEW] todo
+    todo.fill(title): todo
+    db:todo.save(TodoDto): void
+      timeout
+    todo.toDto(): TodoDto
+
+[REQ] todo.complete(TodoRefDto): TodoDto
+    db:todo.load(id): TodoDto
+      not-found
+    todo.markDone(): todo
+    db:todo.save(TodoDto): void
+      timeout
+    todo.toDto(): TodoDto
+
+[REQ] todo.discard(TodoRefDto): TodoDto
+    db:todo.load(id): TodoDto
+      not-found
+    todo.archive(): todo
+    db:todo.save(TodoDto): void
+      timeout
+    todo.toDto(): TodoDto
+
+[REQ] list.create(CreateListDto): ListDto
+    id::generate(): id
+    [NEW] list
+    list.fill(name): list
+    db:list.save(ListDto): void
+      timeout
+    list.toDto(): ListDto
+
+[TYP] id: string
+    a unique identifier
+[TYP] title: string
+    the human-readable todo title
+[TYP] name: string
+    the human-readable list name
+
+[DTO] CreateTodoDto: title
+    input to create a new todo
+[DTO] TodoRefDto: id
+    a reference to an existing todo
+[DTO] TodoDto: id, title, done
+    a persisted todo item
+[DTO] CreateListDto: name
+    input to create a new list
+[DTO] ListDto: id, name
+    a persisted todo list
+
+[NON] todo
+    a single todo item
+[NON] list
+    a named collection of todos

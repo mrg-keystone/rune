@@ -130,14 +130,27 @@ guess. To learn interactively, `deno task studio` documents every construct live
 
 ## The lifecycle: write → generate → fill in → verify → lint
 
-Put one spec per module at `src/<module>/<module>.rune`, then:
+Put one spec per module in a **`specs/` directory at the project root** —
+`<project>/specs/<module>.rune` — *not* inside `src/`. Then, from the project
+root:
 
 ```sh
-rune sync src/<module>/<module>.rune --artifact keywords.json
+rune sync specs/<module>.rune --artifact keywords.json
 ```
 
 (In the repo without an installed binary, use
 `deno run -A src/bootstrap/mod.ts sync …`.)
+
+**How the output location is chosen (and why it's safe):** `rune sync` always
+writes to `<root>/src/<module>/`, and resolves `<root>` from the spec's path —
+specifically the directory directly above the **outermost `src/` segment** in that
+path (or, if the path has no `src/`, the parent of a `specs/` dir, else the spec's
+own dir). This is independent of cwd, so it never matters which directory you run
+`rune sync` from. It's also nesting-immune: point it at a spec **anywhere under the
+project** — even an accidentally nested `src/<module>/src/<module>/<module>.rune` —
+and it collapses back to the one canonical `src/<module>/`. Pass `--root <dir>` to
+override explicitly. Keeping the spec in `specs/` (outside the tree it generates)
+is still the cleanest layout — the spec is never an orphan-prune candidate.
 
 This is one repeating cycle — **write → generate → fill in → verify → lint** —
 not a one-shot. Each step:

@@ -37,7 +37,7 @@ module.exports = grammar({
     // ---- generated keyword rules --------------------------------------
     // [REQ] Requirement (indent 0)
     req_tag: ($) => "[REQ]",
-    req_line: ($) => seq($.req_tag, choice($.req_signature, $.signature), ":", $.return_type),
+    req_line: ($) => seq($.req_tag, field("noun", $.identifier), optional(seq(choice(".", "::"), field("verb", $.method_name))), $.parameters, ":", $.return_type),
 
     // [MOD] Module (indent 0)
     mod_tag: ($) => "[MOD]",
@@ -79,11 +79,6 @@ module.exports = grammar({
     comment: ($) => token(seq("//", /.*/)),
 
     dto_reference: ($) => /[A-Za-z_][A-Za-z0-9_]*Dto/,
-
-    req_signature: ($) =>
-      seq(field("function", $.function_name), $.parameters),
-
-    function_name: ($) => /[a-z][a-zA-Z0-9]*/,
 
     signature: ($) =>
       seq(

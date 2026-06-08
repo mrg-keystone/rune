@@ -379,13 +379,34 @@
   {
     "type": "req_line",
     "named": true,
-    "fields": {},
+    "fields": {
+      "noun": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "verb": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "method_name",
+            "named": true
+          }
+        ]
+      }
+    },
     "children": {
       "multiple": true,
       "required": true,
       "types": [
         {
-          "type": "req_signature",
+          "type": "parameters",
           "named": true
         },
         {
@@ -394,36 +415,6 @@
         },
         {
           "type": "return_type",
-          "named": true
-        },
-        {
-          "type": "signature",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
-    "type": "req_signature",
-    "named": true,
-    "fields": {
-      "function": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "function_name",
-            "named": true
-          }
-        ]
-      }
-    },
-    "children": {
-      "multiple": false,
-      "required": true,
-      "types": [
-        {
-          "type": "parameters",
           "named": true
         }
       ]
@@ -851,10 +842,6 @@
   {
     "type": "fs:",
     "named": false
-  },
-  {
-    "type": "function_name",
-    "named": true
   },
   {
     "type": "lg:",

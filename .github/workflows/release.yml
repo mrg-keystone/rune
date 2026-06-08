@@ -2,13 +2,15 @@ name: release
 
 # Deploy model:
 #   - merge into `main`        -> rebuilds the rolling `latest` release (the one
-#                                 `install.sh` pulls). This is the deploy.
+#                                 `install.sh` pulls by default). This is the deploy.
+#   - push to `develop`        -> rebuilds the rolling `develop` release (install
+#                                 with RUNE_VERSION=develop); does NOT become
+#                                 "latest", so it never disturbs stable users.
 #   - push a `vX.Y.Z` tag      -> a pinned snapshot release (install with
 #                                 RUNE_VERSION=vX.Y.Z); does NOT become "latest".
-# `develop` never deploys — it's the integration branch.
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -20,22 +22,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Reset the moving `latest` release so its assets are replaced cleanly.
-  # Only on a main-branch deploy; skipped for tag pushes.
+  # Reset the moving rolling release so its assets are replaced cleanly: `latest`
+  # for main, `develop` for develop. Skipped for tag pushes (pinned snapshots).
   prepare:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     steps:
-      - name: Reset rolling 'latest' release
+      - name: Reset rolling release for this branch
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release delete latest --cleanup-tag --yes -R "${{ github.repository }}" || true
+        run: |
+          tag=$([ "$GITHUB_REF" = "refs/heads/main" ] && echo latest || echo develop)
+          gh release delete "$tag" --cleanup-tag --yes -R "${{ github.repository }}" || true
 
   build:
     needs: [prepare]
-    # Run for main deploys AND v* tags. always() so it still runs when `prepare`
-    # is skipped (tag pushes).
-    if: ${{ always() && !cancelled() && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    # Run for main/develop deploys AND v* tags. always() so it still runs when
+    # `prepare` is skipped (tag pushes).
+    if: ${{ always() && !cancelled() && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ${{ matrix.os }}
     # Generous ceiling so a real hang fails fast instead of burning a runner.
     # (Note: this governs EXECUTION time, not queue wait — the old Intel job was
@@ -66,9 +70,15 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
             echo "rolling=false" >> "$GITHUB_OUTPUT"
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == refs/heads/develop ]]; then
+            echo "tag=develop" >> "$GITHUB_OUTPUT"
+            echo "rolling=true" >> "$GITHUB_OUTPUT"
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
           else
             echo "tag=latest" >> "$GITHUB_OUTPUT"
             echo "rolling=true" >> "$GITHUB_OUTPUT"
+            echo "make_latest=true" >> "$GITHUB_OUTPUT"
           fi
 
       # Build for matrix.target explicitly (instead of `deno task build`, which is
@@ -100,10 +110,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.rel.outputs.tag }}
-          name: ${{ steps.rel.outputs.rolling == 'true' && 'latest (main)' || steps.rel.outputs.tag }}
-          # The rolling 'latest' is the canonical install target (make_latest);
-          # pinned v* snapshots are not, so they don't hijack `install.sh`.
-          make_latest: ${{ steps.rel.outputs.rolling == 'true' }}
+          name: ${{ steps.rel.outputs.tag == 'latest' && 'latest (main)' || steps.rel.outputs.tag == 'develop' && 'develop (rolling)' || steps.rel.outputs.tag }}
+          # Only the rolling 'latest' (main) is the canonical install target
+          # (make_latest); 'develop' and pinned v* snapshots are NOT, so they
+          # don't hijack the default `install.sh`.
+          make_latest: ${{ steps.rel.outputs.make_latest }}
           prerelease: false
           files: |
             rune-${{ matrix.target }}.tar.gz
