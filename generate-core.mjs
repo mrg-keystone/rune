@@ -12,9 +12,13 @@ function lineRuleBody(tag) {
   switch (tag.follows) {
     case "signature":
     case "poly": // a polymorphic opener has the same line shape as a signature
-      // noun.verb(args): returnType  (optionally a camelCase function name)
+      // noun.verb(args): returnType  (optionally a camelCase function name).
+      // When a camelCase form is allowed, both forms must begin with the same
+      // token type (identifier) — otherwise the lexer commits to function_name
+      // before the parser can see the "." of the dotted form, producing a spurious
+      // ERROR. So inline the rule: identifier, optional ".verb", then parameters.
       return tag.allowFunctionName
-        ? `seq(${t}, choice($.req_signature, $.signature), ":", $.return_type)`
+        ? `seq(${t}, field("noun", $.identifier), optional(seq(choice(".", "::"), field("verb", $.method_name))), $.parameters, ":", $.return_type)`
         : `seq(${t}, $.signature, ":", $.return_type)`;
     case "typedef":
       return `seq(${t}, $.typ_name, ":", $.typ_type)`;
@@ -114,11 +118,6 @@ ${tagRules}
     comment: ($) => token(seq("//", /.*/)),
 
     dto_reference: ($) => /[A-Za-z_][A-Za-z0-9_]*Dto/,
-
-    req_signature: ($) =>
-      seq(field("function", $.function_name), $.parameters),
-
-    function_name: ($) => /[a-z][a-zA-Z0-9]*/,
 
     signature: ($) =>
       seq(
@@ -248,13 +247,16 @@ export function buildHighlights(reg) {
   const lines = [
     "; Rune syntax highlighting",
     "; GENERATED from new/keywords.json by new/generate.mjs — do not edit by hand.",
+    "; Capture names match the @rune.* groups defined in the editor ftplugin;",
+    "; every pattern references a node that exists in the generated grammar.",
     "",
     "; Tags: structural anchors",
   ];
 
   for (const tag of reg.tags) lines.push(`(${tag.id}_tag) @rune.tag`);
 
-  lines.push("", "; Nouns: subjects (before . or ::)");
+  lines.push("", "; Nouns: subjects (before . or ::) and declared names");
+  lines.push("(req_line (identifier) @rune.noun)");
   lines.push("(signature (identifier) @rune.noun)");
   for (const tag of reg.tags) {
     if (tag.follows === "identifier" || tag.follows === "case") {
@@ -267,20 +269,23 @@ export function buildHighlights(reg) {
     "; Verbs: actions (after . or ::)",
     "(method_name) @rune.verb",
     "",
-    "; Function names: camelCase REQ signatures",
-    "(function_name) @rune.boundary",
-    "",
-    "; DTOs: type contracts",
-    "(dto_reference) @rune.dto",
-    "(dto_def_name) @rune.dto",
-    "",
-    "; Builtins: language primitives",
-    "(typ_type (type_name) @rune.builtin)",
-    "(typ_generic_type (type_name) @rune.builtin)",
-    "(typ_tuple_type (type_name) @rune.builtin)",
+    "; Types: DTOs and type references",
+    "(dto_reference) @rune.type",
+    "(dto_def_name) @rune.type",
+    "(return_type (type_name) @rune.type)",
+    "(array_type (type_name) @rune.type)",
+    "(generic_type (type_name) @rune.type)",
+    "(typed_param (type_name) @rune.type)",
+    "(typ_type (type_name) @rune.type)",
+    "(typ_generic_type (type_name) @rune.type)",
+    "(typ_tuple_type (type_name) @rune.type)",
     "",
     "; String enum values",
     "(typ_enum_value) @rune.fault",
+    "",
+    "; Parameters and DTO properties",
+    "(param_name) @rune.param",
+    "(property_name) @rune.param",
     "",
     "; Boundaries: system edges",
     "(boundary_prefix) @rune.boundary",
@@ -288,8 +293,11 @@ export function buildHighlights(reg) {
     "; Faults",
     "(fault_line) @rune.fault",
     "",
-    "; Optional marker + comments",
-    "(dto_optional_marker) @rune.comment",
+    "; Punctuation / chrome",
+    "(dto_optional_marker) @rune.chrome",
+    "(dto_array_suffix) @rune.chrome",
+    "",
+    "; Descriptions & comments",
     "(typ_desc) @rune.comment",
     "(dto_desc) @rune.comment",
     "(non_desc) @rune.comment",

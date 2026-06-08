@@ -16,6 +16,17 @@ pub enum LineKind {
         output: String,
         indent: usize,
         is_camel_case: bool,
+        modifier: Option<String>,
+    },
+    Mod {
+        name: String,
+    },
+    Ent {
+        noun: String,
+        verb: String,
+        input: String,
+        output: String,
+        indent: usize,
     },
     Step {
         noun: String,
@@ -171,25 +182,51 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
             continue;
         }
 
-        // [REQ] line
-        if trimmed.starts_with("[REQ]") {
+        // [MOD] directive (no modifier form)
+        if let Some(rest) = trimmed.strip_prefix("[MOD]") {
             in_dto_block = false;
             in_typ_block = false;
             in_non_block = false;
-            if let Some((noun, verb, input, output, is_camel_case)) = parse_req_signature(&trimmed[5..]) {
-                results.push(ParsedLine { line_num, kind: LineKind::Req { noun, verb, input, output, indent: actual_indent, is_camel_case } });
+            let name = rest.trim().to_string();
+            if !name.is_empty() {
+                results.push(ParsedLine { line_num, kind: LineKind::Mod { name } });
+            } else {
+                results.push(ParsedLine { line_num, kind: LineKind::Unknown("[MOD] missing name".to_string()) });
+            }
+            continue;
+        }
+
+        // [REQ] / [REQ:modifier]
+        if let Some((modifier, rest)) = match_tag(trimmed, "REQ") {
+            in_dto_block = false;
+            in_typ_block = false;
+            in_non_block = false;
+            if let Some((noun, verb, input, output, is_camel_case)) = parse_req_signature(rest) {
+                results.push(ParsedLine { line_num, kind: LineKind::Req { noun, verb, input, output, indent: actual_indent, is_camel_case, modifier } });
             } else {
                 results.push(ParsedLine { line_num, kind: LineKind::Unknown("[REQ] missing signature".to_string()) });
             }
             continue;
         }
 
-        // [DTO] definition: [DTO] DtoName: prop1, prop2, ...
-        if trimmed.starts_with("[DTO]") {
+        // [ENT] / [ENT:modifier] — same signature shape as [REQ]
+        if let Some((_modifier, rest)) = match_tag(trimmed, "ENT") {
+            in_dto_block = false;
+            in_typ_block = false;
+            in_non_block = false;
+            if let Some((noun, verb, input, output, _cc)) = parse_req_signature(rest) {
+                results.push(ParsedLine { line_num, kind: LineKind::Ent { noun, verb, input, output, indent: actual_indent } });
+            } else {
+                results.push(ParsedLine { line_num, kind: LineKind::Unknown("[ENT] missing signature".to_string()) });
+            }
+            continue;
+        }
+
+        // [DTO] / [DTO:modifier]: [DTO] DtoName: prop1, prop2, ...
+        if let Some((_modifier, rest)) = match_tag(trimmed, "DTO") {
             in_dto_block = true;
             in_typ_block = false;
             in_non_block = false;
-            let rest = trimmed[5..].trim();
             if let Some(colon_pos) = rest.find(':') {
                 let name = rest[..colon_pos].trim().to_string();
                 let props_str = rest[colon_pos + 1..].trim();
@@ -205,12 +242,11 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
             continue;
         }
 
-        // [TYP] definition
-        if trimmed.starts_with("[TYP]") {
+        // [TYP] / [TYP:modifier]
+        if let Some((_modifier, rest)) = match_tag(trimmed, "TYP") {
             in_dto_block = false;
             in_typ_block = true;
             in_non_block = false;
-            let rest = trimmed[5..].trim();
             if let Some(colon_pos) = rest.find(':') {
                 let name = rest[..colon_pos].trim().to_string();
                 let type_name = rest[colon_pos + 1..].trim().to_string();
@@ -221,12 +257,12 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
             continue;
         }
 
-        // [NON] definition
-        if trimmed.starts_with("[NON]") {
+        // [NON] / [NON:modifier]
+        if let Some((_modifier, rest)) = match_tag(trimmed, "NON") {
             in_dto_block = false;
             in_typ_block = false;
             in_non_block = true;
-            let name = trimmed[5..].trim().to_string();
+            let name = rest.trim().to_string();
             if !name.is_empty() {
                 results.push(ParsedLine { line_num, kind: LineKind::NonDef { name } });
             } else {
@@ -385,9 +421,12 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
             continue;
         }
 
-        // [NEW] class constructor shorthand
-        if trimmed.starts_with("[NEW]") {
-            let class_name = trimmed[5..].trim().to_string();
+        // [NEW] / [CTR] class constructor shorthand (synonyms)
+        if let Some(rest) = trimmed
+            .strip_prefix("[NEW]")
+            .or_else(|| trimmed.strip_prefix("[CTR]"))
+        {
+            let class_name = rest.trim().to_string();
             if !class_name.is_empty() {
                 results.push(ParsedLine {
                     line_num,
@@ -399,7 +438,7 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
             } else {
                 results.push(ParsedLine {
                     line_num,
-                    kind: LineKind::Unknown("[NEW] missing class name".to_string()),
+                    kind: LineKind::Unknown("[CTR] missing class name".to_string()),
                 });
             }
             continue;
@@ -450,6 +489,25 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
     }
 
     results
+}
+
+/// Match `[TAG]` or `[TAG:modifier]` at the start of `trimmed`.
+/// Returns (modifier, remainder-after-the-tag). Mirrors the TS parser's matchTag.
+fn match_tag<'a>(trimmed: &'a str, tag: &str) -> Option<(Option<String>, &'a str)> {
+    let plain = format!("[{}]", tag);
+    if let Some(rest) = trimmed.strip_prefix(plain.as_str()) {
+        return Some((None, rest.trim_start()));
+    }
+    let prefix = format!("[{}:", tag);
+    if trimmed.starts_with(prefix.as_str()) {
+        if let Some(close) = trimmed.find(']') {
+            if close > prefix.len() {
+                let modifier = trimmed[prefix.len()..close].trim().to_string();
+                return Some((Some(modifier), trimmed[close + 1..].trim_start()));
+            }
+        }
+    }
+    None
 }
 
 fn parse_signature(s: &str) -> Option<(String, String, Vec<String>, String, bool)> {
@@ -783,5 +841,52 @@ mod tests {
         let lines = parse_document(doc);
         assert!(matches!(&lines[0].kind, LineKind::NonDef { name } if name == "storage"));
         assert!(matches!(&lines[1].kind, LineKind::NonDesc { text, .. } if text == "a storage system"));
+    }
+
+    #[test]
+    fn test_parse_mod() {
+        let doc = "[MOD] checkout";
+        let lines = parse_document(doc);
+        assert!(matches!(&lines[0].kind, LineKind::Mod { name } if name == "checkout"));
+    }
+
+    #[test]
+    fn test_parse_ent() {
+        let doc = "[ENT] http.placeOrder(PlaceOrderDto): ReceiptDto";
+        let lines = parse_document(doc);
+        assert!(matches!(&lines[0].kind, LineKind::Ent { noun, verb, input, output, .. }
+            if noun == "http" && verb == "placeOrder" && input == "PlaceOrderDto" && output == "ReceiptDto"));
+    }
+
+    #[test]
+    fn test_parse_typ_core_modifier() {
+        let doc = "[TYP:core] id: string";
+        let lines = parse_document(doc);
+        assert!(matches!(&lines[0].kind, LineKind::TypDef { name, type_name }
+            if name == "id" && type_name == "string"));
+    }
+
+    #[test]
+    fn test_parse_dto_core_modifier() {
+        let doc = "[DTO:core] AuditDto: id, timestamp";
+        let lines = parse_document(doc);
+        assert!(matches!(&lines[0].kind, LineKind::DtoDef { name, properties }
+            if name == "AuditDto" && properties == &vec!["id".to_string(), "timestamp".to_string()]));
+    }
+
+    #[test]
+    fn test_parse_req_core_modifier() {
+        let doc = "[REQ:core] order.place(InDto): OutDto";
+        let lines = parse_document(doc);
+        assert!(matches!(&lines[0].kind, LineKind::Req { modifier, .. }
+            if modifier == &Some("core".to_string())));
+    }
+
+    #[test]
+    fn test_parse_ctr_synonym() {
+        let doc = "    [CTR] storage";
+        let lines = parse_document(doc);
+        assert!(matches!(&lines[0].kind, LineKind::New { class_name, indent: 4 }
+            if class_name == "storage"));
     }
 }

@@ -22,6 +22,12 @@ impl Backend {
         }
     }
 
+    // Diagnostics mirror what `rune sync`/`manifest` (the TS parser) actually
+    // enforces: structure + the documented shape rules. They deliberately do NOT
+    // invent scope/usage rules — the generator performs none, and the valid
+    // corpus exercises specs those rules would wrongly reject (e.g. instance
+    // nouns that are never "produced"). Keeping the LSP in lock-step with the
+    // generator is what makes it trustworthy.
     async fn validate(&self, uri: &Url) {
         let docs = self.documents.read().await;
         let Some(rope) = docs.get(uri) else { return };
@@ -31,7 +37,7 @@ impl Backend {
         let lines = parse_document(&text);
         let mut diagnostics = Vec::new();
 
-        // 80 column limit validation
+        // 80 column limit.
         for (line_num, line) in text.lines().enumerate() {
             if line.len() > 80 {
                 diagnostics.push(Diagnostic {
@@ -45,835 +51,306 @@ impl Backend {
                 });
             }
         }
+
+        // Definitions collected in the first pass (shape checks only — no usage).
         let mut seen_reqs: HashSet<String> = HashSet::new();
         let mut defined_dtos: HashSet<String> = HashSet::new();
-        let mut defined_dtos_lines: HashMap<String, usize> = HashMap::new(); // name -> line
-        let mut defined_types: HashMap<String, String> = HashMap::new(); // name -> type_name
-        let mut defined_types_lines: HashMap<String, usize> = HashMap::new(); // name -> line
-        let mut defined_nouns: HashSet<String> = HashSet::new();
-        let mut defined_nouns_lines: HashMap<String, usize> = HashMap::new(); // name -> line
-        let mut used_nouns: HashSet<String> = HashSet::new();
-        let mut noun_has_desc: HashSet<String> = HashSet::new();
-        let mut last_noun_name: Option<String> = None;
-        let mut referenced_dtos: Vec<(usize, String)> = Vec::new();
-        let mut used_types: HashSet<String> = HashSet::new();
-        let mut used_dtos: HashSet<String> = HashSet::new();
-        let mut dto_properties: HashMap<String, Vec<(usize, String, String)>> = HashMap::new(); // (line, name, type)
-        let mut dto_has_desc: HashSet<String> = HashSet::new(); // DTOs that have descriptions
-        let mut last_dto_name: Option<String> = None; // Track last DTO for description matching
-
-        // Track context for indentation validation
-        let mut _in_req = false;
-        let mut _in_concrete = false;
-        let mut in_poly_block = false;
-        let mut last_step_indent: Option<usize> = None;
-        let mut consecutive_empty = 0;
-        let mut last_was_req = false;
-
-        // Track scope: variables available from previous step outputs
-        let mut scope: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut current_req_output: Option<String> = None;
-        let mut last_step_output: Option<String> = None;
-        let mut last_step_line: Option<usize> = None;
-
-        // Track method signatures for consistency: key = "noun.verb" or "Noun::verb"
-        // value = (first_line, params, output)
-        let mut method_signatures: HashMap<String, (usize, Vec<String>, String)> = HashMap::new();
-
-        // Track PLY signatures for consistency: key = "noun.verb", value = (line, "params:output")
-        let mut signature_map: HashMap<String, (usize, String)> = HashMap::new();
-
-        // First pass: collect DTO and TYP definitions, and DTO properties
+        let mut defined_dtos_lines: HashMap<String, usize> = HashMap::new();
+        let mut defined_types: HashMap<String, String> = HashMap::new();
+        let mut defined_types_lines: HashMap<String, usize> = HashMap::new();
+        let mut defined_nouns_lines: HashMap<String, usize> = HashMap::new();
+        let mut dto_has_desc: HashSet<String> = HashSet::new();
+        let mut dto_properties: HashMap<String, Vec<(usize, String)>> = HashMap::new();
+        let mut last_dto_name: Option<String> = None;
         let mut first_pass_dto: Option<String> = None;
+
+        // First pass: collect DTO/TYP/NON definitions, DTO properties, descriptions.
         for parsed_line in &lines {
             let line_num = parsed_line.line_num;
             match &parsed_line.kind {
                 LineKind::DtoDef { name, properties } => {
-                    // Check for duplicate DTO definition
-                    if let Some(&first_line) = defined_dtos_lines.get(name) {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!(
-                                "Duplicate DTO definition '{}' (first defined on line {})",
-                                name, first_line + 1
-                            ),
-                            ..Default::default()
-                        });
+                    if let Some(&first) = defined_dtos_lines.get(name) {
+                        diagnostics.push(diag_err(line_num, format!(
+                            "Duplicate DTO definition '{}' (first defined on line {})",
+                            name, first + 1)));
                     } else {
                         defined_dtos.insert(name.clone());
                         defined_dtos_lines.insert(name.clone(), line_num);
                     }
-                    // Store properties for later use
                     for prop in properties {
-                        // Strip optional suffix before type resolution
-                        let base_prop = prop.trim_end_matches('?');
-                        // Parse array property syntax like "url(s)" -> base type "url"
-                        let type_name = if let Some(paren_pos) = base_prop.find('(') {
-                            base_prop[..paren_pos].to_string()
-                        } else {
-                            base_prop.to_string()
+                        let base = prop.trim_end_matches('?');
+                        let pname = match base.find('(') {
+                            Some(p) => base[..p].to_string(),
+                            None => base.to_string(),
                         };
-                        dto_properties
-                            .entry(name.clone())
-                            .or_default()
-                            .push((line_num, prop.clone(), type_name));
+                        dto_properties.entry(name.clone()).or_default().push((line_num, pname));
                     }
                     first_pass_dto = Some(name.clone());
                     last_dto_name = Some(name.clone());
                 }
-                LineKind::DtoDesc { text: _, indent: _ } => {
-                    // Mark the last DTO as having a description
-                    if let Some(ref dto_name) = last_dto_name {
-                        dto_has_desc.insert(dto_name.clone());
+                LineKind::DtoProperty { name, .. } => {
+                    if let Some(d) = &first_pass_dto {
+                        dto_properties.entry(d.clone()).or_default().push((line_num, name.clone()));
                     }
                 }
-                LineKind::DtoProperty { name, type_name } => {
-                    if let Some(ref dto) = first_pass_dto {
-                        dto_properties
-                            .entry(dto.clone())
-                            .or_default()
-                            .push((line_num, name.clone(), type_name.clone()));
+                LineKind::DtoArrayProperty { property_name, .. } => {
+                    if let Some(d) = &first_pass_dto {
+                        dto_properties.entry(d.clone()).or_default().push((line_num, property_name.clone()));
                     }
                 }
-                LineKind::DtoArrayProperty { property_name, base_type, .. } => {
-                    if let Some(ref dto) = first_pass_dto {
-                        // Store with property_name as name, base_type as the referenced type
-                        dto_properties
-                            .entry(dto.clone())
-                            .or_default()
-                            .push((line_num, property_name.clone(), base_type.clone()));
+                LineKind::DtoDesc { .. } => {
+                    if let Some(d) = &last_dto_name {
+                        dto_has_desc.insert(d.clone());
                     }
                 }
                 LineKind::Empty => {
                     first_pass_dto = None;
                 }
                 LineKind::TypDef { name, type_name } => {
-                    // Check for duplicate TYP definition
-                    if let Some(&first_line) = defined_types_lines.get(name) {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!(
-                                "Duplicate type definition '{}' (first defined on line {})",
-                                name, first_line + 1
-                            ),
-                            ..Default::default()
-                        });
+                    if let Some(&first) = defined_types_lines.get(name) {
+                        diagnostics.push(diag_err(line_num, format!(
+                            "Duplicate type definition '{}' (first defined on line {})",
+                            name, first + 1)));
                     } else {
                         defined_types.insert(name.clone(), type_name.clone());
                         defined_types_lines.insert(name.clone(), line_num);
                     }
-                    last_noun_name = None;
                 }
                 LineKind::NonDef { name } => {
-                    // Check for duplicate NON definition
-                    if let Some(&first_line) = defined_nouns_lines.get(name) {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!(
-                                "Duplicate noun definition '{}' (first defined on line {})",
-                                name, first_line + 1
-                            ),
-                            ..Default::default()
-                        });
+                    if let Some(&first) = defined_nouns_lines.get(name) {
+                        diagnostics.push(diag_err(line_num, format!(
+                            "Duplicate noun definition '{}' (first defined on line {})",
+                            name, first + 1)));
                     } else {
-                        defined_nouns.insert(name.clone());
                         defined_nouns_lines.insert(name.clone(), line_num);
-                    }
-                    last_noun_name = Some(name.clone());
-                }
-                LineKind::NonDesc { text: _, indent: _ } => {
-                    if let Some(ref noun_name) = last_noun_name {
-                        noun_has_desc.insert(noun_name.clone());
                     }
                 }
                 _ => {}
             }
         }
 
+        // Second-pass state.
+        let mut method_signatures: HashMap<String, (usize, Vec<String>, String)> = HashMap::new();
+        let mut poly_stack: Vec<usize> = Vec::new(); // indents of open [PLY] scopes
+        let mut in_req = false;
+        let mut last_step_indent: Option<usize> = None;
+        let mut current_req_output: Option<String> = None;
+        let mut last_step_output: Option<String> = None;
+        let mut last_step_line: Option<usize> = None;
+        let mut last_was_req = false;
+        let mut consecutive_empty: usize = 0;
+
+        // Second pass: structure + shape validation.
         for parsed_line in &lines {
             let line_num = parsed_line.line_num;
+
+            // Close [PLY] scopes whose body has ended (indentation dropped to/below
+            // the [PLY] line). Faults and tags handle their own scope, so only
+            // step-like lines participate here.
+            if let Some(li) = step_like_indent(&parsed_line.kind) {
+                while let Some(&p) = poly_stack.last() {
+                    if li <= p {
+                        poly_stack.pop();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            let depth = poly_stack.len();
+            let step_expected = if depth == 0 { 4 } else { poly_stack.last().unwrap() + 4 };
+
             match &parsed_line.kind {
-                LineKind::Req { noun, verb, input, output, indent, .. } => {
-                    // Check if previous REQ's last step returned the expected DTO
-                    if let (Some(req_out), Some(step_out), Some(step_line)) = (&current_req_output, &last_step_output, last_step_line) {
-                        if req_out != step_out {
-                            diagnostics.push(Diagnostic {
-                                range: line_range(step_line),
-                                severity: Some(DiagnosticSeverity::ERROR),
-                                message: format!("Last step must return '{}' (REQ output), got '{}'", req_out, step_out),
-                                ..Default::default()
-                            });
+                LineKind::Mod { .. } => {
+                    in_req = false;
+                    poly_stack.clear();
+                    last_was_req = false;
+                    consecutive_empty = 0;
+                }
+
+                LineKind::Ent { input, output, indent, .. } => {
+                    if *indent != 0 {
+                        diagnostics.push(diag_err(line_num, "[ENT] must start at column 0".to_string()));
+                    }
+                    if !input.is_empty() && !input.ends_with("Dto") && !input.starts_with('{') {
+                        diagnostics.push(diag_err(line_num, format!("[ENT] input must be a DTO, got '{}'", input)));
+                    }
+                    if !output.ends_with("Dto") {
+                        diagnostics.push(diag_err(line_num, format!("[ENT] output must be a DTO, got '{}'", output)));
+                    }
+                    in_req = false;
+                    poly_stack.clear();
+                    last_was_req = false;
+                    consecutive_empty = 0;
+                }
+
+                LineKind::Req { noun, verb, input, output, indent, modifier, .. } => {
+                    // The previous REQ's last step must have returned its output DTO.
+                    if let (Some(ro), Some(so), Some(sl)) = (&current_req_output, &last_step_output, last_step_line) {
+                        if ro != so {
+                            diagnostics.push(diag_err(sl, format!("Last step must return '{}' (REQ output), got '{}'", ro, so)));
                         }
                     }
-
-                    // REQ must be at column 0
-                    if *indent != 0 {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: "[REQ] must start at column 0".to_string(),
-                            ..Default::default()
-                        });
+                    if let Some(m) = modifier {
+                        diagnostics.push(diag_err(line_num, format!("[REQ:{}] is invalid — coordinators are module-level", m)));
                     }
-
-                    // Check for duplicate REQ
+                    if *indent != 0 {
+                        diagnostics.push(diag_err(line_num, "[REQ] must start at column 0".to_string()));
+                    }
                     let key = format!("{}.{}", noun, verb);
                     if seen_reqs.contains(&key) {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!("Duplicate REQ: {}", key),
-                            ..Default::default()
-                        });
+                        diagnostics.push(diag_err(line_num, format!("Duplicate REQ: {}", key)));
                     }
                     seen_reqs.insert(key);
-
-                    // REQ input must be a DTO
                     if !input.is_empty() && !input.ends_with("Dto") && !input.starts_with('{') {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!("REQ input must be a DTO, got '{}'", input),
-                            ..Default::default()
-                        });
+                        diagnostics.push(diag_err(line_num, format!("REQ input must be a DTO, got '{}'", input)));
                     }
-
-                    // REQ output must be a DTO
                     if !output.ends_with("Dto") {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!("REQ output must be a DTO, got '{}'", output),
-                            ..Default::default()
-                        });
+                        diagnostics.push(diag_err(line_num, format!("REQ output must be a DTO, got '{}'", output)));
                     }
-
-                    // Track DTO reference and usage
-                    if input.ends_with("Dto") {
-                        referenced_dtos.push((line_num, input.clone()));
-                        used_dtos.insert(input.clone());
-                    }
-                    if output.ends_with("Dto") {
-                        referenced_dtos.push((line_num, output.clone()));
-                        used_dtos.insert(output.clone());
-                    }
-
-                    // Check spacing: need double blank line between REQs
                     if last_was_req && consecutive_empty < 2 {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::WARNING),
-                            message: "Expected double blank line between requirements".to_string(),
-                            ..Default::default()
-                        });
+                        diagnostics.push(diag_warn(line_num, "Expected double blank line between requirements".to_string()));
                     }
-
-                    // Reset scope for new REQ
-                    scope.clear();
-
-                    // Add input DTO properties to scope (recursively including nested DTOs)
-                    if input.ends_with("Dto") {
-                        let mut visited = HashSet::new();
-                        let input_props = get_dto_properties_recursive(
-                            input,
-                            &dto_properties,
-                            &defined_dtos,
-                            &defined_types,
-                            &mut visited,
-                        );
-                        scope.extend(input_props);
-                    }
-
+                    in_req = true;
+                    poly_stack.clear();
                     current_req_output = Some(output.clone());
                     last_step_output = None;
                     last_step_line = None;
-
-                    _in_req = true;
-                    _in_concrete = false;
                     last_step_indent = None;
                     last_was_req = true;
                     consecutive_empty = 0;
                 }
 
                 LineKind::Step { noun, verb, indent, params, output, is_static } => {
-                    // Exit poly block when we return to 4-space indent (before validation)
-                    if *indent == 4 && in_poly_block {
-                        in_poly_block = false;
+                    if !in_req {
+                        diagnostics.push(diag_err(line_num, "Step outside [REQ]".to_string()));
+                        continue;
                     }
-
-                    // Track noun usage
-                    if defined_nouns.contains(noun) {
-                        used_nouns.insert(noun.clone());
-                    } else if !defined_types.contains_key(noun) && !defined_dtos.contains(noun) {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::WARNING),
-                            message: format!("Noun '{}' is not declared with [NON]", noun),
-                            ..Default::default()
-                        });
+                    if *indent != step_expected {
+                        diagnostics.push(diag_err(line_num, format!("Step should be indented {} spaces, got {}", step_expected, indent)));
                     }
-
-                    // Steps at 4 spaces normally, 8 spaces inside poly block
-                    let expected_indent = if in_poly_block { 8 } else { 4 };
-                    if *indent != expected_indent {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!("Step should be indented {} spaces, got {}", expected_indent, indent),
-                            ..Default::default()
-                        });
-                    }
-
-                    // Check method signature consistency
-                    let sep = if *is_static { "::" } else { "." };
-                    let method_key = format!("{}{}{}", noun, sep, verb);
-                    if let Some((first_line, first_params, first_output)) = method_signatures.get(&method_key) {
-                        if first_params != params || first_output != output {
-                            diagnostics.push(Diagnostic {
-                                range: line_range(line_num),
-                                severity: Some(DiagnosticSeverity::ERROR),
-                                message: format!(
-                                    "Inconsistent signature for '{}': expected ({}) -> {} (from line {}), got ({}) -> {}",
-                                    method_key,
-                                    first_params.join(", "),
-                                    first_output,
-                                    first_line + 1,
-                                    params.join(", "),
-                                    output
-                                ),
-                                ..Default::default()
-                            });
-                        }
-                    } else {
-                        method_signatures.insert(method_key, (line_num, params.clone(), output.clone()));
-                    }
-
-                    // Instance methods require noun to be in scope (returned from previous step)
-                    // Static methods (::) and cotr (constructor) don't need noun in scope
-                    if !*is_static && !scope.contains(noun) {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!("'{}' must be returned by a previous step, or use static method (::) for class-level calls", noun),
-                            ..Default::default()
-                        });
-                    }
-                    // Validate params: must be in scope (from previous step return or REQ input)
-                    for param in params {
-                        // Track usage for unused element detection
-                        if defined_types.contains_key(param) {
-                            used_types.insert(param.clone());
-                        } else if defined_dtos.contains(param) {
-                            used_dtos.insert(param.clone());
-                        }
-
-                        // Check if param is in scope (from previous return or REQ input DTO)
-                        if !scope.contains(param) && !defined_dtos.contains(param) {
-                            diagnostics.push(Diagnostic {
-                                range: line_range(line_num),
-                                severity: Some(DiagnosticSeverity::ERROR),
-                                message: format!("Parameter '{}' is not in scope (must be returned by a previous step or provided by REQ input)", param),
-                                ..Default::default()
-                            });
-                        }
-                    }
-                    // Validate return type and track usage
+                    check_sig(&mut diagnostics, &mut method_signatures, line_num, noun, verb, *is_static, params, output);
                     if output.is_empty() {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: "Step missing return type".to_string(),
-                            ..Default::default()
-                        });
-                    } else if output != "void" {
-                        if defined_types.contains_key(output) {
-                            used_types.insert(output.clone());
-                        } else if defined_dtos.contains(output) {
-                            used_dtos.insert(output.clone());
-                        } else if defined_nouns.contains(output) {
-                            used_nouns.insert(output.clone());
-                        } else {
-                            diagnostics.push(Diagnostic {
-                                range: line_range(line_num),
-                                severity: Some(DiagnosticSeverity::WARNING),
-                                message: format!("Return type '{}' is not defined", output),
-                                ..Default::default()
-                            });
-                        }
-                    }
-
-                    // Add output to scope (available for subsequent steps)
-                    if !output.is_empty() && output != "void" {
-                        scope.insert(output.clone());
-                        // If output is a DTO, add its properties to scope
-                        if output.ends_with("Dto") {
-                            let mut visited = HashSet::new();
-                            let dto_props = get_dto_properties_recursive(
-                                output,
-                                &dto_properties,
-                                &defined_dtos,
-                                &defined_types,
-                                &mut visited,
-                            );
-                            scope.extend(dto_props);
-                        }
+                        diagnostics.push(diag_err(line_num, "Step missing return type".to_string()));
                     }
                     last_step_output = Some(output.clone());
                     last_step_line = Some(line_num);
-
                     last_step_indent = Some(*indent);
                     last_was_req = false;
                     consecutive_empty = 0;
                 }
 
                 LineKind::BoundaryStep { prefix, noun, verb, indent, params, output, is_static } => {
-                    // Exit poly block when we return to 4-space indent (before validation)
-                    if *indent == 4 && in_poly_block {
-                        in_poly_block = false;
+                    if !in_req {
+                        diagnostics.push(diag_err(line_num, "Boundary step outside [REQ]".to_string()));
+                        continue;
                     }
-
-                    // Track noun usage
-                    if defined_nouns.contains(noun) {
-                        used_nouns.insert(noun.clone());
+                    if *indent != step_expected {
+                        diagnostics.push(diag_err(line_num, format!("Boundary step should be indented {} spaces, got {}", step_expected, indent)));
                     }
-
-                    // Boundary steps at 4 spaces normally, 8 spaces inside poly block
-                    let expected_indent = if in_poly_block { 8 } else { 4 };
-                    if *indent != expected_indent {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!("Boundary step should be indented {} spaces, got {}", expected_indent, indent),
-                            ..Default::default()
-                        });
-                    }
-
-                    // Check method signature consistency
-                    let sep = if *is_static { "::" } else { "." };
-                    let method_key = format!("{}{}{}", noun, sep, verb);
-                    if let Some((first_line, first_params, first_output)) = method_signatures.get(&method_key) {
-                        if first_params != params || first_output != output {
-                            diagnostics.push(Diagnostic {
-                                range: line_range(line_num),
-                                severity: Some(DiagnosticSeverity::ERROR),
-                                message: format!(
-                                    "Inconsistent signature for '{}': expected ({}) -> {} (from line {}), got ({}) -> {}",
-                                    method_key,
-                                    first_params.join(", "),
-                                    first_output,
-                                    first_line + 1,
-                                    params.join(", "),
-                                    output
-                                ),
-                                ..Default::default()
-                            });
-                        }
-                    } else {
-                        method_signatures.insert(method_key, (line_num, params.clone(), output.clone()));
-                    }
-
-                    // Instance methods require noun to be in scope
-                    if !*is_static && !scope.contains(noun) {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!("'{}' must be returned by a previous step, or use static method (::) for class-level calls", noun),
-                            ..Default::default()
-                        });
-                    }
-
-                    // Validate boundary prefix
+                    check_sig(&mut diagnostics, &mut method_signatures, line_num, noun, verb, *is_static, params, output);
                     let valid = ["db:", "fs:", "mq:", "ex:", "os:", "lg:"];
                     if !valid.contains(&prefix.as_str()) {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!("Invalid boundary prefix: {}", prefix),
-                            ..Default::default()
-                        });
+                        diagnostics.push(diag_err(line_num, format!("Invalid boundary prefix: {}", prefix)));
                     }
-
-                    // Boundary params must be DTOs or primitives (not custom types)
                     for param in params {
                         if !is_dto_or_primitive(param, &defined_types) {
-                            diagnostics.push(Diagnostic {
-                                range: line_range(line_num),
-                                severity: Some(DiagnosticSeverity::ERROR),
-                                message: format!("{} boundary parameter must be a DTO or primitive, got '{}'", prefix, param),
-                                ..Default::default()
-                            });
+                            diagnostics.push(diag_err(line_num, format!("{} boundary parameter must be a DTO or primitive, got '{}'", prefix, param)));
                         }
                     }
-                    // Boundary return must be DTO, primitive, or void
                     if !is_dto_or_primitive(output, &defined_types) {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!("{} boundary must return a DTO or primitive, got '{}'", prefix, output),
-                            ..Default::default()
-                        });
-                    }
-
-                    // Validate params: must be in scope (from previous step return or REQ input)
-                    for param in params {
-                        // Track usage for unused element detection
-                        if defined_types.contains_key(param) {
-                            used_types.insert(param.clone());
-                        } else if defined_dtos.contains(param) {
-                            used_dtos.insert(param.clone());
-                        }
-
-                        // Check if param is in scope (from previous return or REQ input DTO)
-                        if !scope.contains(param) && !defined_dtos.contains(param) {
-                            diagnostics.push(Diagnostic {
-                                range: line_range(line_num),
-                                severity: Some(DiagnosticSeverity::ERROR),
-                                message: format!("Parameter '{}' is not in scope (must be returned by a previous step or provided by REQ input)", param),
-                                ..Default::default()
-                            });
-                        }
-                    }
-                    // Validate return type and track usage
-                    if output.is_empty() {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: "Boundary step missing return type".to_string(),
-                            ..Default::default()
-                        });
-                    } else if output != "void" {
-                        if defined_types.contains_key(output) {
-                            used_types.insert(output.clone());
-                        } else if defined_dtos.contains(output) {
-                            used_dtos.insert(output.clone());
-                        } else if defined_nouns.contains(output) {
-                            used_nouns.insert(output.clone());
-                        } else {
-                            diagnostics.push(Diagnostic {
-                                range: line_range(line_num),
-                                severity: Some(DiagnosticSeverity::WARNING),
-                                message: format!("Return type '{}' is not defined", output),
-                                ..Default::default()
-                            });
-                        }
-                    }
-
-                    // Add output to scope
-                    if !output.is_empty() && output != "void" {
-                        scope.insert(output.clone());
-                        // If output is a DTO, add its properties to scope
-                        if output.ends_with("Dto") {
-                            let mut visited = HashSet::new();
-                            let dto_props = get_dto_properties_recursive(
-                                output,
-                                &dto_properties,
-                                &defined_dtos,
-                                &defined_types,
-                                &mut visited,
-                            );
-                            scope.extend(dto_props);
-                        }
+                        diagnostics.push(diag_err(line_num, format!("{} boundary must return a DTO or primitive, got '{}'", prefix, output)));
                     }
                     last_step_output = Some(output.clone());
                     last_step_line = Some(line_num);
-
                     last_step_indent = Some(*indent);
                     last_was_req = false;
                     consecutive_empty = 0;
                 }
 
-                LineKind::Fault { names: _, indent } => {
-                    // Faults: 2 spaces deeper than parent step
-                    // Under regular step (4): fault at 6
-                    // Under poly case step (8): fault at 10
-                    let expected = last_step_indent.map(|s| s + 2).unwrap_or(6);
-                    if *indent != expected {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!("Fault should be indented {} spaces (2 more than step), got {}", expected, indent),
-                            ..Default::default()
-                        });
-                    }
-
-                    // Check orphan fault
+                LineKind::Fault { indent, .. } => {
                     if last_step_indent.is_none() {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: "Orphan fault: not under a step".to_string(),
-                            ..Default::default()
-                        });
+                        diagnostics.push(diag_err(line_num, "Orphan fault: not under a step".to_string()));
+                    } else {
+                        let expected = last_step_indent.unwrap() + 2;
+                        if *indent != expected {
+                            diagnostics.push(diag_err(line_num, format!("Fault should be indented {} spaces (2 more than step), got {}", expected, indent)));
+                        }
                     }
                     last_was_req = false;
                     consecutive_empty = 0;
                 }
 
                 LineKind::Ply { noun, verb, params, output, indent, is_static } => {
-                    // Track noun usage
-                    if defined_nouns.contains(noun) {
-                        used_nouns.insert(noun.clone());
+                    if !in_req {
+                        diagnostics.push(diag_err(line_num, "[PLY] outside [REQ]".to_string()));
+                        continue;
                     }
-
-                    // Polymorphic step - must be at 4 spaces (step level)
-                    if *indent != 4 {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!("[PLY] should be indented 4 spaces, got {}", indent),
-                            ..Default::default()
-                        });
+                    if *indent != step_expected {
+                        diagnostics.push(diag_err(line_num, format!("[PLY] should be indented {} spaces, got {}", step_expected, indent)));
                     }
-
-                    // Validate noun is in scope for instance methods
-                    if !*is_static && !scope.contains(noun) {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!("'{}' is not in scope (instance method requires noun to be returned by previous step)", noun),
-                            ..Default::default()
-                        });
-                    }
-
-                    // Track parameter usage
-                    for param in params {
-                        let param_base = param.split(':').next().unwrap_or(param).trim();
-                        if defined_types.contains_key(param_base) {
-                            used_types.insert(param_base.to_string());
-                        }
-                    }
-
-                    // Track output type usage
-                    if defined_types.contains_key(output) {
-                        used_types.insert(output.clone());
-                    } else if defined_dtos.contains(output) {
-                        used_dtos.insert(output.clone());
-                    } else if defined_nouns.contains(output) {
-                        used_nouns.insert(output.clone());
-                    }
-
-                    // Add output to scope
-                    scope.insert(output.clone());
+                    check_sig(&mut diagnostics, &mut method_signatures, line_num, noun, verb, *is_static, params, output);
+                    poly_stack.push(*indent);
                     last_step_output = Some(output.clone());
                     last_step_line = Some(line_num);
                     last_step_indent = Some(*indent);
-
-                    // Enter poly block mode
-                    in_poly_block = true;
-                    _in_concrete = false;
                     last_was_req = false;
                     consecutive_empty = 0;
-
-                    // Track signature for consistency
-                    let sig_key = format!("{}.{}", noun, verb);
-                    let sig_val = format!("{:?}:{}", params, output);
-                    if let Some(first) = signature_map.get(&sig_key) {
-                        if first.1 != sig_val {
-                            diagnostics.push(Diagnostic {
-                                range: line_range(line_num),
-                                severity: Some(DiagnosticSeverity::ERROR),
-                                message: format!("Signature mismatch for '{}': first occurrence at line {} had different params/return", sig_key, first.0 + 1),
-                                ..Default::default()
-                            });
-                        }
-                    } else {
-                        signature_map.insert(sig_key, (line_num, sig_val));
-                    }
                 }
 
                 LineKind::Cse { name, indent } => {
-                    // Case must be inside poly block at 8 spaces
-                    if !in_poly_block {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!("[CSE] {} must be inside a [PLY] block", name),
-                            ..Default::default()
-                        });
-                    } else if *indent != 8 {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!("[CSE] should be indented 8 spaces inside poly block, got {}", indent),
-                            ..Default::default()
-                        });
+                    if poly_stack.is_empty() {
+                        diagnostics.push(diag_err(line_num, format!("[CSE] {} must be inside a [PLY] block", name)));
+                    } else {
+                        let expected = poly_stack.last().unwrap() + 4;
+                        if *indent != expected {
+                            diagnostics.push(diag_err(line_num, format!("[CSE] should be indented {} spaces, got {}", expected, indent)));
+                        }
                     }
-
-                    _in_concrete = true;
                     last_step_indent = None;
                     last_was_req = false;
                     consecutive_empty = 0;
                 }
 
-                LineKind::DtoDef { name, properties: _ } => {
-                    // DTO name must end in Dto
+                LineKind::DtoDef { name, .. } => {
                     if !name.ends_with("Dto") {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!("DTO name '{}' must end in 'Dto'", name),
-                            ..Default::default()
-                        });
+                        diagnostics.push(diag_err(line_num, format!("DTO name '{}' must end in 'Dto'", name)));
                     }
-
-                    _in_req = false;
-                    _in_concrete = false;
+                    in_req = false;
+                    poly_stack.clear();
                     last_step_indent = None;
                     last_was_req = false;
-                    consecutive_empty = 0;
-                }
-
-                LineKind::DtoDesc { text: _, indent: _ } => {
-                    // DTO description lines - just track them
-                    consecutive_empty = 0;
-                }
-
-                LineKind::DtoProperty { name, type_name: _ } => {
-                    // Property can reference a TYP (primitive) or another DTO
-                    if let Some(typ_type) = defined_types.get(name) {
-                        used_types.insert(name.clone());
-                        if !is_valid_primitive_type(typ_type) {
-                            diagnostics.push(Diagnostic {
-                                range: line_range(line_num),
-                                severity: Some(DiagnosticSeverity::WARNING),
-                                message: format!("DTO property '{}' must reference a primitive type, got '{}'", name, typ_type),
-                                ..Default::default()
-                            });
-                        }
-                    } else if defined_dtos.contains(name) {
-                        // DTO can reference other DTOs
-                        used_dtos.insert(name.clone());
-                    } else {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::WARNING),
-                            message: format!("Property '{}' references undefined type or DTO", name),
-                            ..Default::default()
-                        });
-                    }
-                    consecutive_empty = 0;
-                }
-
-                LineKind::DtoArrayProperty { property_name: _, base_type, suffix: _ } => {
-                    // Array property: base_type must be a defined TYP
-                    if let Some(typ_type) = defined_types.get(base_type) {
-                        used_types.insert(base_type.clone());
-                        if !is_valid_primitive_type(typ_type) {
-                            diagnostics.push(Diagnostic {
-                                range: line_range(line_num),
-                                severity: Some(DiagnosticSeverity::WARNING),
-                                message: format!("Array property base '{}' must reference a primitive type, got '{}'", base_type, typ_type),
-                                ..Default::default()
-                            });
-                        }
-                    } else {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!("Array property '{}' references undefined type '{}'", base_type, base_type),
-                            ..Default::default()
-                        });
-                    }
-                    consecutive_empty = 0;
-                }
-
-                LineKind::MultilineContinuation { expected_indent, actual_indent } => {
-                    if expected_indent != actual_indent {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!(
-                                "Inconsistent indentation: expected {} spaces, got {}",
-                                expected_indent, actual_indent
-                            ),
-                            ..Default::default()
-                        });
-                    }
-                    consecutive_empty = 0;
-                }
-
-                LineKind::Empty => {
-                    consecutive_empty += 1;
-                }
-
-                LineKind::DtoRef(_) => {
                     consecutive_empty = 0;
                 }
 
                 LineKind::TypDef { name, type_name } => {
-                    // Validate TYP uses primitives, not DTOs or other types
                     if !is_valid_primitive_type(type_name) {
                         if type_name.ends_with("Dto") {
-                            diagnostics.push(Diagnostic {
-                                range: line_range(line_num),
-                                severity: Some(DiagnosticSeverity::ERROR),
-                                message: format!("Type '{}' cannot reference DTO '{}' - types must be primitives", name, type_name),
-                                ..Default::default()
-                            });
+                            diagnostics.push(diag_err(line_num, format!("Type '{}' cannot reference DTO '{}' - types must be primitives", name, type_name)));
                         } else if defined_types.contains_key(type_name) {
-                            diagnostics.push(Diagnostic {
-                                range: line_range(line_num),
-                                severity: Some(DiagnosticSeverity::ERROR),
-                                message: format!("Type '{}' cannot reference type '{}' - types must be primitives", name, type_name),
-                                ..Default::default()
-                            });
+                            diagnostics.push(diag_err(line_num, format!("Type '{}' cannot reference type '{}' - types must be primitives", name, type_name)));
                         }
                     }
-                    consecutive_empty = 0;
-                }
-
-                LineKind::TypDesc { .. } => {
-                    // TYP description lines follow TYP definitions
+                    in_req = false;
+                    poly_stack.clear();
+                    last_was_req = false;
                     consecutive_empty = 0;
                 }
 
                 LineKind::NonDef { .. } => {
-                    // NON definitions handled in first pass
+                    in_req = false;
+                    poly_stack.clear();
+                    last_was_req = false;
                     consecutive_empty = 0;
-                }
-
-                LineKind::NonDesc { .. } => {
-                    // NON description lines follow NON definitions
-                    consecutive_empty = 0;
-                }
-
-                LineKind::Comment { .. } => {
-                    // Comments are ignored during validation
                 }
 
                 LineKind::Ret { value, indent } => {
-                    // Built-in [RET] step - returns a value that's already in scope
-                    let expected_indent = if in_poly_block { 8 } else { 4 };
-                    if *indent != expected_indent {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!("[RET] should be indented {} spaces, got {}", expected_indent, indent),
-                            ..Default::default()
-                        });
+                    if !in_req {
+                        diagnostics.push(diag_err(line_num, "[RET] outside [REQ]".to_string()));
+                        continue;
                     }
-
-                    // Value must be in scope (returned by previous step or from REQ input)
-                    if !scope.contains(value) && !defined_dtos.contains(value) {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!("'{}' is not in scope (must be returned by a previous step)", value),
-                            ..Default::default()
-                        });
+                    if *indent != step_expected {
+                        diagnostics.push(diag_err(line_num, format!("[RET] should be indented {} spaces, got {}", step_expected, indent)));
                     }
-
-                    // Track usage
-                    if defined_types.contains_key(value) {
-                        used_types.insert(value.clone());
-                    } else if defined_dtos.contains(value) {
-                        used_dtos.insert(value.clone());
-                    }
-
-                    // The return value becomes the step's output
                     last_step_output = Some(value.clone());
                     last_step_line = Some(line_num);
                     last_step_indent = Some(*indent);
@@ -881,41 +358,25 @@ impl Backend {
                     consecutive_empty = 0;
                 }
 
-                LineKind::New { class_name, indent } => {
-                    // Constructor shorthand: [NEW] class
-                    // Exit poly block when we return to 4-space indent (before validation)
-                    if *indent == 4 && in_poly_block {
-                        in_poly_block = false;
+                LineKind::New { indent, .. } => {
+                    if !in_req {
+                        diagnostics.push(diag_err(line_num, "[NEW] outside [REQ]".to_string()));
+                        continue;
                     }
-
-                    let expected_indent = if in_poly_block { 8 } else { 4 };
-                    if *indent != expected_indent {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            message: format!("[NEW] should be indented {} spaces, got {}", expected_indent, indent),
-                            ..Default::default()
-                        });
+                    if *indent != step_expected {
+                        diagnostics.push(diag_err(line_num, format!("[NEW] should be indented {} spaces, got {}", step_expected, indent)));
                     }
-
-                    // Validate class_name references a declared noun
-                    if defined_nouns.contains(class_name) {
-                        used_nouns.insert(class_name.clone());
-                    } else {
-                        diagnostics.push(Diagnostic {
-                            range: line_range(line_num),
-                            severity: Some(DiagnosticSeverity::WARNING),
-                            message: format!("Noun '{}' is not declared with [NON]", class_name),
-                            ..Default::default()
-                        });
-                    }
-
-                    // Add class to scope (ctr returns the class instance)
-                    scope.insert(class_name.clone());
-                    last_step_output = Some(class_name.clone());
-                    last_step_line = Some(line_num);
                     last_step_indent = Some(*indent);
                     last_was_req = false;
+                    consecutive_empty = 0;
+                }
+
+                LineKind::MultilineContinuation { expected_indent, actual_indent } => {
+                    if expected_indent != actual_indent {
+                        diagnostics.push(diag_err(line_num, format!(
+                            "Inconsistent indentation: expected {} spaces, got {}",
+                            expected_indent, actual_indent)));
+                    }
                     consecutive_empty = 0;
                 }
 
@@ -924,118 +385,61 @@ impl Backend {
                         "Missing parameters: expected 'noun.verb(args): type'".to_string()
                     } else if text.contains('(') && !text.contains(':') {
                         "Missing return type after ':'".to_string()
-                    } else if text.starts_with("[REQ]") {
+                    } else if text.starts_with('[') {
                         text.clone()
                     } else {
-                        format!("Unexpected '{}' - expected [REQ], step, fault, or [DTO]", text)
+                        format!("Unexpected '{}' - expected a tag, step, fault, or definition", text)
                     };
-                    diagnostics.push(Diagnostic {
-                        range: line_range(line_num),
-                        severity: Some(DiagnosticSeverity::ERROR),
-                        message: msg,
-                        ..Default::default()
-                    });
+                    diagnostics.push(diag_err(line_num, msg));
                     consecutive_empty = 0;
                 }
+
+                LineKind::Empty => {
+                    consecutive_empty += 1;
+                }
+
+                // Definitions handled in the first pass; descriptions / refs are
+                // prose with no second-pass checks.
+                LineKind::DtoDesc { .. }
+                | LineKind::TypDesc { .. }
+                | LineKind::NonDesc { .. }
+                | LineKind::DtoProperty { .. }
+                | LineKind::DtoArrayProperty { .. }
+                | LineKind::DtoRef(_) => {
+                    consecutive_empty = 0;
+                }
+
+                LineKind::Comment { .. } => {}
             }
         }
 
-        // Check final REQ's last step returns expected DTO
-        if let (Some(req_out), Some(step_out), Some(step_line)) = (&current_req_output, &last_step_output, last_step_line) {
-            if req_out != step_out {
-                diagnostics.push(Diagnostic {
-                    range: line_range(step_line),
-                    severity: Some(DiagnosticSeverity::ERROR),
-                    message: format!("Last step must return '{}' (REQ output), got '{}'", req_out, step_out),
-                    ..Default::default()
-                });
+        // Final REQ's last step must return its output DTO.
+        if let (Some(ro), Some(so), Some(sl)) = (&current_req_output, &last_step_output, last_step_line) {
+            if ro != so {
+                diagnostics.push(diag_err(sl, format!("Last step must return '{}' (REQ output), got '{}'", ro, so)));
             }
         }
 
-        // Check for undefined DTO references
-        for (line_num, dto_name) in referenced_dtos {
-            // Strip array suffixes like [] or Array<>
-            let base_name = dto_name
-                .trim_end_matches("[]")
-                .split('<')
-                .next()
-                .unwrap_or(&dto_name);
-
-            if !defined_dtos.contains(base_name) && base_name.ends_with("Dto") {
-                diagnostics.push(Diagnostic {
-                    range: line_range(line_num),
-                    severity: Some(DiagnosticSeverity::WARNING),
-                    message: format!("DTO '{}' is not defined", base_name),
-                    ..Default::default()
-                });
-            }
-        }
-
-        // Check for duplicate DTO properties
-        for (dto_name, props) in dto_properties {
-            let mut seen: HashMap<String, usize> = HashMap::new();
-            for (line_num, prop_name, _type_name) in props {
-                if let Some(first_line) = seen.get(&prop_name) {
-                    diagnostics.push(Diagnostic {
-                        range: line_range(line_num),
-                        severity: Some(DiagnosticSeverity::ERROR),
-                        message: format!(
-                            "Duplicate property '{}' in {} (first defined on line {})",
-                            prop_name, dto_name, first_line + 1
-                        ),
-                        ..Default::default()
-                    });
+        // Duplicate DTO properties within the same DTO.
+        for (dto_name, props) in &dto_properties {
+            let mut seen: HashMap<&String, usize> = HashMap::new();
+            for (line_num, prop_name) in props {
+                if let Some(&first) = seen.get(prop_name) {
+                    diagnostics.push(diag_err(*line_num, format!(
+                        "Duplicate property '{}' in {} (first defined on line {})",
+                        prop_name, dto_name, first + 1)));
                 } else {
-                    seen.insert(prop_name, line_num);
+                    seen.insert(prop_name, *line_num);
                 }
             }
         }
 
-        // Check for unused types
-        for (type_name, line_num) in &defined_types_lines {
-            if !used_types.contains(type_name) {
-                diagnostics.push(Diagnostic {
-                    range: line_range(*line_num),
-                    severity: Some(DiagnosticSeverity::WARNING),
-                    message: format!("Type '{}' is defined but never used", type_name),
-                    ..Default::default()
-                });
-            }
-        }
-
-        // Check for unused nouns
-        for (noun_name, line_num) in &defined_nouns_lines {
-            if !used_nouns.contains(noun_name) {
-                diagnostics.push(Diagnostic {
-                    range: line_range(*line_num),
-                    severity: Some(DiagnosticSeverity::WARNING),
-                    message: format!("Noun '{}' is defined but never used", noun_name),
-                    ..Default::default()
-                });
-            }
-        }
-
-        // Check for unused DTOs
-        for (dto_name, line_num) in &defined_dtos_lines {
-            if !used_dtos.contains(dto_name) {
-                diagnostics.push(Diagnostic {
-                    range: line_range(*line_num),
-                    severity: Some(DiagnosticSeverity::WARNING),
-                    message: format!("DTO '{}' is defined but never used", dto_name),
-                    ..Default::default()
-                });
-            }
-        }
-
-        // Check for missing DTO descriptions
+        // Every DTO needs a description.
         for (dto_name, line_num) in &defined_dtos_lines {
             if !dto_has_desc.contains(dto_name) {
-                diagnostics.push(Diagnostic {
-                    range: line_range(*line_num),
-                    severity: Some(DiagnosticSeverity::ERROR),
-                    message: format!("DTO '{}' is missing a description (add 4-space indented description on next line)", dto_name),
-                    ..Default::default()
-                });
+                diagnostics.push(diag_err(*line_num, format!(
+                    "DTO '{}' is missing a description (add a 4-space indented description on the next line)",
+                    dto_name)));
             }
         }
 
@@ -1055,6 +459,66 @@ fn line_range(line: usize) -> Range {
             line: line as u32,
             character: 1000, // Reasonable max line length
         },
+    }
+}
+
+fn diag_err(line: usize, message: String) -> Diagnostic {
+    Diagnostic {
+        range: line_range(line),
+        severity: Some(DiagnosticSeverity::ERROR),
+        message,
+        ..Default::default()
+    }
+}
+
+fn diag_warn(line: usize, message: String) -> Diagnostic {
+    Diagnostic {
+        range: line_range(line),
+        severity: Some(DiagnosticSeverity::WARNING),
+        message,
+        ..Default::default()
+    }
+}
+
+/// Indent of the lines that participate in [PLY] scope nesting.
+fn step_like_indent(kind: &LineKind) -> Option<usize> {
+    match kind {
+        LineKind::Step { indent, .. }
+        | LineKind::BoundaryStep { indent, .. }
+        | LineKind::Ply { indent, .. }
+        | LineKind::Cse { indent, .. }
+        | LineKind::Ret { indent, .. }
+        | LineKind::New { indent, .. } => Some(*indent),
+        _ => None,
+    }
+}
+
+/// A `noun.verb` (or `Noun::verb`) must keep one signature throughout a document.
+fn check_sig(
+    diagnostics: &mut Vec<Diagnostic>,
+    sigs: &mut HashMap<String, (usize, Vec<String>, String)>,
+    line_num: usize,
+    noun: &str,
+    verb: &str,
+    is_static: bool,
+    params: &[String],
+    output: &str,
+) {
+    let sep = if is_static { "::" } else { "." };
+    let key = format!("{}{}{}", noun, sep, verb);
+    if let Some((first_line, first_params, first_output)) = sigs.get(&key) {
+        if first_params != params || first_output != output {
+            diagnostics.push(diag_err(line_num, format!(
+                "Inconsistent signature for '{}': expected ({}) -> {} (from line {}), got ({}) -> {}",
+                key,
+                first_params.join(", "),
+                first_output,
+                first_line + 1,
+                params.join(", "),
+                output)));
+        }
+    } else {
+        sigs.insert(key, (line_num, params.to_vec(), output.to_string()));
     }
 }
 
@@ -1210,15 +674,21 @@ impl LanguageServer for Backend {
 
         // Tags at column 0
         if prefix.trim().is_empty() && col == 0 || prefix.starts_with('[') {
-            for tag in ["[REQ]", "[DTO]", "[TYP]", "[NON]"] {
+            for tag in ["[REQ]", "[ENT]", "[DTO]", "[TYP]", "[NON]", "[PLY]", "[CSE]", "[NEW]", "[RET]", "[MOD]"] {
                 items.push(CompletionItem {
                     label: tag.to_string(),
                     kind: Some(CompletionItemKind::KEYWORD),
                     detail: Some(match tag {
-                        "[REQ]" => "requirement".to_string(),
+                        "[REQ]" => "requirement (endpoint)".to_string(),
+                        "[ENT]" => "entrypoint / transport binding".to_string(),
                         "[DTO]" => "data transfer object".to_string(),
                         "[TYP]" => "type alias".to_string(),
                         "[NON]" => "noun declaration".to_string(),
+                        "[PLY]" => "polymorphic dispatch".to_string(),
+                        "[CSE]" => "polymorphism case".to_string(),
+                        "[NEW]" => "construct a noun".to_string(),
+                        "[RET]" => "return a value in scope".to_string(),
+                        "[MOD]" => "module name".to_string(),
                         _ => "tag".to_string(),
                     }),
                     ..Default::default()
@@ -1636,46 +1106,6 @@ fn boundary_detail(prefix: &str) -> String {
         "lg:" => "logs".to_string(),
         _ => "boundary".to_string(),
     }
-}
-
-/// Recursively collect all properties from a DTO, including from nested DTOs
-fn get_dto_properties_recursive(
-    dto_name: &str,
-    dto_properties: &HashMap<String, Vec<(usize, String, String)>>,
-    defined_dtos: &HashSet<String>,
-    defined_types: &HashMap<String, String>,
-    visited: &mut HashSet<String>,
-) -> HashSet<String> {
-    let mut result = HashSet::new();
-
-    // Prevent infinite recursion from circular references
-    if visited.contains(dto_name) {
-        return result;
-    }
-    visited.insert(dto_name.to_string());
-
-    if let Some(props) = dto_properties.get(dto_name) {
-        for (_line, _prop_name, type_name) in props {
-            // type_name is the referenced type (for regular props it equals prop_name,
-            // for array props like url(s), type_name is "url")
-            if defined_dtos.contains(type_name) {
-                // If the property references another DTO, recursively get its properties
-                let nested = get_dto_properties_recursive(
-                    type_name,
-                    dto_properties,
-                    defined_dtos,
-                    defined_types,
-                    visited,
-                );
-                result.extend(nested);
-            } else if defined_types.contains_key(type_name) {
-                // It's a type (primitive), add to scope
-                result.insert(type_name.clone());
-            }
-        }
-    }
-
-    result
 }
 
 #[tokio::main]

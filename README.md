@@ -16,6 +16,12 @@ helpers) into `~/.deno/bin` — no Deno or Rust toolchain required. Options:
 
 - `RUNE_INSTALL=/usr/local/bin` — install somewhere else (must be on your `PATH`).
 - `RUNE_VERSION=v0.1.0` — pin a specific snapshot instead of the rolling latest.
+- `RUNE_VERSION=develop` — install the rolling **develop** build (latest
+  integration work, ahead of stable):
+
+  ```sh
+  curl -fsSL https://raw.githubusercontent.com/theTechGoose/rune/main/install.sh | RUNE_VERSION=develop sh
+  ```
 
 Supported targets: Apple-silicon macOS, Intel macOS, Linux x86-64. On macOS the
 script de-quarantines the binaries so Gatekeeper doesn't block them.

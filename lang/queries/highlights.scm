@@ -1,5 +1,7 @@
 ; Rune syntax highlighting
 ; GENERATED from new/keywords.json by new/generate.mjs — do not edit by hand.
+; Capture names match the @rune.* groups defined in the editor ftplugin;
+; every pattern references a node that exists in the generated grammar.
 
 ; Tags: structural anchors
 (req_tag) @rune.tag
@@ -13,7 +15,8 @@
 (dto_tag) @rune.tag
 (non_tag) @rune.tag
 
-; Nouns: subjects (before . or ::)
+; Nouns: subjects (before . or ::) and declared names
+(req_line (identifier) @rune.noun)
 (signature (identifier) @rune.noun)
 (mod_line (identifier) @rune.noun)
 (cse_line (identifier) @rune.noun)
@@ -23,20 +26,23 @@
 ; Verbs: actions (after . or ::)
 (method_name) @rune.verb
 
-; Function names: camelCase REQ signatures
-(function_name) @rune.boundary
-
-; DTOs: type contracts
-(dto_reference) @rune.dto
-(dto_def_name) @rune.dto
-
-; Builtins: language primitives
-(typ_type (type_name) @rune.builtin)
-(typ_generic_type (type_name) @rune.builtin)
-(typ_tuple_type (type_name) @rune.builtin)
+; Types: DTOs and type references
+(dto_reference) @rune.type
+(dto_def_name) @rune.type
+(return_type (type_name) @rune.type)
+(array_type (type_name) @rune.type)
+(generic_type (type_name) @rune.type)
+(typed_param (type_name) @rune.type)
+(typ_type (type_name) @rune.type)
+(typ_generic_type (type_name) @rune.type)
+(typ_tuple_type (type_name) @rune.type)
 
 ; String enum values
 (typ_enum_value) @rune.fault
+
+; Parameters and DTO properties
+(param_name) @rune.param
+(property_name) @rune.param
 
 ; Boundaries: system edges
 (boundary_prefix) @rune.boundary
@@ -44,8 +50,11 @@
 ; Faults
 (fault_line) @rune.fault
 
-; Optional marker + comments
-(dto_optional_marker) @rune.comment
+; Punctuation / chrome
+(dto_optional_marker) @rune.chrome
+(dto_array_suffix) @rune.chrome
+
+; Descriptions & comments
 (typ_desc) @rune.comment
 (dto_desc) @rune.comment
 (non_desc) @rune.comment

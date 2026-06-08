@@ -1,4 +1,4 @@
-import { dirname, join, relative, resolve } from "#std/path";
+import { basename, dirname, join, relative, resolve } from "#std/path";
 import { planSync } from "@rune/domain/business/rune-sync/mod.ts";
 import {
   artifactToOptions,
@@ -15,7 +15,7 @@ const RESET = "\x1b[0m";
 
 interface SyncArgs {
   runePath: string;
-  root: string;
+  root: string | null; // null = not given → discover from the spec path
   dryRun: boolean;
   force: boolean;
   artifactPath: string | null;
@@ -23,7 +23,7 @@ interface SyncArgs {
 
 function parseSyncArgs(args: string[]): SyncArgs | null {
   let runePath: string | null = null;
-  let root = ".";
+  let root: string | null = null;
   let dryRun = false;
   let force = false;
   let artifactPath: string | null = null;
@@ -77,6 +77,23 @@ function errMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+// Resolve the project root from the spec's path — independent of cwd AND of how
+// deeply the spec is nested. Output is always `<root>/src/<module>/`, and <root>
+// is the directory directly above the OUTERMOST `src/` segment in the spec's path.
+// So a spec located anywhere under the tree — even an accidentally nested
+// `…/src/<m>/src/<m>/<m>.rune` — collapses back to the single canonical
+// `…/src/<m>/` location instead of mirroring the nesting into the output.
+// `--root` overrides this entirely.
+function discoverRoot(absRune: string): string {
+  const parts = absRune.split("/");
+  const srcIdx = parts.indexOf("src"); // outermost src/ in the path
+  if (srcIdx > 0) return parts.slice(0, srcIdx).join("/");
+  // No src/ in the path: a spec in `<root>/specs/` → `<root>`; else the spec dir.
+  const specDir = dirname(absRune);
+  if (basename(specDir) === "specs") return dirname(specDir);
+  return specDir;
+}
+
 // Reconcile a .rune spec with the project tree: scaffold new code, prune orphans
 // the spec no longer declares, and preserve everything already filled in.
 export async function runSync(args: string[]): Promise<number> {
@@ -88,8 +105,8 @@ export async function runSync(args: string[]): Promise<number> {
     return 2;
   }
 
-  const root = resolve(parsed.root);
   const absRune = resolve(parsed.runePath);
+  const root = parsed.root !== null ? resolve(parsed.root) : discoverRoot(absRune);
   const relRune = relative(root, absRune);
 
   let runeText: string;
