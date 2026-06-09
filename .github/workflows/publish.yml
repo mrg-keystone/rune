@@ -1,0 +1,25 @@
+name: Publish to JSR
+
+# Publishes the package to JSR on every push to main. JSR authenticates via GitHub OIDC, so no
+# token is needed — but the package MUST be linked to this repo first:
+#   jsr.io/@mrg-keystone/danet → Settings → "Link a GitHub repository" → mrg-keystone/danet
+# `deno publish` no-ops/fails if the version in deno.json already exists, so bump the version
+# per release.
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for JSR OIDC authentication
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Publish to JSR
+        run: deno publish
