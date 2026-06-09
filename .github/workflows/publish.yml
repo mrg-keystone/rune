@@ -11,6 +11,11 @@ name: Publish to JSR
 #   --no-provenance       Skip the provenance/sigstore attestation. Provenance stalls the JSR
 #                         publishing task for ~2h on GitHub runners (and `id-token: write` did NOT
 #                         fix it), so we authenticate with the token and skip provenance instead.
+#   --allow-slow-types    JSR's SERVER-SIDE publishing task type-checks the package to generate
+#                         docs/.d.ts, and `deno publish` polls that task until it finishes. For
+#                         this package that analysis hangs the step even after the version uploads
+#                         (the version goes live but the command never exits). Allowing slow types
+#                         makes JSR skip the heavy analysis so the task completes promptly.
 on:
   push:
     branches:
@@ -27,4 +32,4 @@ jobs:
         with:
           deno-version: v2.x
       - name: Publish to JSR
-        run: deno publish --token "$JSR_TOKEN" --allow-dirty --no-provenance
+        run: deno publish --token "$JSR_TOKEN" --allow-dirty --no-provenance --allow-slow-types
