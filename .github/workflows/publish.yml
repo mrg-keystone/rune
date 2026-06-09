@@ -1,21 +1,22 @@
 name: Publish to JSR
 
-# Publishes to JSR on every push to main, authenticating with the JSR_TOKEN repo secret.
-# `deno publish` is idempotent: if the version in deno.json is already on JSR it skips with a
-# warning and exits 0, so pushes without a version bump stay green. To cut a release, bump
-# "version" in deno.json and push to main.
+# Publishes to JSR on every push to main. To cut a release, bump "version" in deno.json and push.
 #
-# Publish flags (this combination is required on GitHub runners):
-#   --token "$JSR_TOKEN"  Auth via token instead of OIDC (JSR_TOKEN from the job env below).
-#   --allow-dirty         Publish even if the checked-out tree is dirty.
-#   --no-provenance       Skip the provenance/sigstore attestation. Provenance stalls the JSR
-#                         publishing task for ~2h on GitHub runners (and `id-token: write` did NOT
-#                         fix it), so we authenticate with the token and skip provenance instead.
-#   --allow-slow-types    JSR's SERVER-SIDE publishing task type-checks the package to generate
-#                         docs/.d.ts, and `deno publish` polls that task until it finishes. For
-#                         this package that analysis hangs the step even after the version uploads
-#                         (the version goes live but the command never exits). Allowing slow types
-#                         makes JSR skip the heavy analysis so the task completes promptly.
+# WORKAROUND for a `deno publish` hang on this package:
+#   The publish itself SUCCEEDS — the version uploads and JSR's server-side publishing task
+#   finishes in ~5s, so the package goes fully live — but the `deno publish` PROCESS never exits.
+#   It sits at "Publishing ..." for many minutes/hours. Cause: a lingering handle/timer from the
+#   npm-dependency graph keeps Deno's event loop alive after the work is done (same class as
+#   denoland/deno#23727). It reproduces BOTH locally and on GitHub runners, and is independent of
+#   provenance and slow types (verified: a --no-provenance publish whose server task succeeded in
+#   ~5s still hung the CLI for 7.5min).
+#
+#   So we don't wait on the process: run `deno publish` in the background and poll the JSR API for
+#   the target version. As soon as it's live we kill the stuck process and exit 0; if it never
+#   appears we exit 1. This also covers the idempotent case (version already on JSR → exit 0 fast).
+#
+# Publish flags: --allow-dirty (tree may be dirty), --no-provenance (provenance also stalls on
+# runners and isn't needed with token auth), --allow-slow-types (don't block publish on slow types).
 on:
   push:
     branches:
@@ -31,5 +32,28 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - name: Publish to JSR
-        run: deno publish --token "$JSR_TOKEN" --allow-dirty --no-provenance --allow-slow-types
+      - name: Publish to JSR (poll API — deno publish does not exit after success)
+        run: |
+          set -uo pipefail
+          VER="$(jq -r .version deno.json)"
+          VURL="https://api.jsr.io/scopes/mrg-keystone/packages/keep/versions/$VER"
+          echo "Publishing @mrg-keystone/keep@$VER ..."
+          deno publish --token "$JSR_TOKEN" --allow-dirty --no-provenance --allow-slow-types &
+          PUB_PID=$!
+          for _ in $(seq 1 60); do
+            if curl -fsS "$VURL" >/dev/null 2>&1; then
+              echo "✓ @mrg-keystone/keep@$VER is live on JSR"
+              kill "$PUB_PID" 2>/dev/null || true
+              wait "$PUB_PID" 2>/dev/null || true
+              exit 0
+            fi
+            if ! kill -0 "$PUB_PID" 2>/dev/null; then
+              curl -fsS "$VURL" >/dev/null 2>&1 && { echo "✓ live"; exit 0; }
+              echo "✗ deno publish exited and @mrg-keystone/keep@$VER is not on JSR" >&2
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "✗ timed out waiting for @mrg-keystone/keep@$VER to appear on JSR" >&2
+          kill "$PUB_PID" 2>/dev/null || true
+          exit 1
