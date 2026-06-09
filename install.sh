@@ -50,15 +50,10 @@ case "$os-$arch" in
 esac
 
 # --- 3. Resolve the release tag ---
-tag="${RUNE_VERSION:-}"
-if [ -z "$tag" ]; then
-  tag="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-    | grep -m1 '"tag_name"' | cut -d'"' -f4)"
-fi
-if [ -z "$tag" ]; then
-  echo "rune: could not determine the latest release tag." >&2
-  exit 1
-fi
+# The rolling release is ALWAYS tagged `latest`; pinned snapshots use their v* tag.
+# Resolve directly — never via the GitHub "latest release" API, which is unreliable
+# mid-deploy (it briefly returns an older pinned tag while `latest` is rebuilding).
+tag="${RUNE_VERSION:-latest}"
 
 # --- 4. Download + install ---
 url="https://github.com/$REPO/releases/download/$tag/rune-$target.tar.gz"

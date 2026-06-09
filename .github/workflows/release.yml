@@ -22,18 +22,22 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Reset the moving rolling release so its assets are replaced cleanly: `latest`
-  # for main, `develop` for develop. Skipped for tag pushes (pinned snapshots).
+  # Ensure the rolling release EXISTS — never delete it. Deleting-then-recreating
+  # left a ~2-min window where `latest` was absent, so installers 404'd or fell
+  # back to an old pinned tag. Here we just create it if missing; the build jobs
+  # overwrite its (fixed-name) assets in place, so `latest` is always downloadable.
   prepare:
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     steps:
-      - name: Reset rolling release for this branch
+      - name: Ensure rolling release exists for this branch
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag=$([ "$GITHUB_REF" = "refs/heads/main" ] && echo latest || echo develop)
-          gh release delete "$tag" --cleanup-tag --yes -R "${{ github.repository }}" || true
+          gh release view "$tag" -R "${{ github.repository }}" >/dev/null 2>&1 \
+            || gh release create "$tag" -R "${{ github.repository }}" \
+                 --title "$tag" --notes "rolling release" --latest=false
 
   build:
     needs: [prepare]
