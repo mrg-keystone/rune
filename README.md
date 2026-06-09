@@ -151,6 +151,12 @@ A network caller authorizes by sending a credential in the `Authorization` heade
 Authorization: Bearer <credential>
 ```
 
+The same credential is also accepted as a **`?token=<credential>`** query param. That's for
+callers that can't set a header — a plain link, a first browser navigation, or a WebSocket
+upgrade. Prefer the header where you can: a token in a URL can leak via history and `Referer`,
+so the query value is **redacted from request logs**, and the Fresh frontend pattern below seeds
+it once from `?token=` then sends it as a header thereafter.
+
 The credential may be **either** of two things — whichever validates first authorizes the
 request:
 
@@ -285,6 +291,52 @@ header — so docs use a **query-param → localStorage** flow:
 So you share a `…/docs?token=…` link once; the token is reused from `localStorage` until it
 stops working. This also works mounted under Fresh — the shell derives the spec URL from its own
 path, so `/api/docs/<module>` fetches `/api/docs/<module>/json`.
+
+#### Browser access to your own API (frontend token)
+
+The same query-param → `localStorage` flow works for your app's `/api`, so a browser/island can
+call the gated API without you wiring a token into every `fetch`. Drop this in a client entry
+(e.g. a Fresh `client.ts`) — it seeds the token from `?token=`, attaches it to same-origin
+`/api/*` requests, and drops it when one comes back `401`:
+
+```ts
+const KEY = "danet:token";
+
+// Seed once from ?token=, then strip it from the URL.
+const url = new URL(location.href);
+const seeded = url.searchParams.get("token");
+if (seeded) {
+  localStorage.setItem(KEY, seeded);
+  url.searchParams.delete("token");
+  history.replaceState(history.state, "", url.toString());
+}
+
+// Auto-attach on /api/* requests; clear on a 401 (stale/expired).
+const isApi = (u: string) => new URL(u, location.origin).pathname.startsWith("/api/");
+const native = globalThis.fetch.bind(globalThis);
+globalThis.fetch = async (input, init) => {
+  const req = new Request(input as RequestInfo, init);
+  const token = localStorage.getItem(KEY);
+  if (token && isApi(req.url) && !req.headers.has("authorization")) {
+    req.headers.set("authorization", `Bearer ${token}`);
+  }
+  const res = await native(req);
+  if (token && isApi(req.url) && res.status === 401) localStorage.removeItem(KEY);
+  return res;
+};
+```
+
+You hand someone a `…/probe?token=…` link once; the browser remembers it and authorizes every
+subsequent API call until it stops working. (Server-side rendering should still prefer
+`api.backend.fetch(...)` — in-process, no token. This is only for calls the browser itself makes
+over the network.) See the runnable [`examples/fresh-project`](examples/fresh-project) for a
+working `client.ts` + `/probe` page.
+
+> **Use a short-lived token in the link.** A token in a URL can be shoulder-surfed, kept in
+> history, or forwarded in a `Referer`. Mint link tokens with a **short expiry**
+> (`signToken({ …, expiry })`, minutes/hours) — they're moved to a header and stripped from the
+> URL immediately, and a stale one is dropped on the next `401`. Don't seed a **never-expiring**
+> token this way.
 
 #### Programmatic sign / verify
 
@@ -524,6 +576,12 @@ export const app = new App<State>()
 
 (`withBasePath` forwards the `info` you pass it down to the backend.)
 
+`bootstrapServer` is **bundler-safe**: it lazy-loads the Swagger builder (and its CommonJS
+`handlebars` dependency), so importing it from Fresh works through Vite's SSR in both
+`deno task dev` and the production build (`deno task build` → `deno serve _fresh/server.js`). A
+complete, runnable version of this whole section — plus the browser token flow and a
+localhost-trust toggle — is in [`examples/fresh-project`](examples/fresh-project).
+
 Fresh's server-side code (handlers, loaders) calls the backend **in-process** — no network
 hop, no token needed:
 
@@ -549,11 +607,12 @@ So one Deno Deploy process serves the Fresh UI at `/`, exposes the token-gated A
 for external callers, and lets the frontend reach the backend in-process. The backend stays
 fully runnable standalone — same `api`, different entry.
 
-For browser-side calls that *do* go over the network to `/api` (an island's `fetch`), send the
-user's **Firebase ID token** as `Authorization: Bearer <idToken>`; with `FIREBASE_PROJECT_ID`
-set, the backend accepts it (see
-[Access tokens & authorization](#access-tokens--authorization)). Server-side rendering should
-still prefer `api.backend.fetch(...)`, which is in-process and needs no credential.
+For browser-side calls that *do* go over the network to `/api` (an island's `fetch`), attach a
+credential — either a **signed token** seeded from `?token=` and auto-injected from `localStorage`
+(see [Browser access to your own API](#browser-access-to-your-own-api-frontend-token)), or the
+user's **Firebase ID token** as `Authorization: Bearer <idToken>` (with `FIREBASE_PROJECT_ID`
+set). Server-side rendering should still prefer `api.backend.fetch(...)`, which is in-process and
+needs no credential.
 
 **Deno Deploy notes**
 - Set env vars in the Deploy project: `MANUAL_KEY` (signed tokens) and/or `FIREBASE_PROJECT_ID`
