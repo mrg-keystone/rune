@@ -1,6 +1,5 @@
 import type { Type, FetchHandler } from "@types";
 import { Server } from "@foundation/domain/business/server/mod.ts";
-import { SwaggerBuilder } from "@foundation/domain/business/swagger-builder/mod.ts";
 import { DanetHttpAdapter } from "@foundation/domain/data/http-adapter/mod.ts";
 import { createBackendClient } from "@foundation/domain/business/backend-client/mod.ts";
 import type { BackendClient } from "@foundation/domain/business/backend-client/mod.ts";
@@ -138,6 +137,14 @@ export class BootstrapServer {
     adapter.registerRoute("post", "/_mint", mintUi.mint as RouteHandler);
 
     if (swagger) {
+      // Lazy-load the Swagger builder only when docs are enabled. It pulls in `handlebars`
+      // (and `openapi3-ts`) — CommonJS modules that bundlers like Vite's SSR runner can't load.
+      // A static import would force them into EVERY consumer's module graph (even swagger:false),
+      // breaking the Fresh/Vite embedding. Behind this dynamic import they're never reached when
+      // docs are off.
+      const { SwaggerBuilder } = await import(
+        "@foundation/domain/business/swagger-builder/mod.ts"
+      );
       const filters = typeof swagger === "object" ? swagger.filters : [];
       const builder = new SwaggerBuilder(...filters);
       const { swaggerDocs, docsIndexHtml } = await builder.build(server);
