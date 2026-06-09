@@ -17,6 +17,7 @@
     "npm:awesome-phonenumber@7.1.0": "7.1.0",
     "npm:handlebars@^4.7.8": "4.7.8",
     "npm:jose@5": "5.10.0",
+    "npm:openapi3-ts@4.5.0": "4.5.0",
     "npm:path-to-regexp@6.2.1": "6.2.1",
     "npm:reflect-metadata@0.1.13": "0.1.13",
     "npm:zod@3": "3.23.8",

@@ -1,19 +1,23 @@
 {
   "name": "@mrg-keystone/danet",
-  "version": "1.11.0",
+  "version": "1.12.0",
   "description": "Core module for Danet framework",
   "license": "MIT",
   "exports": {
     ".": "./src/bootstrap/mod.ts"
   },
   "publish": {
-    "exclude": ["**/*.test.ts", "e2e/", "TODOS.md"]
+    "exclude": ["**/*.test.ts", "e2e/", "examples/", "TODOS.md"]
   },
   "tasks": {
-    "test": "deno test -A --unstable-raw-imports"
+    "test": "deno test -A --unstable-raw-imports",
+    "example": "deno run -A examples/in-process-client/main.ts"
   },
   "imports": {
     "#reflect-metadata": "npm:reflect-metadata@0.1.13",
+    "reflect-metadata": "npm:reflect-metadata@0.1.13",
+    "@mrg-keystone/danet": "./src/bootstrap/mod.ts",
+    "@danet/core": "jsr:@danet/core@2",
     "#handlebars": "npm:handlebars@^4.7.8",
     "#openapi3-ts": "npm:openapi3-ts@4.5.0",
     "#danet/core": "jsr:@danet/core@2",
