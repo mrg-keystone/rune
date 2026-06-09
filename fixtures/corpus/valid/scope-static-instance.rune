@@ -16,3 +16,6 @@
 
 [DTO] AccountDto: id, name
     an opened account
+
+[TYP] name: string
+    the name

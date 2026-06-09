@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertStringIncludes } from "#std/assert";
 import { parse } from "@rune/domain/business/rune-parse/mod.ts";
-import { collectNounMethods, renderImpl, renderSig } from "./mod.ts";
+import { collectNounMethods, renderImpl } from "./mod.ts";
 
 const SPEC = `[MOD] m
 [REQ] m.run(InDto): OutDto
@@ -18,25 +18,17 @@ Deno.test("collectNounMethods groups static + instance per noun", () => {
   assert(id.some((m) => m.verb === "toDto" && !m.isStatic));
 });
 
-Deno.test("renderSig emits abstract base + statics interface", () => {
-  const sig = renderSig("id", [
-    { verb: "create", params: ["providerName"], isStatic: true },
-    { verb: "toDto", params: [], isStatic: false },
-  ]);
-  assertStringIncludes(sig, "export abstract class IdBase {");
-  assertStringIncludes(sig, "abstract toDto(): unknown;");
-  assertStringIncludes(sig, "export interface IdStatics {");
-  assertStringIncludes(sig, "create(providerName: unknown): unknown;");
-});
-
-Deno.test("renderImpl extends base, marks override, satisfies statics", () => {
+Deno.test("renderImpl emits a plain concrete class (no base, no override)", () => {
   const impl = renderImpl("id", [
     { verb: "create", params: ["providerName"], isStatic: true },
     { verb: "toDto", params: [], isStatic: false },
   ]);
-  assertStringIncludes(impl, 'import { IdBase, type IdStatics } from "./sig.ts";');
-  assertStringIncludes(impl, "export class Id extends IdBase {");
+  assertStringIncludes(impl, "export class Id {");
   assertStringIncludes(impl, "static create(providerName: unknown): unknown {");
-  assertStringIncludes(impl, "override toDto(): unknown {");
-  assertStringIncludes(impl, "Id satisfies IdStatics;");
+  assertStringIncludes(impl, "  toDto(): unknown {");
+  // No abstract base, no override modifier, no sig import, no satisfies.
+  assert(!impl.includes("extends"));
+  assert(!impl.includes("override"));
+  assert(!impl.includes("./sig.ts"));
+  assert(!impl.includes("satisfies"));
 });

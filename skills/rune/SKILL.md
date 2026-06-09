@@ -26,10 +26,12 @@ from it, you don't hand-edit the generated structure.**
   behavior elsewhere — it all derives from that file.
 - **One generator.** `rune sync` (the Deno engine) is the only code generator,
   and it emits Deno/TypeScript. There is no multi-target system.
-- **Spec → contract → bodies.** Generation splits each feature into a *spec-owned*
-  contract (`sig.ts`, regenerated every run) and *dev-owned* bodies (`mod.ts`,
-  tests, created once and never overwritten). The TypeScript compiler is how you
-  reconcile drift — see the workflow below. This split is why the loop is safe.
+- **Spec → concrete code.** Generation emits **plain concrete classes** for
+  business features and data adapters (no `sig.ts` — only `[PLY]` variants get an
+  abstract base), **class-validator / class-transformer DTOs** (fields typed from
+  the `[TYP]`s), and coordinators split into an **imperative shell + a pure
+  `<verb>Core`**. `mod.ts` and test files are *dev-owned* — created once with
+  stubs, never overwritten; everything else regenerates each run.
 
 ## Writing a .rune — the shape
 
@@ -123,6 +125,9 @@ These are the ones that cause "won't parse / won't lint" surprises:
   return a DTO/primitive/`void`.
 - **`[TYP]` resolves to a primitive** (`string`/`number`/`boolean`/`void`/
   `Uint8Array`/`Class`/`Primitive` + generics), never to a DTO.
+- **Every `[DTO]` field must resolve to a `[TYP]` or a nested `[DTO]`** (modifiers
+  `?` / `(s)` allowed) — no untyped fields. `rune check`/`sync` rejects a field
+  with no declaration (e.g. `[DTO] BookDto: id, borrowed` with no `[TYP] borrowed`).
 - Same `noun.verb` must keep one signature throughout; no duplicate names.
 
 When in doubt about a rule, read `lang/docs/constraints.md` (the full table) — don't
@@ -136,7 +141,7 @@ the spec — and then **moves the spec into that module** (`src/<module>/<spec>.
 So you can just point at a fresh spec:
 
 ```sh
-rune sync path/to/<module>.rune          # or: rune path/to/<module>.rune
+rune sync path/to/<module>.rune
 ```
 
 (In the repo without an installed binary, use
@@ -149,38 +154,41 @@ place and never nests `src/<module>/src/<module>/`. Only the spec's immediate
 parents are inspected, so a `src` directory higher up the path can't hijack the
 root. Pass `--root <dir>` to scaffold somewhere other than beside the spec.
 
-This is one repeating cycle — **write → generate → fill in → verify → lint** —
-not a one-shot. Each step:
+This is one repeating cycle — **write → check → generate → fill in → verify → lint**
+— not a one-shot. Each step:
 
-1. **Generate.** `rune sync` scaffolds the module under `src/<module>/domain/...`,
-   `dto/`, `mod-root.ts`, **and writes/updates the project's `deno.json` import
-   map** (`@/`, `#zod`, `#std/*`) so the output type-checks immediately. It's
-   non-destructive — it never clobbers your filled-in bodies, and re-running with
-   no spec change produces zero diffs (idempotent).
-2. **Fill in the bodies.** Generation makes two kinds of file: *spec-owned*
-   contracts (`sig.ts`, regenerated — don't touch) and *dev-owned* files
-   (`mod.ts`, tests) scaffolded once with `throw new Error("not implemented")`
-   stubs. **You implement those stubs** — write the real logic in `mod.ts`,
-   satisfying the abstract `sig.ts` contract; flesh out the test files. This is
-   where your actual code lives, and `rune sync` will never overwrite it.
-3. **Verify with `deno check` — run it FROM the generated project.** `cd` into the
-   project dir first (or pass `--config <project>/deno.json`). Running it from the
-   rune repo instead makes the repo's own `@/` import map shadow the project's,
-   producing spurious `TS2307 "not a dependency"` errors — a false alarm, not a
-   real problem. With the right cwd it catches spec/impl drift:
-   - *Added* a method to the spec → `sig.ts` gains it; `mod.ts` fails to implement
-     it (`TS2515`). Implement it.
-   - *Removed* one → `mod.ts` has a stray `override` (`TS4113`). Delete it.
-   This compiler round-trip is the "perfect change" — the spec owns the contract;
-   the compiler tells you exactly what to reconcile in your bodies.
-4. **Lint with shape-checker — every time you modify the code.** `rune <dir>`
-   (default: current dir) checks the whole project against the architecture rules
-   in `keywords.json`: import aliases, layer boundaries (a pure feature can't
-   import a data adapter), barrel discipline, fault coverage, folder structure,
-   and more. Exit 0 = `All clear`. This is the ongoing guardrail — run it after
-   filling in or changing any code, not just after generating, so hand-written
-   bodies stay inside the architecture. `rune --help` lists all commands.
-5. **Prune.** When a spec drops a whole feature, the orphan files are *held back*
+1. **Check the spec — `rune check <file.rune>`.** Validates the spec with the same
+   parser + rules as `sync` and the editor LSP (every `[DTO]` field must resolve to
+   a `[TYP]` or `[DTO]` — no untyped fields; signatures; structure). Exit 0 = clean,
+   2 = errors. No codegen, nothing written.
+2. **Generate — `rune sync <file.rune>`.** Scaffolds the module under
+   `src/<module>/domain/...`, `dto/`, `mod-root.ts`, **and writes/updates the
+   project's `deno.json`** — the import map (`@/`, `class-validator`,
+   `class-transformer`, `#std/*`) plus the `experimentalDecorators` /
+   `emitDecoratorMetadata` the DTO classes need. Non-destructive: never clobbers
+   your bodies; idempotent on re-run.
+3. **Fill in the bodies.** Generated files:
+   - business features & data adapters → **plain concrete classes** (`mod.ts`),
+     stubbed with `throw new Error("not implemented")`, plus **one test stub per
+     method** (`test.ts`). No `sig.ts` — only `[PLY]` variants get an abstract base.
+   - DTOs → **class-validator / class-transformer classes** with fields typed from
+     the `[TYP]`s (`@IsString() id!: string`), no `unknown`.
+   - coordinators → an **imperative shell** (`<verb>`) that loads via data adapters
+     → calls a pure inner **`<verb>Core`** (all business logic, no I/O) → writes via
+     data adapters → returns the result.
+   You implement the stubs; `rune sync` never overwrites them. *Caveat:* because
+   `mod.ts` is create-once, changing a spec's methods does NOT auto-update an
+   existing `mod.ts` — reconcile by hand, or delete the file and re-sync for a fresh
+   stub.
+4. **Verify with `deno check` — run it FROM the generated project.** `cd` in first
+   (or pass `--config <project>/deno.json`); running from the rune repo makes its
+   `@/` map shadow the project's, producing spurious `TS2307` errors.
+5. **Lint — `rune lint [dir]`** (default: current dir). Checks the project against
+   the architecture rules in `keywords.json`: import aliases, layer boundaries (a
+   pure feature can't import a data adapter), barrel discipline, fault coverage,
+   folder structure, DTO validation, and more. Exit 0 = `All clear`. Run it after
+   any code change. `rune --help` lists all commands.
+6. **Prune.** When a spec drops a whole feature, the orphan files are *held back*
    by default (so a spec edit can't silently delete your code). Re-run with
    `--force` to remove them: `rune sync … --force`.
 
@@ -203,8 +211,9 @@ not a one-shot. Each step:
 
 - Don't hand-author the generated folder structure — generate it with `rune sync`
   and fill in the `mod.ts` bodies.
-- Don't edit `sig.ts` or other spec-owned files — they're overwritten; change the
-  `.rune` instead.
+- Don't hand-edit `mod-root.ts`, the `dto/` files, or the generated folder layout
+  — `rune sync` regenerates them; change the `.rune` instead. (There is no `sig.ts`
+  anymore — feature/adapter classes are concrete.)
 - Don't add language features by editing engine code — edit `keywords.json` (via
   the Studio); it's the single source of truth.
 

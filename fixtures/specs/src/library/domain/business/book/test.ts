@@ -3,6 +3,22 @@
 
 import { Book } from "./mod.ts";
 
-Deno.test("Book — placeholder", () => {
-  // TODO: implement unit tests
+Deno.test("Book.fill", () => {
+  // TODO: test fill
+});
+
+Deno.test("Book.save", () => {
+  // TODO: test save
+});
+
+Deno.test("Book.toDto", () => {
+  // TODO: test toDto
+});
+
+Deno.test("Book.load", () => {
+  // TODO: test load
+});
+
+Deno.test("Book.markBorrowed", () => {
+  // TODO: test markBorrowed
 });

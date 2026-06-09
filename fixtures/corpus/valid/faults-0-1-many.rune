@@ -17,3 +17,8 @@
 
 [DTO] ChargeResultDto: token, amount
     the settled charge
+
+[TYP] amount: number
+    the amount
+[TYP] token: string
+    the token

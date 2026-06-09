@@ -414,6 +414,30 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
     ast.errors.push({ line: i, message: `unrecognized line: "${trimmed}"` });
   }
 
+  // Every property used in a [DTO] must resolve to a declared type — no untyped
+  // (`unknown`) fields. It may be a [TYP], a nested [DTO] (named directly or via
+  // the <Name>Dto convention), after stripping the optional `?` and plural `(s)`
+  // modifiers. (TYP names cover both module and :core typs.)
+  const typNames = new Set(ast.typs.map((t) => t.name));
+  const dtoNames = new Set(ast.dtos.map((d) => d.name));
+  const pascal = (s: string) =>
+    s.split(/[-_]/).filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1))
+      .join("");
+  for (const dto of ast.dtos) {
+    for (const prop of dto.properties) {
+      const clean = prop.replace(/\(s\)/g, "").replace(/\?/g, "").trim();
+      const resolved = typNames.has(clean) || dtoNames.has(clean) ||
+        dtoNames.has(`${pascal(clean)}Dto`);
+      if (!resolved) {
+        ast.errors.push({
+          line: dto.line,
+          message:
+            `[DTO] ${dto.name}: property "${prop}" has no [TYP] or [DTO] — declare "[TYP] ${clean}: <type>"`,
+        });
+      }
+    }
+  }
+
   return ast;
 }
 

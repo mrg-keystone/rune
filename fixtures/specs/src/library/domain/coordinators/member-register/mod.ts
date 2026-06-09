@@ -3,10 +3,27 @@
 
 import type { RegisterDto } from "@/src/library/dto/register.ts";
 import type { MemberDto } from "@/src/library/dto/member.ts";
+import { Member } from "@/src/library/domain/business/member/mod.ts";
+import { Member as MemberData } from "@/src/library/domain/data/member/mod.ts";
 
 // Coordinator for [REQ] member.register(RegisterDto): MemberDto.
-
 export async function register(input: RegisterDto): Promise<MemberDto> {
-  // TODO: implement the flow as declared in the rune.
+  const memberData = new MemberData();
+
+  // core — pure business logic, no I/O
+  const out = registerCore(input);
+
+  // writes — side effects through the data adapters
+  await memberData.save(out.save);
+
+  return out.result;
+}
+
+// Pure business logic for member.register — no I/O. Takes the
+// request input and the dtos the reads loaded; returns the dtos the
+// writes consume plus the result.
+function registerCore(input: RegisterDto): { save: MemberDto; result: MemberDto } {
+  const member = new Member();
+  // TODO: run the pure steps on member, build the dtos
   throw new Error("not implemented");
 }

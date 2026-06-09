@@ -1,11 +1,15 @@
 {
+  "compilerOptions": {
+    "strict": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  },
   "imports": {
     "@/": "./",
-    "#zod": "npm:zod",
+    "class-validator": "npm:class-validator@^0.14",
+    "class-transformer": "npm:class-transformer@^0.5",
+    "reflect-metadata": "npm:reflect-metadata@^0.2",
     "#std/assert": "jsr:@std/assert",
     "#std/path": "jsr:@std/path"
-  },
-  "compilerOptions": {
-    "strict": true
   }
 }

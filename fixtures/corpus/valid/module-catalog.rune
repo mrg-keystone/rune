@@ -10,3 +10,8 @@
 
 [DTO] ProductsDto: items
     a page of products
+
+[TYP] page: number
+    the page
+[TYP] items: string
+    the items

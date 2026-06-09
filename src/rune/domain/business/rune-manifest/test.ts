@@ -11,6 +11,10 @@ Deno.test("planManifest — coordinator + DTO + TYP for a simple rune", () => {
     desc
 
 [TYP] id: string
+    desc
+[TYP] providerName: string
+    desc
+[TYP] externalId: string
     desc`;
   const plan = planManifest("specs/recording.rune", rune, new Set());
   assertEquals(plan.errors, []);
@@ -224,9 +228,13 @@ Deno.test("planManifest — adapter smk.test.ts has one Deno.test per fault", ()
   assertEquals(smk!.content.includes(`Deno.test("network-error"`), true);
 });
 
-Deno.test("planManifest — DTO file has Zod schema with each property", () => {
+Deno.test("planManifest — DTO is a class-validator class with typed fields", () => {
   const rune = `[MOD] recording
 
+[TYP] providerName: string
+    p
+[TYP] externalId: string
+    e
 [DTO] GetRecordingDto: providerName, externalId
     input dto`;
   const plan = planManifest("specs/recording.rune", rune, new Set());
@@ -234,9 +242,13 @@ Deno.test("planManifest — DTO file has Zod schema with each property", () => {
     f.path.endsWith("dto/get-recording.ts")
   );
   assertEquals(dto !== undefined, true);
-  assertEquals(dto!.content.includes("z.object"), true);
-  assertEquals(dto!.content.includes("providerName"), true);
-  assertEquals(dto!.content.includes("externalId"), true);
+  assertEquals(dto!.content.includes("export class GetRecordingDto"), true);
+  assertEquals(dto!.content.includes('from "class-validator"'), true);
+  assertEquals(dto!.content.includes("@IsString()"), true);
+  assertEquals(dto!.content.includes("providerName!: string"), true);
+  assertEquals(dto!.content.includes("externalId!: string"), true);
+  // no class-transformer @Expose noise
+  assertEquals(dto!.content.includes("@Expose"), false);
 });
 
 Deno.test("planManifest — mod-root re-exports each REQ verb", () => {
@@ -289,7 +301,7 @@ Deno.test("planManifest — policy can flip a dev-owned role to regenerate", () 
 
 [DTO] InDto: providerName
     desc`;
-  // Default: business mod.ts is create-once (toCreate), sig.ts regenerates.
+  // Default: business mod.ts is create-once (toCreate), never regenerated.
   const def = planManifest("specs/recording.rune", rune, new Set());
   assertEquals(
     def.toCreate.some((f) =>
@@ -317,13 +329,6 @@ Deno.test("planManifest — policy can flip a dev-owned role to regenerate", () 
   assertEquals(
     over.toRegenerate.some((f) =>
       f.path === "src/recording/domain/business/id/mod.ts"
-    ),
-    true,
-  );
-  // sig.ts is unaffected — still regenerates.
-  assertEquals(
-    over.toRegenerate.some((f) =>
-      f.path === "src/recording/domain/business/id/sig.ts"
     ),
     true,
   );

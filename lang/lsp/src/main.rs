@@ -129,6 +129,22 @@ impl Backend {
             }
         }
 
+        // Every property used in a [DTO] must resolve to a declared type — a
+        // [TYP], a nested [DTO] (direct name or the <Name>Dto convention). Mirrors
+        // the TS parser's check so the LSP flags the same missing-TYP errors.
+        for (dto_name, props) in &dto_properties {
+            for (prop_line, pname) in props {
+                let resolved = defined_types.contains_key(pname)
+                    || defined_dtos.contains(pname)
+                    || defined_dtos.contains(&format!("{}Dto", to_pascal(pname)));
+                if !resolved {
+                    diagnostics.push(diag_err(*prop_line, format!(
+                        "[DTO] {}: property \"{}\" has no [TYP] or [DTO] — declare \"[TYP] {}: <type>\"",
+                        dto_name, pname, pname)));
+                }
+            }
+        }
+
         // Second-pass state.
         let mut method_signatures: HashMap<String, (usize, Vec<String>, String)> = HashMap::new();
         let mut poly_stack: Vec<usize> = Vec::new(); // indents of open [PLY] scopes
@@ -460,6 +476,19 @@ fn line_range(line: usize) -> Range {
             character: 1000, // Reasonable max line length
         },
     }
+}
+
+fn to_pascal(s: &str) -> String {
+    s.split(|c| c == '-' || c == '_')
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            let mut ch = w.chars();
+            match ch.next() {
+                Some(f) => f.to_uppercase().collect::<String>() + ch.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect()
 }
 
 fn diag_err(line: usize, message: String) -> Diagnostic {
