@@ -23,3 +23,6 @@
 
 [DTO] ReceiptDto: id, price
     the receipt returned to the customer
+
+[TYP] items: string
+    the items

@@ -10,3 +10,10 @@
 
 [DTO] InvoiceDto: id, amount
     an issued invoice
+
+[TYP] customerId: string
+    the customerId
+[TYP] amount: number
+    the amount
+[TYP] id: string
+    the id

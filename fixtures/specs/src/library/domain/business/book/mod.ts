@@ -1,20 +1,19 @@
 // Scaffolded once; fill in the bodies. `sync` preserves this file.
-import { BookBase } from "./sig.ts";
 
-export class Book extends BookBase {
-  override fill(title: unknown): unknown {
+export class Book {
+  fill(title: unknown): unknown {
     throw new Error("not implemented");
   }
-  override save(bookDto: unknown): unknown {
+  save(bookDto: unknown): unknown {
     throw new Error("not implemented");
   }
-  override toDto(): unknown {
+  toDto(): unknown {
     throw new Error("not implemented");
   }
-  override load(id: unknown): unknown {
+  load(id: unknown): unknown {
     throw new Error("not implemented");
   }
-  override markBorrowed(): unknown {
+  markBorrowed(): unknown {
     throw new Error("not implemented");
   }
 }

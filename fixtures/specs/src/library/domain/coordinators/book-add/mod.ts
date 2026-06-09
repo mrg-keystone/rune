@@ -3,10 +3,27 @@
 
 import type { AddBookDto } from "@/src/library/dto/add-book.ts";
 import type { BookDto } from "@/src/library/dto/book.ts";
+import { Book } from "@/src/library/domain/business/book/mod.ts";
+import { Book as BookData } from "@/src/library/domain/data/book/mod.ts";
 
 // Coordinator for [REQ] book.add(AddBookDto): BookDto.
-
 export async function add(input: AddBookDto): Promise<BookDto> {
-  // TODO: implement the flow as declared in the rune.
+  const bookData = new BookData();
+
+  // core — pure business logic, no I/O
+  const out = addCore(input);
+
+  // writes — side effects through the data adapters
+  await bookData.save(out.save);
+
+  return out.result;
+}
+
+// Pure business logic for book.add — no I/O. Takes the
+// request input and the dtos the reads loaded; returns the dtos the
+// writes consume plus the result.
+function addCore(input: AddBookDto): { save: BookDto; result: BookDto } {
+  const book = new Book();
+  // TODO: run the pure steps on book, build the dtos
   throw new Error("not implemented");
 }

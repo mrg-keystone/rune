@@ -8,3 +8,8 @@
 
 [DTO] ResultsDto: items
     the matched results
+
+[TYP] page: number
+    the page
+[TYP] items: string
+    the items

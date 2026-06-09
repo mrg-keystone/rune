@@ -23,3 +23,6 @@
 
 [DTO] ResultDto: id
     the sync result
+
+[TYP] payload: string
+    the payload

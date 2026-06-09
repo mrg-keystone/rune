@@ -39,10 +39,12 @@ Deno.test("sync scaffolds, then preserves fill-ins and prunes orphans", async ()
     assert((await Deno.stat(movedRune)).isFile, "spec moved into src/orders/");
 
     // sync makes a fresh project compile out of the box: it writes a deno.json
-    // with the import aliases the generated code uses (@/, #zod, #std/*).
+    // with the import aliases the generated code uses (@/, class-validator, …)
+    // plus the decorator compiler options the DTO classes need.
     const denoJson = JSON.parse(await Deno.readTextFile(join(root, "deno.json")));
     assertEquals(denoJson.imports["@/"], "./");
-    assertEquals(denoJson.imports["#zod"], "npm:zod");
+    assertEquals(denoJson.imports["class-validator"], "npm:class-validator@^0.14");
+    assertEquals(denoJson.compilerOptions.experimentalDecorators, true);
 
     // Fill in cart, and plant an orphan feature the spec doesn't declare.
     const filled = "// my implementation\nexport class Cart {}\n";

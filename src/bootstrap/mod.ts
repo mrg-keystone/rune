@@ -1,17 +1,35 @@
 import { dirname, fromFileUrl, join, resolve } from "#std/path";
-import { rules, runPipeline, parseArgs, printHeader, printResults, printJson, runManifest, runSync, runValidate } from "@rune/mod-root.ts";
+import { rules, runPipeline, parseArgs, printHeader, printResults, printJson, runManifest, runSync, runCheck, runValidate } from "@rune/mod-root.ts";
 import { getIgnoredPaths } from "@rune/domain/data/project/mod.ts";
 import { suggestForResults } from "@rune/domain/data/llm/openai.ts";
 import { canonicalPaths as SHAPE } from "@rune/domain/business/artifact/canonical-paths.ts";
 import type { EntryResult } from "@core/dto/types.ts";
 
-// ---- help ----
-if (["-h", "--help", "help"].includes(Deno.args[0] ?? "")) {
+// Walk up from `start` to the nearest dir containing a deno.json(c) — the project
+// root. `rune lint` runs from there, so it works invoked from any subdirectory.
+// Falls back to `start` if no marker is found.
+function findProjectRoot(start: string): string {
+  let dir = start;
+  while (true) {
+    for (const f of ["deno.json", "deno.jsonc"]) {
+      try {
+        if (Deno.statSync(join(dir, f)).isFile) return dir;
+      } catch { /* keep looking */ }
+    }
+    const up = dirname(dir);
+    if (up === dir) return start; // hit filesystem root, no marker
+    dir = up;
+  }
+}
+
+// ---- help ---- (bare `rune` with no args shows this too)
+if (["-h", "--help", "help"].includes(Deno.args[0] ?? "") || Deno.args.length === 0) {
   console.log(`rune — design a spec, generate the code, keep it honest.
 
 USAGE
-  rune [dir]                 lint a project (default: current dir)
   rune sync <file.rune>      generate/update a module from its spec
+  rune check <file.rune>     check a spec for errors (no codegen)
+  rune lint [dir]            lint a project against the architecture (default: .)
   rune manifest <file.rune>  one-shot generate (no prune)
   rune validate <art.json>   validate a keywords.json artifact
   rune lsp                   start the language server (editor integration)
@@ -90,33 +108,52 @@ if (Deno.args[0] === "sync") {
   Deno.exit(code);
 }
 
+if (Deno.args[0] === "check") {
+  const code = await runCheck(Deno.args.slice(1));
+  Deno.exit(code);
+}
+
 if (Deno.args[0] === "validate") {
   const code = await runValidate(Deno.args.slice(1));
   Deno.exit(code);
 }
 
-const { dir, module: moduleName, suggest, json } = parseArgs(Deno.args);
-
-// Dead-simple ergonomics: `rune <spec>.rune [flags]` just syncs that spec — no
-// `sync` subcommand needed. `rune [dir]` (or no arg) still lints a project.
-if (dir.endsWith(".rune")) {
-  Deno.exit(await runSync(Deno.args));
+// Everything else must be an explicit command. Lint lives under `rune lint`;
+// a bare `.rune` arg is no longer a sync shorthand — point at the real commands.
+if (Deno.args[0] !== "lint") {
+  const cmd = Deno.args[0] ?? "";
+  if (cmd.endsWith(".rune")) {
+    console.error(
+      `rune: '${cmd}' is a spec — run \`rune sync ${cmd}\` to generate or \`rune check ${cmd}\` to validate.`,
+    );
+  } else {
+    console.error(`rune: unknown command '${cmd}' — run \`rune --help\`.`);
+  }
+  Deno.exit(2);
 }
 
-const targetDir = resolve(dir);
+const { dir, module: moduleName, suggest, json } = parseArgs(Deno.args.slice(1));
 
-// `rune [dir]` lints a project DIRECTORY; reject a non-directory cleanly instead
-// of crashing deep in a git spawn.
-let targetStat: Deno.FileInfo | null = null;
+const startDir = resolve(dir);
+
+// Reject a non-directory cleanly instead of crashing deep in a git spawn.
+let startStat: Deno.FileInfo | null = null;
 try {
-  targetStat = Deno.statSync(targetDir);
+  startStat = Deno.statSync(startDir);
 } catch {
   console.error(`rune: no such file or directory: ${dir}`);
   Deno.exit(2);
 }
-if (!targetStat.isDirectory) {
+if (!startStat.isDirectory) {
   console.error(`rune: '${dir}' is not a directory.`);
   Deno.exit(2);
+}
+
+// Lint the PROJECT: walk up to the nearest deno.json and run from that root, so
+// `rune lint` works from anywhere inside a project.
+const targetDir = findProjectRoot(startDir);
+if (targetDir !== startDir && !json) {
+  console.log(`Linting from project root: ${targetDir}`);
 }
 
 const ignoredPaths = await getIgnoredPaths(targetDir);

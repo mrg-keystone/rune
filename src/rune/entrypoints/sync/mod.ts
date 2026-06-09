@@ -204,12 +204,23 @@ export async function runSync(args: string[]): Promise<number> {
 }
 
 // Import aliases the generated code relies on; the consuming project's deno.json
-// must define them (@/ → project root, #zod / #std/* → external deps).
+// must define them (@/ → project root, validation/std libs → external deps).
+// DTOs are class-validator / class-transformer classes, so the project also needs
+// experimental decorators + reflect-metadata (wired below in ensureImportMap).
 const REQUIRED_IMPORTS: Record<string, string> = {
   "@/": "./",
-  "#zod": "npm:zod",
+  "class-validator": "npm:class-validator@^0.14",
+  "class-transformer": "npm:class-transformer@^0.5",
+  "reflect-metadata": "npm:reflect-metadata@^0.2",
   "#std/assert": "jsr:@std/assert",
   "#std/path": "jsr:@std/path",
+};
+
+// Compiler options the generated code needs. class-validator / class-transformer
+// decorators require the legacy experimental-decorator semantics + metadata.
+const REQUIRED_COMPILER_OPTIONS: Record<string, unknown> = {
+  experimentalDecorators: true,
+  emitDecoratorMetadata: true,
 };
 
 /** Ensure the project's deno.json carries the import map the generated code
@@ -233,9 +244,22 @@ async function ensureImportMap(root: string, ioErrors: string[]): Promise<string
       added.push(k);
     }
   }
+  // Ensure the decorator compiler options are present (merge, don't clobber).
+  const co: Record<string, unknown> =
+    (config.compilerOptions && typeof config.compilerOptions === "object")
+      ? config.compilerOptions
+      : {};
+  if (!existed && !("strict" in co)) co.strict = true;
+  for (const [k, v] of Object.entries(REQUIRED_COMPILER_OPTIONS)) {
+    if (!(k in co)) {
+      co[k] = v;
+      added.push(k);
+    }
+  }
+  config.compilerOptions = co;
+
   if (existed && added.length === 0) return null;
   config.imports = imports;
-  if (!existed && !config.compilerOptions) config.compilerOptions = { strict: true };
   try {
     await Deno.writeTextFile(path, JSON.stringify(config, null, 2) + "\n");
   } catch (e) {

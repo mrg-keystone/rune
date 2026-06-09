@@ -6,6 +6,9 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/mrg-keystone/rune/main/install.sh | sh
 #
+# Local dev build (compile from THIS checkout, skip the GitHub release):
+#   ./install.sh --dev
+#
 # Options (env vars):
 #   RUNE_INSTALL   install dir (default: ~/.deno/bin)
 #   RUNE_VERSION   tag to install (default: latest release; e.g. develop, v0.1.0)
@@ -18,6 +21,10 @@ set -eu
 REPO="mrg-keystone/rune"
 BINDIR="${RUNE_INSTALL:-$HOME/.deno/bin}"
 RUNE_REF="${RUNE_REF:-main}"
+
+# --dev: build + install from this local checkout instead of a GitHub release.
+DEV=0
+for a in "$@"; do [ "$a" = "--dev" ] && DEV=1; done
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -33,6 +40,39 @@ else
            /usr/local/bin /opt/homebrew/bin; do
     for b in rune rune-lsp rune-syntax; do rm -f "$d/$b" 2>/dev/null || true; done
   done
+fi
+
+# --- 1b. --dev: compile + install from the local checkout (no release needed) ---
+if [ "$DEV" = "1" ]; then
+  repo="$(cd "$(dirname "$0")" && pwd)"
+  [ -f "$repo/src/bootstrap/mod.ts" ] || {
+    echo "rune: --dev must be run as ./install.sh --dev from a rune checkout" >&2
+    echo "      (no src/bootstrap/mod.ts found at $repo)." >&2
+    exit 1
+  }
+  command -v deno >/dev/null 2>&1 || { echo "rune: --dev needs deno on PATH." >&2; exit 1; }
+  command -v cargo >/dev/null 2>&1 || { echo "rune: --dev needs cargo (rust) on PATH." >&2; exit 1; }
+  mkdir -p "$BINDIR"
+
+  echo "Compiling rune from source…"
+  deno compile --allow-read --allow-write --allow-net --allow-env --allow-run \
+    --config "$repo/deno.json" -o "$BINDIR/rune" "$repo/src/bootstrap/mod.ts"
+
+  # Rust helpers only change with the Rust sources — reuse an existing build.
+  if [ ! -x "$repo/lang/target/release/rune-lsp" ] ||
+     [ ! -x "$repo/lang/target/release/rune-syntax" ]; then
+    echo "Building rust helpers (rune-lsp, rune-syntax)…"
+    ( cd "$repo/lang" && cargo build --release )
+  fi
+  cp "$repo/lang/target/release/rune-lsp" \
+     "$repo/lang/target/release/rune-syntax" "$BINDIR/"
+
+  if [ "$(uname -s)" = "Darwin" ]; then
+    codesign -f -s - "$BINDIR/rune" "$BINDIR/rune-lsp" "$BINDIR/rune-syntax" 2>/dev/null || true
+  fi
+  echo "Installed rune (dev build from $repo) -> $BINDIR"
+  command -v deno >/dev/null 2>&1 && echo "Run: rune --help"
+  exit 0
 fi
 
 # --- 2. Pick the prebuilt for this platform ---

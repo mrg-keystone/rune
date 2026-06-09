@@ -14,3 +14,8 @@
 
 [DTO] ReceiptDto: id
     a delivery receipt
+
+[TYP] message: number
+    the message
+[TYP] id: string
+    the id

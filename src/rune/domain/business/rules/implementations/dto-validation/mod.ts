@@ -41,6 +41,15 @@ export async function check(
 
   if (hasValidationPattern) return null;
 
+  // Pure type-alias / interface files (e.g. a [TYP] declaration like
+  // `export type Id = string;`) have no runtime surface, so they need no
+  // validation. Exempt them without depending on the LSP's type-kind reporting.
+  const hasValueExport =
+    /\bexport\s+(?:default\s+)?(?:const|let|var|function|class|enum)\b/
+      .test(content) || /\bexport\s*\{/.test(content);
+  const hasTypeExport = /\bexport\s+(?:type|interface)\b/.test(content);
+  if (hasTypeExport && !hasValueExport) return null;
+
   // No regex match — use LSP to check if file only exports types (which is OK)
   if (ctx.lsp) {
     let exports;

@@ -3,6 +3,14 @@
 
 import { Member } from "./mod.ts";
 
-Deno.test("Member — placeholder", () => {
-  // TODO: implement unit tests
+Deno.test("Member.fill", () => {
+  // TODO: test fill
+});
+
+Deno.test("Member.save", () => {
+  // TODO: test save
+});
+
+Deno.test("Member.toDto", () => {
+  // TODO: test toDto
 });

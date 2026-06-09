@@ -12,3 +12,8 @@
 
 [DTO] ReceiptDto: id
     the receipt for a placed order
+
+[TYP] items: string
+    the items
+[TYP] id: string
+    the id
