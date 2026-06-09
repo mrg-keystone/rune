@@ -4,6 +4,13 @@ name: Publish to JSR
 # `deno publish` is idempotent: if the version in deno.json is already on JSR it skips with a
 # warning and exits 0, so pushes without a version bump stay green. To cut a release, bump
 # "version" in deno.json and push to main.
+#
+# Publish flags (this combination is required on GitHub runners):
+#   --token "$JSR_TOKEN"  Auth via token instead of OIDC (JSR_TOKEN from the job env below).
+#   --allow-dirty         Publish even if the checked-out tree is dirty.
+#   --no-provenance       Skip the provenance/sigstore attestation. Provenance stalls the JSR
+#                         publishing task for ~2h on GitHub runners (and `id-token: write` did NOT
+#                         fix it), so we authenticate with the token and skip provenance instead.
 on:
   push:
     branches:
@@ -12,10 +19,12 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      JSR_TOKEN: ${{ secrets.JSR_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
       - name: Publish to JSR
-        run: deno publish --token ${{ secrets.JSR_TOKEN }}
+        run: deno publish --token "$JSR_TOKEN" --allow-dirty --no-provenance
