@@ -512,6 +512,91 @@ Generates OpenAPI 3.0 specification objects from module metadata.
 
 Dependency injection container builders for configuring injectable services.
 
+## Process endpoints, the emulator, and the exercise harness
+
+A module's endpoints can declare their **process order** and **data dependencies** right on the
+handler, so keep can (1) serve them, (2) document them in Swagger, (3) render an interactive
+**process emulator** per module, and (4) drive them headlessly. This is the surface the
+[`rune`](https://github.com/mrg-keystone/rune) workflow generates into.
+
+### `@EndpointController` / `@Endpoint`
+
+Write a thin controller whose handler delegates to your logic. `@Endpoint` composes danet's route
++ body decorators with `@danet/swagger`'s schema decorators, and records the process metadata.
+Type the handler's parameter as the input DTO — `@Endpoint` wires `@Body()` for you.
+
+```ts
+import { ApiProperty } from "jsr:@danet/swagger@2/decorators";
+import { Endpoint, EndpointController, endpointModule, bootstrapServer } from "@mrg-keystone/keep";
+
+class CreateOrderDto { @ApiProperty() item!: string; }
+class OrderDto { @ApiProperty() id!: string; @ApiProperty() item!: string; }
+class PayDto { @ApiProperty() orderId!: string; }
+class ReceiptDto { @ApiProperty() receipt!: string; }
+
+@EndpointController("orders", { description: "Orders API" })
+class OrdersController {
+  @Endpoint({ input: CreateOrderDto, output: OrderDto, order: 1 })
+  create(body: CreateOrderDto): OrderDto { return { id: "o_1", item: body.item }; }
+
+  // Runs after `create`; its request's `orderId` is filled from create's `id` output.
+  @Endpoint({
+    path: "pay", input: PayDto, output: ReceiptDto, order: 2,
+    dependsOn: "create", bind: { orderId: "create.id" },
+  })
+  pay(body: PayDto): ReceiptDto { return { receipt: `paid ${body.orderId}` }; }
+}
+
+export const api = await bootstrapServer("shop", endpointModule("Orders", [OrdersController]));
+```
+
+`EndpointOptions`: `method` (default `"post"`), `path`, `input`/`output` DTO classes, `order`
+(ascending), `dependsOn` (endpoint id(s) — handler method names), `bind`
+(`{ thisInputField: "otherEndpointId.outputField" }`), `description`. The metadata rides into each
+module's OpenAPI doc as an **`x-keep-process`** vendor extension.
+
+### The process emulator (per module)
+
+With Swagger on (default), each module gets three docs pages:
+
+| Path | What |
+|---|---|
+| `/docs/<module>` | the **process emulator** — endpoints as an ordered, bulleted checklist |
+| `/docs/<module>/swagger` | the standard Swagger UI (deep inspection) |
+| `/docs/<module>/json` | the raw OpenAPI spec (token-gated; see [Docs access](#docs-access)) |
+
+The emulator lists endpoints in `order`/`dependsOn` order. Expand a bullet to see its request
+(curl + editable JSON body); click **Emulate process** to fire the real request and see the
+response. On success it drops a checkmark, captures the output, and **unlocks the next dependent
+step with its request pre-filled** (via `bind`). A **Run all in order** button walks the whole
+chain. Walking the list and eyeballing each response verifies the module's logic end-to-end.
+
+### `exerciseEndpoints(opts)` — headless runner
+
+The same metadata, run programmatically (for CI / agents). Discovers endpoints from the
+bootstrapped app's `docs`, orders them, runs them while chaining outputs into inputs via `bind`,
+rate-limits, and loops until green.
+
+```ts
+import { exerciseEndpoints } from "@mrg-keystone/keep";
+
+const report = await exerciseEndpoints({ api });            // in-process (backend.fetch), no token
+// report: { passed, failed, iterations, order, cycles }
+```
+
+- **Transport.** No `baseUrl` → dispatches in-process via `backend.fetch` (no port, bypasses auth)
+  — the default for tests/CI. With `baseUrl` (a running server) it uses **Playwright's
+  `APIRequestContext`** over real HTTP.
+- **`overrides`.** `seeds` (literal values by field name), `byEndpoint` (per-endpoint overrides by
+  id — win over `bind`), and `auth` (`{kind:"in-process"}` default, or `{kind:"token"|"mint", …}`
+  using [`signToken`](#programmatic-sign--verify) for network/`baseUrl` runs).
+- **`rateLimit`** (`{ requestsPerSecond?, maxConcurrency? }`) and **`maxIterations`** (default 5).
+
+> **Playwright is an optional peer.** It's only loaded when you pass a `baseUrl`; in-process runs
+> (and everything else in keep) need no browser. Provision it (`deno run -A npm:playwright install`
+> or set `PLAYWRIGHT_BROWSERS_PATH`) only for `baseUrl` runs — note the `APIRequestContext` path
+> uses Playwright's HTTP client, not a browser.
+
 ## Deployment
 
 The same bootstrapped backend runs in two shapes: **standalone** (a normal HTTP server) or

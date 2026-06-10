@@ -3,6 +3,42 @@ import "#reflect-metadata";
 import { Type } from "@types";
 import { DanetApplication, Module } from "#danet/core";
 import { getSwaggerDescription } from "@foundation/domain/business/swagger-description/mod.ts";
+import {
+  getProcessMetadata,
+  type ProcessMetadata,
+} from "@foundation/domain/business/endpoint-decorator/mod.ts";
+
+const HTTP_METHODS = ["get", "post", "put", "patch", "delete"] as const;
+
+/**
+ * Walk a module's controllers and copy each `@Endpoint` handler's process metadata onto the
+ * matching OpenAPI operation as the `x-keep-process` vendor extension (matched by operationId,
+ * which danet sets to the handler's method name). This is what the per-module emulator UI and the
+ * headless runner read to order and chain the endpoints — so it travels with the spec, single
+ * source of truth. Modules with no `@Endpoint` handlers are left untouched.
+ */
+function attachProcessMetadata(doc: { paths?: Record<string, Record<string, unknown>> }, mod: Type): void {
+  const meta = Reflect.getMetadata("module", mod) ?? {};
+  const controllers: Type[] = meta.controllers ?? [];
+  const byOperationId = new Map<string, ProcessMetadata>();
+  for (const controller of controllers) {
+    const proto = controller.prototype;
+    for (const name of Object.getOwnPropertyNames(proto)) {
+      if (name === "constructor") continue;
+      const process = getProcessMetadata(proto, name);
+      if (process) byOperationId.set(name, process);
+    }
+  }
+  if (byOperationId.size === 0) return;
+  for (const pathItem of Object.values(doc.paths ?? {})) {
+    for (const method of HTTP_METHODS) {
+      const op = pathItem[method] as { operationId?: string } | undefined;
+      if (!op?.operationId) continue;
+      const process = byOperationId.get(op.operationId);
+      if (process) (op as Record<string, unknown>)["x-keep-process"] = process;
+    }
+  }
+}
 
 // Type-only helper: the shape returned by SpecBuilder.build(), used to type Spec.value.
 const emptySpec = (): ReturnType<SpecBuilder["build"]> => new SpecBuilder().build();
@@ -65,6 +101,10 @@ export class DanetDocumentBuilder {
     const swaggerModuleHost = await this.setupFacade(spec.module);
     const rawPath = `/${Spec.getCleanName(spec.module.name).toLowerCase()}`;
     const doc = await SwaggerModule.createDocument(swaggerModuleHost, spec.value);
+    attachProcessMetadata(
+      doc as unknown as { paths?: Record<string, Record<string, unknown>> },
+      spec.module,
+    );
     return {
       doc,
       path: this.normalizePath(rawPath),

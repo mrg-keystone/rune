@@ -112,7 +112,8 @@ export function swaggerShellHtml(title: string): string {
 window.addEventListener("load", function(){
   var p = window.location.pathname;
   if (p.charAt(p.length - 1) === "/") p = p.slice(0, -1);
-  var jsonUrl = p + "/json";
+  // The Swagger UI page is served at /docs/<module>/swagger; its spec lives at /docs/<module>/json.
+  var jsonUrl = p.replace(/\\/swagger$/, "") + "/json";
   window.ui = SwaggerUIBundle({
     url: jsonUrl,
     dom_id: "#swagger-ui",

@@ -1,0 +1,32 @@
+{
+  "//": "Self-contained config for the committed cake acceptance. The cake module is rune-generated (it imports @/src/cake/... and @mrg-keystone/keep); this map resolves @/ to this dir and keep to the local checkout (../../src), mirroring keep's own aliases so keep's internals resolve too. reflect-metadata is pinned to keep's 0.1.13 so a single polyfill backs the whole program. Run via `deno task test:e2e` from the keep root.",
+  "nodeModulesDir": "auto",
+  "compilerOptions": {
+    "strict": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  },
+  "imports": {
+    "@/": "./",
+    "@mrg-keystone/keep": "../../src/bootstrap/mod.ts",
+    "@foundation/": "../../src/foundation/",
+    "@types": "../../src/foundation/dto/types.ts",
+    "#reflect-metadata": "npm:reflect-metadata@0.1.13",
+    "reflect-metadata": "npm:reflect-metadata@0.1.13",
+    "@danet/core": "jsr:@danet/core@2",
+    "#danet/core": "jsr:@danet/core@2",
+    "#danet/swagger": "jsr:@danet/swagger@2",
+    "#danet/swagger/decorators": "jsr:@danet/swagger@2/decorators",
+    "#handlebars": "npm:handlebars@^4.7.8",
+    "#openapi3-ts": "npm:openapi3-ts@4.5.0",
+    "#playwright": "npm:playwright@^1.49",
+    "#hono": "jsr:@hono/hono@4.6.3",
+    "#assert": "jsr:@std/assert",
+    "#std/assert": "jsr:@std/assert",
+    "#std/path": "jsr:@std/path",
+    "#zod": "npm:zod@3",
+    "#jose": "npm:jose@5",
+    "class-validator": "npm:class-validator@^0.14",
+    "class-transformer": "npm:class-transformer@^0.5"
+  }
+}

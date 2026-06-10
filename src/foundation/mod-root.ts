@@ -56,3 +56,37 @@ export type {
   NoCodeCacheMiddleware,
   NoCodeCacheOptions,
 } from "@foundation/domain/business/no-code-cache/mod.ts";
+export {
+  Endpoint,
+  EndpointController,
+  endpointModule,
+  getProcessMetadata,
+  PROCESS_METADATA_KEY,
+} from "@foundation/domain/business/endpoint-decorator/mod.ts";
+export type {
+  EndpointMethod,
+  EndpointOptions,
+  ProcessMetadata,
+} from "@foundation/domain/business/endpoint-decorator/mod.ts";
+export { endpointsFromDoc } from "@foundation/domain/business/endpoint-spec/mod.ts";
+export type { SpecEndpoint } from "@foundation/domain/business/endpoint-spec/mod.ts";
+export { processOrder } from "@foundation/domain/business/process-graph/mod.ts";
+export type { ProcessGraph, ProcessOperation } from "@foundation/domain/business/process-graph/mod.ts";
+export { createLimiter } from "@foundation/domain/business/rate-limiter/mod.ts";
+export type { Limiter, RateLimitOptions } from "@foundation/domain/business/rate-limiter/mod.ts";
+export { emulatorShellHtml, orderedEndpoints } from "@foundation/domain/business/emulator-ui/mod.ts";
+export { exerciseEndpoints } from "@foundation/domain/coordinators/exercise-harness/mod.ts";
+export type {
+  EndpointResult,
+  ExerciseAuth,
+  ExerciseOptions,
+  ExerciseReport,
+  ExerciseTarget,
+  SeedOverrides,
+} from "@foundation/domain/coordinators/exercise-harness/mod.ts";
+export type {
+  OpenApiDocument,
+  OpenApiOperation,
+  ProcessExtension,
+  SwaggerDocEntry,
+} from "@types";

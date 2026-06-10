@@ -162,8 +162,13 @@ Deno.test("docs: shell is public, spec /json is token-gated (seeded via ?token)"
     // `handler` carries no conn info / internal key, so it is treated as a network caller.
     const call = (path: string) => server.handler(new Request(`http://app${path}`));
 
-    // The Swagger UI shell loads without a token.
-    const shell = await call("/docs/app");
+    // The process emulator (default docs page) loads without a token.
+    const emulator = await call("/docs/app");
+    assertEquals(emulator.status, 200);
+    assertStringIncludes(await emulator.text(), "process emulator");
+
+    // The standard Swagger UI shell (moved under /swagger) also loads without a token.
+    const shell = await call("/docs/app/swagger");
     assertEquals(shell.status, 200);
     assertStringIncludes(await shell.text(), "swagger-ui");
 

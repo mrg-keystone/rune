@@ -1,4 +1,4 @@
-import type { Type, FetchHandler } from "@types";
+import type { Type, FetchHandler, SwaggerDocEntry } from "@types";
 import { Server } from "@foundation/domain/business/server/mod.ts";
 import { DanetHttpAdapter } from "@foundation/domain/data/http-adapter/mod.ts";
 import { createBackendClient } from "@foundation/domain/business/backend-client/mod.ts";
@@ -74,11 +74,19 @@ export class BootstrapServer {
   private adapter: DanetHttpAdapter;
   private module: Type;
   readonly backend: BackendClient;
+  /** The per-module OpenAPI docs (with `x-keep-process`) built at boot; empty when swagger is off. */
+  readonly docs: SwaggerDocEntry[];
 
-  private constructor(module: Type, adapter: DanetHttpAdapter, backend: BackendClient) {
+  private constructor(
+    module: Type,
+    adapter: DanetHttpAdapter,
+    backend: BackendClient,
+    docs: SwaggerDocEntry[],
+  ) {
     this.module = module;
     this.adapter = adapter;
     this.backend = backend;
+    this.docs = docs;
   }
 
   static async create(
@@ -136,6 +144,7 @@ export class BootstrapServer {
     adapter.registerRoute("get", "/_mint", mintUi.form as RouteHandler);
     adapter.registerRoute("post", "/_mint", mintUi.mint as RouteHandler);
 
+    let docs: SwaggerDocEntry[] = [];
     if (swagger) {
       // Lazy-load the Swagger builder only when docs are enabled. It pulls in `handlebars`
       // (and `openapi3-ts`) — CommonJS modules that bundlers like Vite's SSR runner can't load.
@@ -145,17 +154,29 @@ export class BootstrapServer {
       const { SwaggerBuilder } = await import(
         "@foundation/domain/business/swagger-builder/mod.ts"
       );
+      const { emulatorShellHtml } = await import(
+        "@foundation/domain/business/emulator-ui/mod.ts"
+      );
       const filters = typeof swagger === "object" ? swagger.filters : [];
       const builder = new SwaggerBuilder(...filters);
       const { swaggerDocs, docsIndexHtml } = await builder.build(server);
+      docs = swaggerDocs as unknown as SwaggerDocEntry[];
 
       const html = (body: string) =>
         new Response(body, { headers: { "content-type": "text/html; charset=utf-8" } });
 
-      for (const { path, doc } of swaggerDocs) {
-        const title = `API · ${path.replace(/^\//, "")}`;
-        // Public shell: always loads; fetches the spec over XHR with the stored token.
-        adapter.registerRoute("get", `/docs${path}`, () => html(swaggerShellHtml(title)));
+      for (const { path, doc } of docs) {
+        const moduleName = path.replace(/^\//, "");
+        const title = `API · ${moduleName}`;
+        // Default page: the process emulator (ordered, chainable, click-through). Public shell;
+        // the inlined spec renders it, and live endpoint calls carry the stored token.
+        adapter.registerRoute(
+          "get",
+          `/docs${path}`,
+          () => html(injectDocsScript(emulatorShellHtml(moduleName, doc))),
+        );
+        // Standard Swagger UI for deeper inspection, moved under /swagger.
+        adapter.registerRoute("get", `/docs${path}/swagger`, () => html(swaggerShellHtml(title)));
         // Gated spec: trusted origins (localhost / in-process) need no token; network callers
         // must present a valid signed/Firebase token (Authorization header or ?token).
         adapter.registerRoute(
@@ -198,7 +219,7 @@ export class BootstrapServer {
       internalKey,
     );
 
-    return new BootstrapServer(module, adapter, backend);
+    return new BootstrapServer(module, adapter, backend, docs);
   }
 
   /**
@@ -229,6 +250,7 @@ export async function bootstrapServer(
   stop: () => Promise<void>;
   backend: BackendClient;
   handler: FetchHandler;
+  docs: SwaggerDocEntry[];
 }> {
   const server = await BootstrapServer.create(appName, module, options);
   return {
@@ -236,5 +258,6 @@ export async function bootstrapServer(
     stop: () => server.stop(),
     backend: server.backend,
     handler: server.handler,
+    docs: server.docs,
   };
 }
