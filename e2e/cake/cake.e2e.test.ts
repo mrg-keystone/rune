@@ -43,10 +43,24 @@ Deno.test("cake e2e — exerciseEndpoints chains all 6 green in-process", async 
   }
 });
 
-// Stage 4 — the interactive emulator: progressive unlock + autofill + checkmarks, in headless
-// chromium. Opt-in (needs `deno run -A npm:playwright install chromium chromium-headless-shell`).
+// What each step's request body should be auto-filled with once the prior step has run —
+// i.e. the value captured from the previous endpoint's response and threaded in via `bind`.
+// (Step 1 takes a seed `destination`, so it has nothing to autofill.)
+const EXPECTED_AUTOFILL = [
+  null,
+  "store-42", // groceryShop.storeId   <- driveToStore.storeId
+  "cart-store-42", // checkout.cartId        <- groceryShop.cartId
+  "ing-cart-store-42", // mixIngredients.ingred. <- checkout.ingredientsId
+  "batter-ing-cart-store-42", // bake.batterId          <- mixIngredients.batterId
+  "cake-batter-ing-cart-store-42", // cut.cakeId             <- bake.cakeId
+];
+
+// Stage 4 — the interactive emulator, driven step by step in headless chromium. Emulates EVERY
+// step in order, asserting per step: it's unlocked, the next step is still locked, its body was
+// auto-filled from the prior capture, and a checkmark appears after it runs. Opt-in (needs
+// `deno run -A npm:playwright install chromium chromium-headless-shell`; `deno task cake` provisions).
 Deno.test({
-  name: "cake e2e — emulator unlock/autofill/checkmarks (headless chromium)",
+  name: "cake e2e — emulator drives all 6 steps: progressive unlock + autofill + checkmarks",
   ignore: Deno.env.get("KEEP_BROWSER") !== "1",
   sanitizeResources: false,
   sanitizeOps: false,
@@ -58,29 +72,42 @@ Deno.test({
     // KEEP_HEADED=1 launches a visible browser and slows actions so you can watch the
     // emulator walk the chain (`deno task cake`); otherwise it runs headless.
     const headed = Deno.env.get("KEEP_HEADED") === "1";
-    const browser = await chromium.launch({ headless: !headed, slowMo: headed ? 600 : 0 });
+    const browser = await chromium.launch({ headless: !headed, slowMo: headed ? 500 : 0 });
     try {
       const page = await browser.newPage();
       await page.goto(`http://localhost:${p}/docs/cake`);
       const emulate = page.locator("button.emulate");
+      const row = (i: number) => page.locator("li").nth(i);
 
-      // Initially only step 1 is unlocked.
-      assertEquals(await emulate.nth(0).isDisabled(), false);
-      assertEquals(await emulate.nth(1).isDisabled(), true);
+      // Walk every step in order, emulating and verifying each one individually.
+      for (let i = 0; i < CHAIN.length; i++) {
+        // This step is unlocked; the next one is still locked until this one succeeds.
+        assertEquals(await emulate.nth(i).isDisabled(), false, `step ${i + 1} (${CHAIN[i]}) should be unlocked`);
+        if (i + 1 < CHAIN.length) {
+          assertEquals(await emulate.nth(i + 1).isDisabled(), true, `step ${i + 2} should still be locked before step ${i + 1} runs`);
+        }
+        // Its request body was pre-filled with the value captured from the previous step.
+        const expected = EXPECTED_AUTOFILL[i];
+        if (expected) {
+          const body = await row(i).locator("textarea").inputValue();
+          assert(body.includes(expected), `step ${i + 1} (${CHAIN[i]}) not autofilled with "${expected}": ${body}`);
+        }
+        // Emulate it, then wait for its checkmark.
+        await emulate.nth(i).click();
+        await row(i).locator(".dot.ok").waitFor({ timeout: 10000 });
+      }
 
-      // Emulate step 1 -> checkmark, step 2 unlocks pre-filled from the captured storeId.
-      await emulate.nth(0).click();
-      await page.locator("li .dot.ok").first().waitFor();
-      assertEquals(await emulate.nth(1).isDisabled(), false);
-      const step2Body = await page.locator("li").nth(1).locator("textarea").inputValue();
-      assert(step2Body.includes("store-42"), `step 2 not autofilled: ${step2Body}`);
+      // All six green.
+      assertEquals(await page.locator("li .dot.ok").count(), 6);
 
-      // Run all -> all 6 green.
+      // The "Run all in order" button replays the whole chain from a fresh load.
+      await page.reload();
       await page.locator("#runall").click();
       await page.waitForFunction(
         "document.querySelectorAll('li .dot.ok').length === 6",
         { timeout: 10000 },
       );
+
       // Hold the all-green state on screen briefly when watching headed.
       if (headed) await new Promise((r) => setTimeout(r, 2500));
     } finally {
