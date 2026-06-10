@@ -8,7 +8,9 @@
 # RUNE_INSTALL — also clean this dir (the install target; default ~/.deno/bin).
 set -u
 
-bins="rune rune-lsp rune-syntax"
+bins="rune
+rune-lsp
+rune-syntax"
 # The current install target plus every dir a past install / cargo `bind` /
 # editor-integration step is known to have used.
 dirs="${RUNE_INSTALL:-$HOME/.deno/bin}
@@ -18,6 +20,10 @@ $HOME/.local/bin
 /usr/local/bin
 /opt/homebrew/bin"
 
+# Split both lists on NEWLINES only, so an install dir containing spaces (e.g. a
+# RUNE_INSTALL under "Application Support") survives word-splitting intact.
+IFS='
+'
 seen=" "
 removed=0
 for d in $dirs; do

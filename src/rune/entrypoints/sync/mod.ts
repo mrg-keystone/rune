@@ -5,6 +5,7 @@ import {
   type ManifestOptions,
 } from "@rune/domain/business/rune-manifest/mod.ts";
 import { loadArtifact } from "@rune/domain/business/artifact/mod.ts";
+import { resolveRoot } from "@rune/entrypoints/spec-root.ts";
 
 const RED = "\x1b[31m";
 const GREEN = "\x1b[32m";
@@ -75,19 +76,6 @@ async function loadOptions(
 
 function errMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
-}
-
-// Where to scaffold, derived from the spec's OWN location (not cwd). Dead simple:
-//   - if the spec already lives inside a `src/<module>/` (i.e. it was moved there
-//     by a previous run), the root is the dir above that `src/` — so re-syncing
-//     the moved spec stays put and never nests a second `src/<module>/`.
-//   - otherwise, scaffold right beside the spec, in its own directory.
-// Only the spec's immediate parents are inspected, so a `src` dir higher up the
-// path can't hijack the root. `--root` overrides this.
-function resolveRoot(absRune: string): string {
-  const specDir = dirname(absRune);
-  if (basename(dirname(specDir)) === "src") return dirname(dirname(specDir));
-  return specDir;
 }
 
 // Reconcile a .rune spec with the project tree: scaffold new code, prune orphans

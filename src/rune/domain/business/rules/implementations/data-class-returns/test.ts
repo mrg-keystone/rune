@@ -66,3 +66,14 @@ Deno.test("flags object literal return", async () => {
   const result = await check("src/x/y.ts", "ts", ctx);
   assertEquals(result !== null, true);
 });
+
+// Regression: a member whose param carries an inline object type with an internal
+// `;` must not be fragmented at that `;` — its real primitive return still flags.
+Deno.test("flags primitive return even with an inline-object param containing ';'", async () => {
+  const ctx = makeCtx(
+    "class User { @IsString() name!: string; build(opts: { a: number; b: string }): string { return this.name; } }",
+    "class User { name: string; build(opts: { a: number; b: string }): string; }",
+  );
+  const result = await check("src/x/y.ts", "ts", ctx);
+  assertEquals(result !== null && result[0].includes("build"), true);
+});

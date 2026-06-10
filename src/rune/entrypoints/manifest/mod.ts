@@ -1,10 +1,11 @@
-import { basename, dirname, join, relative, resolve } from "#std/path";
+import { dirname, join, relative, resolve } from "#std/path";
 import {
   artifactToOptions,
   type ManifestOptions,
   planManifest,
 } from "@rune/domain/business/rune-manifest/mod.ts";
 import { loadArtifact } from "@rune/domain/business/artifact/mod.ts";
+import { resolveRoot } from "@rune/entrypoints/spec-root.ts";
 
 const RED = "\x1b[31m";
 const GREEN = "\x1b[32m";
@@ -36,16 +37,6 @@ function parseManifestArgs(args: string[]): ManifestArgs | null {
   }
   if (runePath === null) return null;
   return { runePath, root, json, artifactPath };
-}
-
-// Where to scaffold, derived from the spec's OWN location (not cwd): if the spec
-// already lives inside a `src/<module>/`, root is the dir above that `src/`;
-// otherwise scaffold right beside the spec. Only the spec's immediate parents are
-// inspected, so a `src` dir higher up can't hijack the root. `--root` overrides.
-function resolveRoot(absRune: string): string {
-  const specDir = dirname(absRune);
-  if (basename(dirname(specDir)) === "src") return dirname(dirname(specDir));
-  return specDir;
 }
 
 // Load --artifact into engine options (bindings + codegen templates + policies);

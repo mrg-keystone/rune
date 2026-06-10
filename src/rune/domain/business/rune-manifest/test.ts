@@ -251,6 +251,62 @@ Deno.test("planManifest — DTO is a class-validator class with typed fields", (
   assertEquals(dto!.content.includes("@Expose"), false);
 });
 
+Deno.test("planManifest — DTO field modifiers: (s) -> array, ? -> optional", () => {
+  const rune = `[MOD] lists
+
+[TYP] taskId: string
+    t
+[TYP] note: string
+    n
+[DTO] ListDto: taskId(s), note?
+    a list`;
+  const plan = planManifest("specs/lists.rune", rune, new Set());
+  const dto = plan.toCreate.find((f) => f.path.endsWith("dto/list.ts"));
+  assertEquals(dto !== undefined, true);
+  // `(s)` pluralizes the property and types it as an array of the base [TYP],
+  // with element-wise validation.
+  assertEquals(dto!.content.includes("taskIds!: string[]"), true);
+  assertEquals(dto!.content.includes("@IsArray()"), true);
+  assertEquals(dto!.content.includes("@IsString({ each: true })"), true);
+  // `?` makes the field optional (TS `?:` + @IsOptional()).
+  assertEquals(dto!.content.includes("note?: string"), true);
+  assertEquals(dto!.content.includes("@IsOptional()"), true);
+  // the raw modifier syntax must never leak into the generated code.
+  assertEquals(dto!.content.includes("(s)"), false);
+});
+
+Deno.test("planManifest — renderDto maps [TYP] primitives to validators; unmapped stays unknown", () => {
+  const rune = `[MOD] m
+
+[TYP] name: string
+    n
+[TYP] age: number
+    a
+[TYP] active: boolean
+    b
+[DTO] PersonDto: name, age, active, mystery
+    a person`;
+  const plan = planManifest("specs/m.rune", rune, new Set());
+  const dto = plan.toCreate.find((f) => f.path.endsWith("dto/person.ts"));
+  assertEquals(dto !== undefined, true);
+  const c = dto!.content;
+  // each primitive [TYP] -> its class-validator decorator + concrete TS type
+  assertEquals(c.includes("@IsString()"), true);
+  assertEquals(c.includes("name!: string"), true);
+  assertEquals(c.includes("@IsNumber()"), true);
+  assertEquals(c.includes("age!: number"), true);
+  assertEquals(c.includes("@IsBoolean()"), true);
+  assertEquals(c.includes("active!: boolean"), true);
+  // unmapped field (no [TYP]) -> `unknown`, no decorator, visible TODO marker
+  assertEquals(c.includes("mystery!: unknown"), true);
+  assertEquals(c.includes("TODO: tighten"), true);
+  // imports are the sorted union of the decorators actually used
+  assertEquals(
+    c.includes('import { IsBoolean, IsNumber, IsString } from "class-validator";'),
+    true,
+  );
+});
+
 Deno.test("planManifest — mod-root re-exports each REQ verb", () => {
   const rune = `[MOD] recording
 

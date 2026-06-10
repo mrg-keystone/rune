@@ -27,7 +27,7 @@
     input to create a new list
 [DTO] AddTaskDto: id, taskId
     input to add a task to a list
-[DTO] ListDto: id, name, taskIds
+[DTO] ListDto: id, name, taskId(s)
     a persisted list record
 
 [NON] list

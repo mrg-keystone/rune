@@ -3,6 +3,22 @@
 
 import { Task } from "./mod.ts";
 
-Deno.test("Task — placeholder", () => {
-  // TODO: implement unit tests
+Deno.test("Task.fill", () => {
+  // TODO: test fill
+});
+
+Deno.test("Task.save", () => {
+  // TODO: test save
+});
+
+Deno.test("Task.toDto", () => {
+  // TODO: test toDto
+});
+
+Deno.test("Task.load", () => {
+  // TODO: test load
+});
+
+Deno.test("Task.markDone", () => {
+  // TODO: test markDone
 });

@@ -3,10 +3,27 @@
 
 import type { CreateListDto } from "@/src/lists/dto/create-list.ts";
 import type { ListDto } from "@/src/lists/dto/list.ts";
+import { List } from "@/src/lists/domain/business/list/mod.ts";
+import { List as ListData } from "@/src/lists/domain/data/list/mod.ts";
 
 // Coordinator for [REQ] list.create(CreateListDto): ListDto.
-
 export async function create(input: CreateListDto): Promise<ListDto> {
-  // TODO: implement the flow as declared in the rune.
+  const listData = new ListData();
+
+  // core — pure business logic, no I/O
+  const out = createCore(input);
+
+  // writes — side effects through the data adapters
+  await listData.save(out.save);
+
+  return out.result;
+}
+
+// Pure business logic for list.create — no I/O. Takes the
+// request input and the dtos the reads loaded; returns the dtos the
+// writes consume plus the result.
+function createCore(input: CreateListDto): { save: ListDto; result: ListDto } {
+  const list = new List();
+  // TODO: run the pure steps on list, build the dtos
   throw new Error("not implemented");
 }

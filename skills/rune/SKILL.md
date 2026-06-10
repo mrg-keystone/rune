@@ -18,6 +18,28 @@ spec; the toolchain generates a typed module scaffold from it and lints the
 result against an architecture. **The spec is the source of truth — you regenerate
 from it, you don't hand-edit the generated structure.**
 
+## The workflow (commands at a glance)
+
+The loop is **write → check → sync → fill in → `deno check` → lint**, repeated.
+The commands (run `rune <cmd>`; in the repo without an installed binary, prefix
+with `deno run -A src/bootstrap/mod.ts <cmd>`):
+
+```text
+rune check <file.rune>     # IS THIS RUNE GOOD? validate the spec — no codegen. exit 0 = clean, 2 = errors
+rune sync  <file.rune>     # generate/update the module from the spec (also writes the project's deno.json)
+rune lint  [dir]           # lint the generated project against the architecture (default: .) — "All clear" = ok
+rune manifest <file.rune>  # one-shot generate (no prune)
+rune fmt   <file.rune>     # format a spec
+rune validate <art.json>   # validate a keywords.json artifact
+rune lsp                   # language server — the editor's red squiggles mirror `rune check`
+```
+
+**To check if a rune is good, run `rune check <file.rune>`** — it runs the exact
+same parser + rules as `sync` and the editor LSP (DTO fields resolve, signatures,
+scope, indentation, structure), but writes nothing. Exit 0 means the spec is valid
+and ready to `sync`; exit 2 prints the errors with line numbers. Always `check`
+before you `sync`. The full step-by-step is **The lifecycle** below.
+
 ## Mental model (read this first)
 
 - **One artifact, one source of truth.** The language itself (tags, codegen
@@ -133,7 +155,7 @@ These are the ones that cause "won't parse / won't lint" surprises:
 When in doubt about a rule, read `lang/docs/constraints.md` (the full table) — don't
 guess. To learn interactively, `deno task studio` documents every construct live.
 
-## The lifecycle: write → generate → fill in → verify → lint
+## The lifecycle: write → check → generate → fill in → verify → lint
 
 **Where output goes — dead simple, from the spec's own location (not cwd):**
 `rune sync <spec>.rune` scaffolds into `<spec-dir>/src/<module>/` — right beside
@@ -170,7 +192,8 @@ This is one repeating cycle — **write → check → generate → fill in → v
 3. **Fill in the bodies.** Generated files:
    - business features & data adapters → **plain concrete classes** (`mod.ts`),
      stubbed with `throw new Error("not implemented")`, plus **one test stub per
-     method** (`test.ts`). No `sig.ts` — only `[PLY]` variants get an abstract base.
+     method** (`test.ts`). No `sig.ts` — only a `[PLY]` noun gets an abstract base
+     (`<noun>/base/mod.ts`) that its `[CSE]` variants extend.
    - DTOs → **class-validator / class-transformer classes** with fields typed from
      the `[TYP]`s (`@IsString() id!: string`), no `unknown`.
    - coordinators → an **imperative shell** (`<verb>`) that loads via data adapters
@@ -219,10 +242,13 @@ This is one repeating cycle — **write → check → generate → fill in → v
 
 ## Worked examples
 
-`example/todos/` has three real, verified specs and their generated trees:
+`example/todos/` has three real specs and their generated trees:
 - `src/tasks/tasks.rune` — pure logic + a `db:` boundary, two `[REQ]`s
-- `src/lists/lists.rune` — same shape, a second module
-- `src/notify/notify.rune` — `ex:` boundary
+- `src/lists/lists.rune` — same shape; shows a `(s)` array DTO field (`taskId(s)`
+  → `taskIds: string[]`)
+- `src/notify/notify.rune` — `[PLY]` polymorphism (`channel` → email/push) + an
+  `ex:` boundary
 
-Copy one of these as a starting point — they parse, generate, type-check, and lint
-clean. `example/todos/README.md` walks through the layout and the edit loop.
+Copy one of these as a starting point — all three pass `rune check`, `rune sync`,
+`deno check`, and `rune lint` clean (verified). `example/todos/README.md` walks
+through the layout and the edit loop.

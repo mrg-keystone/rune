@@ -411,8 +411,12 @@ function tsFor(typeName: string | undefined): { ts: string; dec: string | null }
     case "boolean":
       return { ts: "boolean", dec: "IsBoolean" };
     case undefined:
+      // No [TYP] matched the field name — emit `unknown` with no validator.
+      // renderDto flags these with a `// TODO: tighten` marker so the gap stays visible.
       return { ts: "unknown", dec: null };
     default:
+      // A non-primitive type name (e.g. a nested [DTO] referenced directly, or a
+      // generic) passes through verbatim with no decorator.
       return { ts: typeName, dec: null };
   }
 }
@@ -425,10 +429,35 @@ function renderDto(
   runePath: string,
 ): string {
   const validators = new Set<string>();
-  const fields = dto.properties.map((p) => {
-    const { ts, dec } = tsFor(typMap.get(p));
-    if (dec) validators.add(dec);
-    return { name: p, ts, dec };
+  const fields = dto.properties.map((raw) => {
+    // A property may carry the documented modifiers: `(s)` (array of the base
+    // type, property name pluralized — `taskId(s)` -> `taskIds: taskId[]`) and
+    // `?` (optional). Resolve the base name to its [TYP] for the field type.
+    const optional = raw.includes("?");
+    const array = /\(s\)/.test(raw);
+    const base = raw.replace(/\(s\)/g, "").replace(/\?/g, "").trim();
+    const { ts: baseTs, dec } = tsFor(typMap.get(base));
+    const name = array ? `${base}s` : base;
+    const ts = array ? `${baseTs}[]` : baseTs;
+    const decorators: string[] = [];
+    // A field whose base resolves to no [TYP] lands as `unknown` with no validator
+    // — leave a visible marker so the un-validated gap isn't silently shipped.
+    if (baseTs === "unknown") {
+      decorators.push(`// TODO: tighten — "${base}" has no [TYP], left as ${ts}`);
+    }
+    if (optional) {
+      validators.add("IsOptional");
+      decorators.push("@IsOptional()");
+    }
+    if (array) {
+      validators.add("IsArray");
+      decorators.push("@IsArray()");
+    }
+    if (dec) {
+      validators.add(dec);
+      decorators.push(array ? `@${dec}({ each: true })` : `@${dec}()`);
+    }
+    return { name, ts, decorators, optional };
   });
 
   const lines: string[] = [];
@@ -447,8 +476,8 @@ function renderDto(
   lines.push(`export class ${dto.name} {`);
   fields.forEach((f, i) => {
     if (i > 0) lines.push("");
-    if (f.dec) lines.push(`  @${f.dec}()`);
-    lines.push(`  ${f.name}!: ${f.ts};`);
+    for (const d of f.decorators) lines.push(`  ${d}`);
+    lines.push(`  ${f.name}${f.optional ? "?" : "!"}: ${f.ts};`);
   });
   lines.push("}");
   lines.push("");
@@ -608,9 +637,14 @@ function renderCoordinator(
     ...writeFields.map((w) => `${w.field}: ${w.type}`),
     `result: ${req.output}`,
   ].join("; ");
+  // Describe only the parts this verb actually has, so a no-reads or no-writes
+  // coordinator doesn't carry a misleading "the dtos the reads loaded" boilerplate.
+  const takesReads = readVars.length ? " and the dtos the reads loaded" : "";
+  const returnsClause = writeFields.length
+    ? "the dtos the writes consume plus the result"
+    : "the result";
   L.push(`// Pure business logic for ${req.noun}.${req.verb} — no I/O. Takes the`);
-  L.push("// request input and the dtos the reads loaded; returns the dtos the");
-  L.push("// writes consume plus the result.");
+  L.push(`// request input${takesReads}; returns ${returnsClause}.`);
   L.push(`function ${req.verb}Core(${coreParams}): { ${ret} } {`);
   L.push(`  const ${camel(req.noun)} = new ${toPascal(req.noun)}();`);
   L.push(`  // TODO: run the pure steps on ${camel(req.noun)}, build the dtos`);

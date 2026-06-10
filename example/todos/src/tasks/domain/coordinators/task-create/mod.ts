@@ -3,10 +3,27 @@
 
 import type { CreateTaskDto } from "@/src/tasks/dto/create-task.ts";
 import type { TaskDto } from "@/src/tasks/dto/task.ts";
+import { Task } from "@/src/tasks/domain/business/task/mod.ts";
+import { Task as TaskData } from "@/src/tasks/domain/data/task/mod.ts";
 
 // Coordinator for [REQ] task.create(CreateTaskDto): TaskDto.
-
 export async function create(input: CreateTaskDto): Promise<TaskDto> {
-  // TODO: implement the flow as declared in the rune.
+  const taskData = new TaskData();
+
+  // core — pure business logic, no I/O
+  const out = createCore(input);
+
+  // writes — side effects through the data adapters
+  await taskData.save(out.save);
+
+  return out.result;
+}
+
+// Pure business logic for task.create — no I/O. Takes the
+// request input and the dtos the reads loaded; returns the dtos the
+// writes consume plus the result.
+function createCore(input: CreateTaskDto): { save: TaskDto; result: TaskDto } {
+  const task = new Task();
+  // TODO: run the pure steps on task, build the dtos
   throw new Error("not implemented");
 }

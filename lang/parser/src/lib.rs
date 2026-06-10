@@ -209,6 +209,11 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
             continue;
         }
 
+        // [ENT]/[DTO]/[TYP]/[NON] accept the same `:modifier` syntax (e.g. `:core`)
+        // as [REQ], but this parser feeds only diagnostics + highlighting, where the
+        // modifier value carries no meaning — only the TS codegen engine routes on
+        // `:core`. So it's matched (to stay syntax-compatible) and dropped as
+        // `_modifier` here; [REQ] keeps it because its LineKind exposes it downstream.
         // [ENT] / [ENT:modifier] — same signature shape as [REQ]
         if let Some((_modifier, rest)) = match_tag(trimmed, "ENT") {
             in_dto_block = false;

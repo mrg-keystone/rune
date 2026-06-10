@@ -3,10 +3,22 @@
 
 import type { SendDto } from "@/src/notify/dto/send.ts";
 import type { ReceiptDto } from "@/src/notify/dto/receipt.ts";
+import { Notification } from "@/src/notify/domain/business/notification/mod.ts";
 
 // Coordinator for [REQ] notification.send(SendDto): ReceiptDto.
-
 export async function send(input: SendDto): Promise<ReceiptDto> {
-  // TODO: implement the flow as declared in the rune.
+
+  // core — pure business logic, no I/O
+  const out = sendCore(input);
+
+  return out.result;
+}
+
+// Pure business logic for notification.send — no I/O. Takes the
+// request input and the dtos the reads loaded; returns the dtos the
+// writes consume plus the result.
+function sendCore(input: SendDto): { result: ReceiptDto } {
+  const notification = new Notification();
+  // TODO: run the pure steps on notification, build the dtos
   throw new Error("not implemented");
 }

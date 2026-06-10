@@ -20,6 +20,8 @@
     a unique task identifier
 [TYP] title: string
     the human-readable task title
+[TYP] done: boolean
+    whether the task has been completed
 
 [DTO] CreateTaskDto: title
     input to create a new task
