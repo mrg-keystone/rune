@@ -13,6 +13,7 @@
   "tasks": {
     "test": "deno test -A --unstable-raw-imports",
     "test:e2e": "deno test -A --unstable-raw-imports --config e2e/cake/deno.json e2e/cake/",
+    "cake": "KEEP_BROWSER=1 KEEP_HEADED=1 deno test -A --unstable-raw-imports --config e2e/cake/deno.json e2e/cake/cake.e2e.test.ts",
     "test:browser": "KEEP_BROWSER=1 deno test -A --unstable-raw-imports src/foundation/domain/business/emulator-ui/browser.test.ts",
     "test:smoke": "KEEP_PLAYWRIGHT_SMOKE=1 deno test -A --unstable-raw-imports src/foundation/domain/coordinators/exercise-harness/smk.test.ts",
     "example": "deno run -A examples/in-process-client/main.ts"

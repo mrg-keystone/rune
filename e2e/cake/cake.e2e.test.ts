@@ -55,7 +55,10 @@ Deno.test({
     const api = await bootstrapServer("cake", httpModule, { port: p });
     await api.listen();
     const { chromium } = await import("#playwright");
-    const browser = await chromium.launch();
+    // KEEP_HEADED=1 launches a visible browser and slows actions so you can watch the
+    // emulator walk the chain (`deno task cake`); otherwise it runs headless.
+    const headed = Deno.env.get("KEEP_HEADED") === "1";
+    const browser = await chromium.launch({ headless: !headed, slowMo: headed ? 600 : 0 });
     try {
       const page = await browser.newPage();
       await page.goto(`http://localhost:${p}/docs/cake`);
@@ -78,6 +81,8 @@ Deno.test({
         "document.querySelectorAll('li .dot.ok').length === 6",
         { timeout: 10000 },
       );
+      // Hold the all-green state on screen briefly when watching headed.
+      if (headed) await new Promise((r) => setTimeout(r, 2500));
     } finally {
       await browser.close();
       await api.stop();
