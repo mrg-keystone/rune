@@ -20,7 +20,7 @@ import { validateArtifact } from "@rune/domain/business/artifact/validate.ts";
 import { annotateAndFilter, resolveSettings } from "@rune/domain/business/lint-config/mod.ts";
 import { applyOverlay, overlayIsCompliant } from "@rune/domain/business/governance/mod.ts";
 import { migrate } from "@rune/domain/business/migrate/mod.ts";
-import { generate as studioGenerate } from "../rune/new/studio/lib/engine.ts";
+import { generate as studioGenerate } from "../rune-studio/lib/engine.ts";
 import type { EntryResult } from "@core/dto/types.ts";
 
 // Deterministic lint: never depend on whether the Rust LSP binary is present.
@@ -30,7 +30,8 @@ const ROOT = fromFileUrl(new URL("../", import.meta.url));
 const CORPUS = join(ROOT, "fixtures/corpus");
 const GOLDEN = join(ROOT, "fixtures/golden");
 const PROJECTS = join(ROOT, "fixtures/projects");
-const RUNE = join(ROOT, "rune");
+// Post-reorg layout: engine + keywords.json at ROOT, grammar/queries under lang/,
+// studio under rune-studio/. (Was a nested rune/new/... tree.)
 
 // L4 fixture projects fall in two kinds:
 //  - GEN_FIXTURES: materialised (deterministically) from a [MOD] corpus spec,
@@ -106,8 +107,8 @@ interface GateResult {
 
 async function gateDrift(): Promise<GateResult> {
   const gen = new Deno.Command("deno", {
-    args: ["run", "--allow-read", "--allow-write", "new/generate.mjs"],
-    cwd: RUNE,
+    args: ["run", "--allow-read", "--allow-write", "generate.mjs"],
+    cwd: ROOT,
     stdout: "null",
     stderr: "piped",
   });
@@ -118,9 +119,9 @@ async function gateDrift(): Promise<GateResult> {
   const diff = new Deno.Command("git", {
     args: [
       "diff", "--exit-code", "--",
-      "grammar/grammar.js", "queries/highlights.scm", "new/studio/data/keywords.json",
+      "lang/grammar/grammar.js", "lang/queries/highlights.scm",
     ],
-    cwd: RUNE,
+    cwd: ROOT,
     stdout: "piped",
     stderr: "null",
   });
@@ -216,7 +217,7 @@ async function gateGolden(
 async function gateL5(): Promise<GateResult> {
   const bad: string[] = [];
   // The Rust-binary bridge is retired (ADR 0001).
-  if (await fileExists(join(RUNE, "new/studio/lib/runegen.ts"))) {
+  if (await fileExists(join(ROOT, "rune-studio/lib/runegen.ts"))) {
     bad.push("lib/runegen.ts still present — the Rust bridge must be retired (ADR 0001)");
   }
   // The Studio's interpreter is a thin wrapper over the engine, so its codegen
@@ -303,7 +304,7 @@ async function gateGrammar(): Promise<GateResult> {
   }
   const bad: string[] = [];
   const build = new Deno.Command("deno", {
-    args: ["run", "-A", "rune/new/build-grammar.ts"],
+    args: ["run", "-A", "build-grammar.ts"],
     cwd: ROOT,
     stdout: "null",
     stderr: "piped",
@@ -311,15 +312,15 @@ async function gateGrammar(): Promise<GateResult> {
   const r = await build.output();
   if (!r.success) bad.push("build-grammar.ts failed: " + new TextDecoder().decode(r.stderr).split("\n").slice(-4).join(" "));
 
-  if (!(await fileExists(join(RUNE, "grammar/rune.wasm")))) bad.push("grammar/rune.wasm not produced");
-  if (!(await fileExists(join(RUNE, "new/studio/static/rune-tree-sitter.wasm")))) bad.push("studio static WASM not published");
+  if (!(await fileExists(join(ROOT, "lang/grammar/rune.wasm")))) bad.push("grammar/rune.wasm not produced");
+  if (!(await fileExists(join(ROOT, "rune-studio/static/rune-tree-sitter.wasm")))) bad.push("studio static WASM not published");
 
   // The grammar + highlights are regenerated from the artifact: every tag id
   // must appear as a parse rule and a highlight capture (so a tag/colour change
   // in the artifact recolours both the in-Studio and external editors).
-  const reg = JSON.parse(await Deno.readTextFile(join(RUNE, "new/keywords.json")));
-  const grammarJson = await Deno.readTextFile(join(RUNE, "grammar/src/grammar.json"));
-  const highlights = await Deno.readTextFile(join(RUNE, "queries/highlights.scm"));
+  const reg = JSON.parse(await Deno.readTextFile(join(ROOT, "keywords.json")));
+  const grammarJson = await Deno.readTextFile(join(ROOT, "lang/grammar/src/grammar.json"));
+  const highlights = await Deno.readTextFile(join(ROOT, "lang/queries/highlights.scm"));
   for (const t of reg.tags as Array<{ id: string }>) {
     if (!grammarJson.includes(`"${t.id}_tag"`)) bad.push(`grammar missing rule for tag "${t.id}"`);
     if (!highlights.includes(`(${t.id}_tag) @rune.tag`)) bad.push(`highlights missing capture for tag "${t.id}"`);
@@ -345,10 +346,10 @@ async function gateL1(): Promise<GateResult> {
   const ARTIFACT = join(ROOT, "fixtures/artifact");
 
   // The current registry (live, single source) must validate.
-  const reg = JSON.parse(await Deno.readTextFile(join(RUNE, "new/keywords.json")));
+  const reg = JSON.parse(await Deno.readTextFile(join(ROOT, "keywords.json")));
   const regResult = validateArtifact(reg);
   if (!regResult.ok) {
-    bad.push(`live rune/new/keywords.json rejected: ${regResult.errors.map((e) => e.message).join("; ")}`);
+    bad.push(`live keywords.json rejected: ${regResult.errors.map((e) => e.message).join("; ")}`);
   }
 
   // Every valid/ fixture must validate.
@@ -396,7 +397,7 @@ async function gateL6(): Promise<GateResult> {
   const bad: string[] = [];
   const srcBefore = await gitDiffNames("src/shape-checker");
 
-  const artifact = JSON.parse(await Deno.readTextFile(join(RUNE, "new/keywords.json")));
+  const artifact = JSON.parse(await Deno.readTextFile(join(ROOT, "keywords.json")));
   const specPath = join(CORPUS, "valid", "module-billing.rune");
   const text = await Deno.readTextFile(specPath);
   const rel = "corpus/valid/module-billing.rune";
