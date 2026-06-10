@@ -44,8 +44,10 @@ export async function check(
   // Pure type-alias / interface files (e.g. a [TYP] declaration like
   // `export type Id = string;`) have no runtime surface, so they need no
   // validation. Exempt them without depending on the LSP's type-kind reporting.
+  // `async` sits between `export` and `function` (`export async function …`), so
+  // it must be tolerated or an async value export is mis-read as type-only.
   const hasValueExport =
-    /\bexport\s+(?:default\s+)?(?:const|let|var|function|class|enum)\b/
+    /\bexport\s+(?:default\s+)?(?:async\s+)?(?:const|let|var|function|class|enum)\b/
       .test(content) || /\bexport\s*\{/.test(content);
   const hasTypeExport = /\bexport\s+(?:type|interface)\b/.test(content);
   if (hasTypeExport && !hasValueExport) return null;

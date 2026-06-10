@@ -3,6 +3,22 @@
 
 import { List } from "./mod.ts";
 
-Deno.test("List — placeholder", () => {
-  // TODO: implement unit tests
+Deno.test("List.fill", () => {
+  // TODO: test fill
+});
+
+Deno.test("List.save", () => {
+  // TODO: test save
+});
+
+Deno.test("List.toDto", () => {
+  // TODO: test toDto
+});
+
+Deno.test("List.load", () => {
+  // TODO: test load
+});
+
+Deno.test("List.append", () => {
+  // TODO: test append
 });

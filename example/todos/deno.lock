@@ -1,18 +1,34 @@
 {
   "version": "5",
   "specifiers": {
-    "npm:zod@*": "4.4.3"
+    "npm:class-validator@0.14": "0.14.4"
   },
   "npm": {
-    "zod@4.4.3": {
-      "integrity": "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ=="
+    "@types/validator@13.15.10": {
+      "integrity": "sha512-T8L6i7wCuyoK8A/ZeLYt1+q0ty3Zb9+qbSSvrIVitzT3YjZqkTZ40IbRsPanlB4h1QB3JVL1SYCdR6ngtFYcuA=="
+    },
+    "class-validator@0.14.4": {
+      "integrity": "sha512-AwNusCCam51q703dW82x95tOqQp6oC9HNUl724KxJJOfnKscI8dOloXFgyez7LbTTKWuRBA37FScqVbJEoq8Yw==",
+      "dependencies": [
+        "@types/validator",
+        "libphonenumber-js",
+        "validator"
+      ]
+    },
+    "libphonenumber-js@1.12.41": {
+      "integrity": "sha512-lsmMmGXBxXIK/VMLEj0kL6MtUs1kBGj1nTCzi6zgQoG1DEwqwt2DQyHxcLykceIxAnfE3hya7NuIh6PpC6S3fA=="
+    },
+    "validator@13.15.26": {
+      "integrity": "sha512-spH26xU080ydGggxRyR1Yhcbgx+j3y5jbNXk/8L+iRvdIEQ4uTRH2Sgf2dokud6Q4oAtsbNvJ1Ft+9xmm6IZcA=="
     }
   },
   "workspace": {
     "dependencies": [
       "jsr:@std/assert@*",
       "jsr:@std/path@*",
-      "npm:zod@*"
+      "npm:class-transformer@0.5",
+      "npm:class-validator@0.14",
+      "npm:reflect-metadata@0.2"
     ]
   }
 }

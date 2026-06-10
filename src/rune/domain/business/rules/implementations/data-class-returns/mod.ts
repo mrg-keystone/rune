@@ -22,6 +22,27 @@ function isOkReturn(t: string): boolean {
   return /^[A-Z]\w*$/.test(first);
 }
 
+// Split class members on `;`, but only at top-level brace/paren/bracket depth, so
+// an inline object type in a return or param (e.g. `m(): { a: number; b: string }`)
+// isn't fragmented at its internal `;`.
+function splitMembers(inner: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let buf = "";
+  for (const ch of inner) {
+    if (ch === "{" || ch === "(" || ch === "[") depth++;
+    else if (ch === "}" || ch === ")" || ch === "]") depth = Math.max(0, depth - 1);
+    if (ch === ";" && depth === 0) {
+      parts.push(buf);
+      buf = "";
+    } else {
+      buf += ch;
+    }
+  }
+  if (buf.trim()) parts.push(buf);
+  return parts;
+}
+
 function extractMethodReturns(sig: string): Array<{ name: string; ret: string }> {
   const out: Array<{ name: string; ret: string }> = [];
   const body = sig.match(/\{([\s\S]*)\}\s*$/);
@@ -29,7 +50,7 @@ function extractMethodReturns(sig: string): Array<{ name: string; ret: string }>
   const inner = body[1];
   // Members are `;`-separated; the LSP may return them on one line or many, so
   // split on `;` itself rather than requiring a trailing newline.
-  const lines = inner.split(/;/);
+  const lines = splitMembers(inner);
   for (const raw of lines) {
     const line = raw.trim();
     if (!line) continue;

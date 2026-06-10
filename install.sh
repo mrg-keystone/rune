@@ -21,6 +21,9 @@ set -eu
 REPO="mrg-keystone/rune"
 BINDIR="${RUNE_INSTALL:-$HOME/.deno/bin}"
 RUNE_REF="${RUNE_REF:-main}"
+# The binaries this installer manages. Add a fourth here and every loop below
+# (purge / chmod / xattr / codesign) picks it up — no other edit needed.
+BINS="rune rune-lsp rune-syntax"
 
 # --dev: build + install from this local checkout instead of a GitHub release.
 DEV=0
@@ -38,7 +41,7 @@ else
   # Fallback (offline, or uninstall.sh not yet published): purge known locations.
   for d in "$BINDIR" "$HOME/.deno/bin" "$HOME/.cargo/bin" "$HOME/.local/bin" \
            /usr/local/bin /opt/homebrew/bin; do
-    for b in rune rune-lsp rune-syntax; do rm -f "$d/$b" 2>/dev/null || true; done
+    for b in $BINS; do rm -f "$d/$b" 2>/dev/null || true; done
   done
 fi
 
@@ -68,7 +71,7 @@ if [ "$DEV" = "1" ]; then
      "$repo/lang/target/release/rune-syntax" "$BINDIR/"
 
   if [ "$(uname -s)" = "Darwin" ]; then
-    codesign -f -s - "$BINDIR/rune" "$BINDIR/rune-lsp" "$BINDIR/rune-syntax" 2>/dev/null || true
+    for b in $BINS; do codesign -f -s - "$BINDIR/$b" 2>/dev/null || true; done
   fi
   echo "Installed rune (dev build from $repo) -> $BINDIR"
   command -v deno >/dev/null 2>&1 && echo "Run: rune --help"
@@ -102,11 +105,11 @@ curl -fSL "$url" -o "$tmp/rune.tar.gz"
 
 mkdir -p "$BINDIR"
 tar -C "$BINDIR" -xzf "$tmp/rune.tar.gz"
-chmod +x "$BINDIR/rune" "$BINDIR/rune-lsp" "$BINDIR/rune-syntax"
+for b in $BINS; do chmod +x "$BINDIR/$b"; done
 
 # Let Gatekeeper run the freshly downloaded macOS binaries.
 if [ "$os" = "Darwin" ]; then
-  xattr -dr com.apple.quarantine "$BINDIR/rune" "$BINDIR/rune-lsp" "$BINDIR/rune-syntax" 2>/dev/null || true
+  for b in $BINS; do xattr -d com.apple.quarantine "$BINDIR/$b" 2>/dev/null || true; done
 fi
 
 echo "Installed rune $tag -> $BINDIR"

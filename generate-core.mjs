@@ -1,10 +1,12 @@
 // Derive tree-sitter artifacts from the keyword registry.
 //
-// This is the ONE place keywords turn into a grammar. The studio imports the
-// sibling copy (studio/lib/generate-core.ts — kept byte-for-byte in lock-step
-// with this file's logic) for its "Export" buttons; generate.mjs imports this
-// to write the committed files. Both share the exact same logic, so the studio
-// preview and the committed grammar can never drift.
+// This is the ONE place keywords turn into a grammar. The studio keeps a
+// logic-equivalent sibling copy at rune-studio/lib/generate-core.ts (it differs
+// only in the //@ts-nocheck banner + Deno-fmt line wrapping) for its "Export"
+// buttons; generate.mjs imports this file to write the committed grammar. Keep
+// the two in lock-step — edit one, mirror the change in the other — so the studio
+// preview and the committed grammar can never drift. (A shared single source
+// would remove the hazard entirely; tracked as a follow-up.)
 
 /** Map a tag's `follows` kind to the body of its tree-sitter line rule. */
 function lineRuleBody(tag) {

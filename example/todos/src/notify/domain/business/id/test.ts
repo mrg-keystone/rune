@@ -3,6 +3,6 @@
 
 import { Id } from "./mod.ts";
 
-Deno.test("Id — placeholder", () => {
-  // TODO: implement unit tests
+Deno.test("Id.generate", () => {
+  // TODO: test generate
 });

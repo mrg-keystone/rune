@@ -17,6 +17,8 @@
     a unique notification id
 [TYP] message: string
     the notification body text
+[TYP] status: string
+    the delivery status of the notification
 
 [DTO] SendDto: message
     input to send a notification

@@ -3,6 +3,10 @@
 
 import { Notification } from "./mod.ts";
 
-Deno.test("Notification — placeholder", () => {
-  // TODO: implement unit tests
+Deno.test("Notification.fill", () => {
+  // TODO: test fill
+});
+
+Deno.test("Notification.toDto", () => {
+  // TODO: test toDto
 });
