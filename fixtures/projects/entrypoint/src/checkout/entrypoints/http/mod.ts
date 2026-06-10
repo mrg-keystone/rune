@@ -11,12 +11,12 @@ import { pay as paymentPay } from "@/src/checkout/domain/coordinators/payment-pa
 
 @EndpointController("http")
 export class HttpController {
-  @Endpoint({ input: NewOrderDto, output: OrderDto, order: 1 })
+  @Endpoint({ path: "create-order", input: NewOrderDto, output: OrderDto, order: 1 })
   createOrder(body: NewOrderDto): Promise<OrderDto> {
     return orderCreate(body);
   }
 
-  @Endpoint({ input: PayDto, output: ReceiptDto, order: 2, dependsOn: ["createOrder"], bind: {"id":"createOrder.id"} })
+  @Endpoint({ path: "pay-order", input: PayDto, output: ReceiptDto, order: 2, dependsOn: ["createOrder"], bind: {"id":"createOrder.id"} })
   payOrder(body: PayDto): Promise<ReceiptDto> {
     return paymentPay(body);
   }

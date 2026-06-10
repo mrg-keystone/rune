@@ -764,7 +764,14 @@ function renderEntrypointController(
   ents.forEach((ent, i) => {
     if (i > 0) L.push("");
     const p = process.get(ent)!;
-    const opts = [`input: ${ent.input}`, `output: ${ent.output}`, `order: ${p.order}`];
+    // Each endpoint gets a distinct sub-path (the action) so methods on one surface
+    // controller don't collide at the same route.
+    const opts = [
+      `path: ${JSON.stringify(applyCase(ent.action, "kebab"))}`,
+      `input: ${ent.input}`,
+      `output: ${ent.output}`,
+      `order: ${p.order}`,
+    ];
     if (p.dependsOn.length) opts.push(`dependsOn: ${JSON.stringify(p.dependsOn)}`);
     if (Object.keys(p.bind).length) opts.push(`bind: ${JSON.stringify(p.bind)}`);
     L.push(`  @Endpoint({ ${opts.join(", ")} })`);

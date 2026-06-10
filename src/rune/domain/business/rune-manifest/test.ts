@@ -180,11 +180,12 @@ Deno.test("planManifest — [ENT]s on one surface become one keep controller", (
   assertStringIncludes(mod.content, "export class HttpController");
   assertStringIncludes(mod.content, "createOrder(body: NewOrderDto): Promise<OrderDto>");
   assertStringIncludes(mod.content, "payOrder(body: PayDto): Promise<ReceiptDto>");
+  // distinct sub-path per endpoint (the action) so routes don't collide.
+  assertStringIncludes(mod.content, 'path: "create-order", input: NewOrderDto, output: OrderDto, order: 1');
   // order/dependsOn/bind auto-derived from the DTO field graph (PayDto.id <- OrderDto.id).
-  assertStringIncludes(mod.content, "input: NewOrderDto, output: OrderDto, order: 1");
   assertStringIncludes(
     mod.content,
-    'output: ReceiptDto, order: 2, dependsOn: ["createOrder"], bind: {"id":"createOrder.id"}',
+    'path: "pay-order", input: PayDto, output: ReceiptDto, order: 2, dependsOn: ["createOrder"], bind: {"id":"createOrder.id"}',
   );
   // Delegates to the (input,output)-matched coordinators.
   assertStringIncludes(mod.content, "return orderCreate(body)");
