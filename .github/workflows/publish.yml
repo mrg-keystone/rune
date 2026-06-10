@@ -91,7 +91,9 @@ jobs:
           echo "Publishing @mrg-keystone/keep@$VER ..."
           deno publish --token "$JSR_TOKEN" --allow-dirty --no-provenance --allow-slow-types &
           PUB_PID=$!
-          for _ in $(seq 1 60); do
+          # 10 min window: the upload itself can take minutes as the package grows;
+          # killing too early aborts an in-flight upload (1.13.6 was lost that way).
+          for i in $(seq 1 300); do
             if curl -fsS "$VURL" >/dev/null 2>&1; then
               echo "✓ @mrg-keystone/keep@$VER is live on JSR"
               kill "$PUB_PID" 2>/dev/null || true
@@ -103,6 +105,7 @@ jobs:
               echo "✗ deno publish exited and @mrg-keystone/keep@$VER is not on JSR" >&2
               exit 1
             fi
+            [ $((i % 15)) -eq 0 ] && echo "… still waiting ($((i * 2))s)"
             sleep 2
           done
           echo "✗ timed out waiting for @mrg-keystone/keep@$VER to appear on JSR" >&2
