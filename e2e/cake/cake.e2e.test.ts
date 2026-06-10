@@ -3,7 +3,7 @@
 // Run from the keep root: `deno task test:e2e` (in-process), or `KEEP_BROWSER=1 deno task test:e2e`
 // to add the interactive-emulator browser stage.
 import "reflect-metadata";
-import { assert, assertEquals, assertExists } from "#assert";
+import { assert, assertEquals, assertExists, assertStringIncludes } from "#assert";
 import { bootstrapServer, exerciseEndpoints } from "@mrg-keystone/keep";
 import { httpModule } from "@/src/cake/entrypoints/http/mod.ts";
 
@@ -43,6 +43,32 @@ Deno.test("cake e2e — exerciseEndpoints chains all 6 green in-process", async 
   }
 });
 
+// Stage 7 — the deeper-inspection surfaces are reachable (no browser needed): the emulator page,
+// the standard Swagger UI, and the raw OpenAPI spec (served to the loopback caller).
+Deno.test("cake e2e — emulator page, Swagger UI, and raw spec are all served", async () => {
+  const p = port++;
+  const api = await bootstrapServer("cake", httpModule, { port: p });
+  await api.listen();
+  try {
+    const base = `http://localhost:${p}`;
+
+    const emulator = await fetch(`${base}/docs/cake`);
+    assertEquals(emulator.status, 200);
+    assertStringIncludes(await emulator.text(), "process emulator");
+
+    const swagger = await fetch(`${base}/docs/cake/swagger`);
+    assertEquals(swagger.status, 200);
+    assertStringIncludes(await swagger.text(), "swagger-ui");
+
+    const spec = await fetch(`${base}/docs/cake/json`); // loopback is trusted, so it's served
+    assertEquals(spec.status, 200);
+    const doc = await spec.json();
+    assertEquals(Object.keys(doc.paths).length, 6);
+  } finally {
+    await api.stop();
+  }
+});
+
 // Stage 4 — the interactive emulator, driven in headless chromium. Each cake step is emulated
 // explicitly, in order, as its own named t.step so the run output reads like the process itself:
 // drive to store -> grocery shop -> checkout -> mix ingredients -> bake -> cut. Every step asserts
@@ -75,6 +101,15 @@ Deno.test({
         await emulate.nth(i).click();
         await rows.nth(i).locator(".dot.ok").waitFor({ timeout: 10000 }); // wait for its checkmark
       };
+
+      // ── Inspect a step's request ─────────────────────────────────────────────
+      // Click into a bullet (not the button) to expand it and reveal the generated curl request.
+      await t.step("expand a step to see its curl request", async () => {
+        await rows.nth(0).locator(".path").click();
+        const curl = await rows.nth(0).locator(".curl").textContent();
+        assert(curl?.includes("curl -X POST"), `curl request not rendered: ${curl}`);
+        assert(curl?.includes("/http/drive-to-store"), `curl missing the endpoint path: ${curl}`);
+      });
 
       // ── Step 1 — drive to store ──────────────────────────────────────────────
       // The first step needs no upstream data (it seeds `destination`), so it starts unlocked.
