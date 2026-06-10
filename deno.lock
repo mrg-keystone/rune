@@ -1,10 +1,9 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@danet/core@2": "2.9.6",
-    "jsr:@danet/core@2.9.6": "2.9.6",
-    "jsr:@danet/core@^2.5.1": "2.9.6",
-    "jsr:@danet/swagger@2": "2.3.2",
+    "jsr:@danet/core@2": "2.10.0",
+    "jsr:@danet/core@^2.5.1": "2.10.0",
+    "jsr:@danet/swagger@^2.1.1": "2.3.2",
     "jsr:@danet/validatte@0.7.4": "0.7.4",
     "jsr:@danet/zod@0.0.7": "0.0.7",
     "jsr:@dx/reflect@0.2.14": "0.2.14",
@@ -13,6 +12,7 @@
     "jsr:@std/fmt@0.223.0": "0.223.0",
     "jsr:@std/internal@^1.0.12": "1.0.12",
     "jsr:@std/path@1.0.6": "1.0.6",
+    "jsr:@std/yaml@*": "1.0.12",
     "npm:@anatine/zod-openapi@2.2.6": "2.2.6_openapi3-ts@4.5.0_zod@3.23.8",
     "npm:@types/node@*": "24.2.0",
     "npm:awesome-phonenumber@7.1.0": "7.1.0",
@@ -26,8 +26,8 @@
     "npm:zod@3.23.8": "3.23.8"
   },
   "jsr": {
-    "@danet/core@2.9.6": {
-      "integrity": "9c2616c2c1814afa4762ec9a80eccae887047629464d247fa1da0a488043ae68",
+    "@danet/core@2.10.0": {
+      "integrity": "309ec39d31ea50dbe1de16fb55818da6a903c75ae8222780dcbc3cd715c5e152",
       "dependencies": [
         "jsr:@danet/validatte",
         "jsr:@dx/reflect",
@@ -79,6 +79,9 @@
     },
     "@std/path@1.0.6": {
       "integrity": "ab2c55f902b380cf28e0eec501b4906e4c1960d13f00e11cfbcd21de15f18fed"
+    },
+    "@std/yaml@1.0.12": {
+      "integrity": "7deabca4545bcedd07c5f69ea53acea71b8b4c67562f224e17b90d75944cb20c"
     }
   },
   "npm": {
@@ -179,7 +182,7 @@
   "workspace": {
     "dependencies": [
       "jsr:@danet/core@2",
-      "jsr:@danet/swagger@2",
+      "jsr:@danet/swagger@^2.1.1",
       "jsr:@hono/hono@4.6.3",
       "jsr:@std/assert@*",
       "npm:handlebars@^4.7.8",

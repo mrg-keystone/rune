@@ -88,11 +88,18 @@ jobs:
           set -uo pipefail
           VER="${{ steps.ver.outputs.version }}"
           VURL="https://api.jsr.io/scopes/mrg-keystone/packages/keep/versions/$VER"
+          TASKS_URL="https://api.jsr.io/scopes/mrg-keystone/packages/keep/publishing_tasks"
+          START_ISO="$(date -u +%Y-%m-%dT%H:%M:%S)"
           echo "Publishing @mrg-keystone/keep@$VER ..."
           deno publish --token "$JSR_TOKEN" --allow-dirty --no-provenance --allow-slow-types &
           PUB_PID=$!
-          # 10 min window: the upload itself can take minutes as the package grows;
-          # killing too early aborts an in-flight upload (1.13.6 was lost that way).
+          # Two failure modes hide behind a silent "Publishing ...":
+          #   - a slow upload (don't kill too early; 10 min window), and
+          #   - a server-side publishing-task FAILURE that the deno publish CLI
+          #     never reports — it waits forever on a task that already failed
+          #     (this is how 1.13.6's invalid-subpath error looked like a hang).
+          # So poll the version AND the publishing-task status, and surface the
+          # task's real error immediately instead of timing out blind.
           for i in $(seq 1 300); do
             if curl -fsS "$VURL" >/dev/null 2>&1; then
               echo "✓ @mrg-keystone/keep@$VER is live on JSR"
@@ -105,7 +112,18 @@ jobs:
               echo "✗ deno publish exited and @mrg-keystone/keep@$VER is not on JSR" >&2
               exit 1
             fi
-            [ $((i % 15)) -eq 0 ] && echo "… still waiting ($((i * 2))s)"
+            if [ $((i % 10)) -eq 0 ]; then
+              FAIL_MSG="$(curl -fsS -H "Authorization: Bearer $JSR_TOKEN" "$TASKS_URL" 2>/dev/null \
+                | jq -r --arg v "$VER" --arg t "$START_ISO" \
+                    '(.items // .) | [.[]? | select(.packageVersion == $v and .status == "failure" and .createdAt >= $t)]
+                     | first | if . then (.error.code + ": " + .error.message) else empty end' 2>/dev/null || true)"
+              if [ -n "$FAIL_MSG" ]; then
+                echo "✗ JSR publishing task FAILED for @mrg-keystone/keep@$VER: $FAIL_MSG" >&2
+                kill "$PUB_PID" 2>/dev/null || true
+                exit 1
+              fi
+              echo "… still waiting ($((i * 2))s)"
+            fi
             sleep 2
           done
           echo "✗ timed out waiting for @mrg-keystone/keep@$VER to appear on JSR" >&2
