@@ -9,8 +9,10 @@
   "publish": {
     "exclude": ["**/*.test.ts", "e2e/", "examples/", "TODOS.md"]
   },
+  "exclude": ["e2e/cake/"],
   "tasks": {
     "test": "deno test -A --unstable-raw-imports",
+    "test:e2e": "deno test -A --unstable-raw-imports --config e2e/cake/deno.json e2e/cake/",
     "test:browser": "KEEP_BROWSER=1 deno test -A --unstable-raw-imports src/foundation/domain/business/emulator-ui/browser.test.ts",
     "test:smoke": "KEEP_PLAYWRIGHT_SMOKE=1 deno test -A --unstable-raw-imports src/foundation/domain/coordinators/exercise-harness/smk.test.ts",
     "example": "deno run -A examples/in-process-client/main.ts"
