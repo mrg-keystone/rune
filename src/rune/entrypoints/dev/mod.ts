@@ -228,7 +228,7 @@ export async function runDev(args: string[]): Promise<number> {
   // ---- cycle engine: 200 ms trailing debounce, single-flight ----
   const suppressions = new Map<string, number>();
   const pending = new Set<string>(); // absolute event paths awaiting the debounce
-  let debounceTimer: number | undefined;
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   let cycleRunning = false;
   let cycleQueued = false;
 
