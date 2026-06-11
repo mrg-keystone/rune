@@ -4,6 +4,7 @@
 import "#reflect-metadata";
 
 export {
+  appModule,
   BackendClient,
   bootstrapServer,
   createBackendClient,

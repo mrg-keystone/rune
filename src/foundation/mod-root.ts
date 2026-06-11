@@ -87,6 +87,7 @@ export type {
   NoCodeCacheOptions,
 } from "@foundation/domain/business/no-code-cache/mod.ts";
 export {
+  appModule,
   Endpoint,
   EndpointController,
   endpointModule,

@@ -62,7 +62,8 @@ Creates and configures a server with optional Swagger documentation and request
 logging.
 
 - `appName` — used in every log line and as the Datadog `service`
-- `module` — root application module class
+- `module` — root application module class, or an **array of modules** (composed
+  into one root internally via `appModule`; each keeps its own `/docs/<module>` page)
 - `options.port` — port number (default: 3000)
 - `options.swagger` — `true` (default), `false`, or `{ filters: string[] }` to
   exclude modules

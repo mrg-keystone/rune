@@ -5,6 +5,7 @@ import { signToken } from "@foundation/domain/business/token/mod.ts";
 import { Public } from "@foundation/domain/business/public-route/mod.ts";
 import { INTERNAL_REQUEST_HEADER } from "@foundation/domain/business/backend-client/mod.ts";
 import { Controller, Get, Module } from "#danet/core";
+import { endpointModule } from "@foundation/domain/business/endpoint-decorator/mod.ts";
 
 @Controller("health")
 class HealthController {
@@ -256,4 +257,45 @@ Deno.test("bootstrapServer - stop() cleans up properly", async () => {
   } catch (error) {
     assertExists(error);
   }
+});
+
+@Controller("alpha")
+class AlphaController {
+  @Public()
+  @Get()
+  get() {
+    return { mod: "alpha" };
+  }
+}
+
+@Controller("beta")
+class BetaController {
+  @Public()
+  @Get()
+  get() {
+    return { mod: "beta" };
+  }
+}
+
+Deno.test("bootstrapServer - accepts an array of modules (composed root, per-module docs)", async () => {
+  const port = portCounter++;
+  const server = await bootstrapServer("multi", [
+    endpointModule("Alpha", [AlphaController]),
+    endpointModule("Beta", [BetaController]),
+  ], { port });
+  await server.listen();
+
+  const a = await (await fetch(`http://localhost:${port}/alpha`)).json();
+  const b = await (await fetch(`http://localhost:${port}/beta`)).json();
+  assertEquals(a.mod, "alpha");
+  assertEquals(b.mod, "beta");
+
+  // Each child module keeps its own docs card; the composition wrapper (no
+  // controllers) is not documented.
+  const docs = await (await fetch(`http://localhost:${port}/docs`)).text();
+  assertStringIncludes(docs, "Alpha");
+  assertStringIncludes(docs, "Beta");
+  assertEquals(docs.includes("AppModule"), false);
+
+  await server.stop();
 });

@@ -158,3 +158,16 @@ export function endpointModule(name: string, controllers: Type[]): Type {
   Object.defineProperty(EndpointModule, "name", { value: moduleName });
   return EndpointModule as unknown as Type;
 }
+
+/**
+ * Compose several endpoint modules (one per rune) into a single root module for
+ * `bootstrapServer`. Each child keeps its own Swagger doc and `/docs/<module>` page; the
+ * wrapper has no controllers of its own, so it never appears in the docs index.
+ */
+export function appModule(name: string, modules: Type[]): Type {
+  @Module({ imports: modules })
+  class AppModule {}
+  const base = name ? name.charAt(0).toUpperCase() + name.slice(1) : "";
+  Object.defineProperty(AppModule, "name", { value: `${base}AppModule` });
+  return AppModule as unknown as Type;
+}

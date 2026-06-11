@@ -20,20 +20,18 @@ Deno.test(
     const builder = new SwaggerBuilder();
     const { swaggerDocs, docsIndexHtml } = await builder.build(server);
 
-    assertEquals(swaggerDocs.length, 2);
-    const paths = swaggerDocs.map((d) => d.path).sort();
-    assertEquals(paths, ["/child", "/test"]);
-    const test = swaggerDocs.find((d) => d.path === "/test")!;
-    assertEquals(test.doc.info.title, "Test");
-    assertEquals(test.doc.info.version, "1.0");
-    assertEquals(test.doc.openapi, "3.0.3");
+    // TestModule is a pure composition wrapper (imports, no controllers) — it is
+    // skipped; only the imported feature module is documented.
+    assertEquals(swaggerDocs.length, 1);
+    assertEquals(swaggerDocs[0].path, "/child");
+    assertEquals(swaggerDocs[0].doc.info.title, "Child");
+    assertEquals(swaggerDocs[0].doc.info.version, "1.0");
+    assertEquals(swaggerDocs[0].doc.openapi, "3.0.3");
 
     assertStringIncludes(docsIndexHtml, "<html");
-    assertStringIncludes(docsIndexHtml, "Test");
-    // Mount-relative so the index works at "/docs" standalone and "/api/docs" under Fresh.
-    assertStringIncludes(docsIndexHtml, 'href="docs/test"');
-    // Imported modules get an index card too, not just a /docs/<name> page.
+    // Imported modules get an index card; the wrapper does not.
     assertStringIncludes(docsIndexHtml, 'href="docs/child"');
+    assertEquals(docsIndexHtml.includes('href="docs/test"'), false);
   },
 );
 
@@ -50,6 +48,8 @@ Deno.test(
       .map((r: { path: string }) => r.path);
 
     assertEquals(getPaths.includes("/docs"), true);
-    assertEquals(getPaths.includes("/docs/test"), true);
+    // The imported feature module is routed; the controller-less wrapper is not.
+    assertEquals(getPaths.includes("/docs/child"), true);
+    assertEquals(getPaths.includes("/docs/test"), false);
   },
 );

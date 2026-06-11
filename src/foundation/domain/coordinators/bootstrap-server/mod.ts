@@ -10,6 +10,7 @@ import { createRequestLoggingMiddleware } from "@foundation/domain/business/requ
 import { GLOBAL_GUARD } from "#danet/core";
 import { createCredentialGuard } from "@foundation/domain/business/token-auth/mod.ts";
 import { createMintUi } from "@foundation/domain/business/mint-ui/mod.ts";
+import { appModule } from "@foundation/domain/business/endpoint-decorator/mod.ts";
 import { createFirebaseVerifier } from "@foundation/domain/business/firebase-auth/mod.ts";
 import {
   createDocsJsonHandler,
@@ -103,9 +104,12 @@ export class BootstrapServer {
 
   static async create(
     appName: string,
-    module: Type,
+    module: Type | Type[],
     options?: BootstrapOptions,
   ) {
+    // An array composes into one root module (one entry per rune) — see appModule(). Each
+    // child keeps its own Swagger doc; the wrapper itself is skipped by the docs builder.
+    const rootModule = Array.isArray(module) ? appModule(appName, module) : module;
     const { port = 3000, swagger = true } = options ?? {};
 
     // Configure the process-wide logger from env before anything can emit.
@@ -141,7 +145,7 @@ export class BootstrapServer {
       (Deno.env.get("TRUST_LOCALHOST") ?? "true").toLowerCase() !== "false";
 
     const server = Server.create();
-    server.registerModule(module);
+    server.registerModule(rootModule);
 
     const adapter = new DanetHttpAdapter(port);
     // Register the logging middleware first so it wraps every route (controllers + swagger).
@@ -214,7 +218,7 @@ export class BootstrapServer {
     }
 
     // Initialize eagerly so the in-process `backend` client is usable without listen().
-    await adapter.init(module);
+    await adapter.init(rootModule);
 
     // Register the credential auth as Danet's global guard — it governs every controller route
     // and honors `@Public()`. A pre-built instance is bound to the GLOBAL_GUARD token.
@@ -240,7 +244,7 @@ export class BootstrapServer {
       internalKey,
     );
 
-    return new BootstrapServer(module, adapter, backend, docs);
+    return new BootstrapServer(rootModule, adapter, backend, docs);
   }
 
   /**
@@ -264,7 +268,7 @@ export class BootstrapServer {
 
 export async function bootstrapServer(
   appName: string,
-  module: Type,
+  module: Type | Type[],
   options?: BootstrapOptions,
 ): Promise<{
   listen: () => Promise<void>;

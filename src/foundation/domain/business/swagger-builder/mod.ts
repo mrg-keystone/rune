@@ -1,3 +1,4 @@
+import "#reflect-metadata";
 import type { Server } from "@foundation/domain/business/server/mod.ts";
 import type { Type } from "@types";
 import { Crawler } from "@foundation/domain/business/crawler/mod.ts";
@@ -21,7 +22,16 @@ export class SwaggerBuilder {
   }
 
   async build(server: Server) {
-    const allModules = this.crawler.crawl(server.modules);
+    // Skip pure composition wrappers (imports but no controllers of their own — e.g. the
+    // appModule() root): they have nothing to document and would render an empty card.
+    const allModules = this.crawler.crawl(server.modules).filter((m: Type) => {
+      const meta = Reflect.getMetadata("module", m) as
+        | { imports?: unknown[]; controllers?: unknown[] }
+        | undefined;
+      const isWrapper = (meta?.imports?.length ?? 0) > 0 &&
+        (meta?.controllers?.length ?? 0) === 0;
+      return !isWrapper;
+    });
     const specs = allModules.map((m: Type) =>
       this.documentBuilder.createSpec(m)
     );
