@@ -117,8 +117,14 @@ jobs:
               exit 0
             fi
             if ! kill -0 "$PUB_PID" 2>/dev/null; then
-              curl -fsS "$VURL" >/dev/null 2>&1 && { echo "✓ live"; exit 0; }
-              echo "✗ deno publish exited and @$SCOPE/$PKG@$VER is not on JSR" >&2
+              # deno publish exits right after a fast successful upload, but
+              # the version can take a few seconds to appear in the API —
+              # poll a grace window instead of failing on one instant check.
+              for j in $(seq 1 30); do
+                curl -fsS "$VURL" >/dev/null 2>&1 && { echo "✓ @$SCOPE/$PKG@$VER is live on JSR"; exit 0; }
+                sleep 2
+              done
+              echo "✗ deno publish exited and @$SCOPE/$PKG@$VER did not appear on JSR within 60s" >&2
               exit 1
             fi
             if [ $((i % 10)) -eq 0 ]; then
@@ -146,3 +152,36 @@ jobs:
           git add deno.json
           git commit -m "release: v${{ steps.ver.outputs.version }} (auto-bump)"
           git push || echo "::warning::could not push the version bump back to main; the next run will re-derive from the JSR latest"
+
+  # Ship each skills/<name>/ dir (SKILL.md + references/) as a rolling
+  # `latest` GitHub release — one tarball per skill, plus the installer.
+  # `curl …/releases/download/latest/install.sh | sh` then installs the skill
+  # version-matched to what just published. Repos without a skills/ dir skip
+  # this job entirely, so the workflow stays drop-in reusable.
+  skill-release:
+    needs: publish
+    if: ${{ hashFiles('skills/**/SKILL.md') != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pack one tarball per skill
+        run: |
+          mkdir -p dist
+          for d in skills/*/; do
+            n="$(basename "$d")"
+            tar -C "$d" -czf "dist/$n-skill.tar.gz" .
+          done
+          ls -l dist/
+      - name: Publish skill + installer (rolling `latest` release)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: latest (main)
+          make_latest: true
+          prerelease: false
+          files: |
+            dist/*-skill.tar.gz
+            scripts/install.sh
+          fail_on_unmatched_files: true

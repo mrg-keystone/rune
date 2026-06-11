@@ -14,7 +14,8 @@
       "e2e/",
       "examples/",
       "TODOS.md",
-      "todos/"
+      "todos/",
+      "skills/"
     ]
   },
   "exclude": [
