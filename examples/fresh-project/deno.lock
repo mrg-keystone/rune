@@ -1,9 +1,9 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@danet/core@2": "2.9.6",
-    "jsr:@danet/core@^2.5.1": "2.9.6",
-    "jsr:@danet/swagger@2": "2.3.2",
+    "jsr:@danet/core@2": "2.10.0",
+    "jsr:@danet/core@^2.5.1": "2.10.0",
+    "jsr:@danet/swagger@^2.1.1": "2.3.2",
     "jsr:@danet/validatte@0.7.4": "0.7.4",
     "jsr:@danet/zod@0.0.7": "0.0.7",
     "jsr:@deno/esbuild-plugin@^1.2.0": "1.2.1",
@@ -15,6 +15,7 @@
     "jsr:@fresh/core@^2.3.3": "2.3.3",
     "jsr:@fresh/plugin-vite@^1.1.2": "1.1.2",
     "jsr:@hono/hono@4.6.3": "4.6.3",
+    "jsr:@std/assert@*": "1.0.19",
     "jsr:@std/bytes@^1.0.6": "1.0.6",
     "jsr:@std/dotenv@~0.225.5": "0.225.6",
     "jsr:@std/encoding@^1.0.10": "1.0.10",
@@ -24,24 +25,54 @@
     "jsr:@std/fs@^1.0.19": "1.0.23",
     "jsr:@std/html@^1.0.5": "1.0.6",
     "jsr:@std/http@^1.0.21": "1.1.0",
+    "jsr:@std/internal@^1.0.12": "1.0.14",
     "jsr:@std/internal@^1.0.14": "1.0.14",
+    "jsr:@std/json@^1.0.2": "1.1.0",
     "jsr:@std/jsonc@^1.0.2": "1.0.2",
     "jsr:@std/media-types@1": "1.1.0",
     "jsr:@std/media-types@^1.1.0": "1.1.0",
-    "jsr:@std/path@1": "1.0.6",
+    "jsr:@std/net@^1.0.6": "1.0.6",
+    "jsr:@std/path@1": "1.1.5",
     "jsr:@std/path@1.0.6": "1.0.6",
     "jsr:@std/path@^1.1.1": "1.1.5",
     "jsr:@std/path@^1.1.2": "1.1.5",
     "jsr:@std/path@^1.1.4": "1.1.5",
     "jsr:@std/semver@^1.0.6": "1.0.8",
     "jsr:@std/uuid@^1.0.9": "1.1.1",
-    "npm:@tailwindcss/vite@^4.1.12": "4.3.0_vite@7.3.3",
+    "npm:@anatine/zod-openapi@2.2.6": "2.2.6_openapi3-ts@4.5.0_zod@3.23.8",
+    "npm:@babel/core@^7.28.0": "7.29.7",
+    "npm:@babel/preset-react@^7.27.1": "7.29.7_@babel+core@7.29.7",
+    "npm:@opentelemetry/api@^1.9.0": "1.9.1",
+    "npm:@preact/signals@^2.5.1": "2.9.1_preact@10.29.2",
+    "npm:@preact/signals@^2.9.0": "2.9.1_preact@10.29.2",
+    "npm:@prefresh/vite@^2.4.8": "2.4.12_preact@10.29.2_vite@7.3.3__@types+node@25.9.3_@types+node@25.9.3",
+    "npm:@remix-run/node-fetch-server@0.12": "0.12.0",
+    "npm:@tailwindcss/vite@^4.1.12": "4.3.0_vite@7.3.3__@types+node@25.9.3_@types+node@25.9.3",
+    "npm:@types/babel__core@^7.20.5": "7.20.5",
+    "npm:@types/node@^25.9.3": "25.9.3",
+    "npm:awesome-phonenumber@7.1.0": "7.1.0",
+    "npm:esbuild-wasm@~0.25.11": "0.25.12",
+    "npm:esbuild@0.25.7": "0.25.7",
+    "npm:esbuild@~0.25.5": "0.25.12",
+    "npm:handlebars@^4.7.8": "4.7.9",
+    "npm:jose@5": "5.10.0",
+    "npm:openapi3-ts@4.5.0": "4.5.0",
+    "npm:path-to-regexp@6.2.1": "6.2.1",
+    "npm:playwright@^1.49.0": "1.60.0",
+    "npm:preact-render-to-string@^6.6.3": "6.7.0_preact@10.29.2",
+    "npm:preact@^10.28.2": "10.29.2",
+    "npm:preact@^10.29.1": "10.29.2",
     "npm:reflect-metadata@0.1.13": "0.1.13",
-    "npm:tailwindcss@^4.1.10": "4.3.0"
+    "npm:rollup@^4.55.1": "4.60.4",
+    "npm:tailwindcss@^4.1.10": "4.3.0",
+    "npm:vite@^7.1.3": "7.3.3_@types+node@25.9.3",
+    "npm:vite@^7.1.4": "7.3.3_@types+node@25.9.3",
+    "npm:zod@3": "3.23.8",
+    "npm:zod@3.23.8": "3.23.8"
   },
   "jsr": {
-    "@danet/core@2.9.6": {
-      "integrity": "9c2616c2c1814afa4762ec9a80eccae887047629464d247fa1da0a488043ae68",
+    "@danet/core@2.10.0": {
+      "integrity": "309ec39d31ea50dbe1de16fb55818da6a903c75ae8222780dcbc3cd715c5e152",
       "dependencies": [
         "jsr:@danet/validatte",
         "jsr:@dx/reflect",
@@ -54,23 +85,31 @@
       "dependencies": [
         "jsr:@danet/core@2",
         "jsr:@danet/zod",
-        "jsr:@std/path@1.0.6"
+        "jsr:@std/path@1.0.6",
+        "npm:@anatine/zod-openapi",
+        "npm:path-to-regexp",
+        "npm:zod@3.23.8"
       ]
     },
     "@danet/validatte@0.7.4": {
-      "integrity": "338bca670a5af1dd42214fcde0912de37d9a9d3ce1415cd2abdb6b1c27c46f89"
+      "integrity": "338bca670a5af1dd42214fcde0912de37d9a9d3ce1415cd2abdb6b1c27c46f89",
+      "dependencies": [
+        "npm:awesome-phonenumber"
+      ]
     },
     "@danet/zod@0.0.7": {
       "integrity": "1ce7c696b69bff6bbbd788bd4a5955cd24e8c5a8cb117c57dabb03e31968bbee",
       "dependencies": [
-        "jsr:@danet/core@^2.5.1"
+        "jsr:@danet/core@^2.5.1",
+        "npm:zod@3.23.8"
       ]
     },
     "@deno/esbuild-plugin@1.2.1": {
       "integrity": "df629467913adc1f960149fdfa3a3430ba8c20381c310fba096db244e6c3c9f6",
       "dependencies": [
         "jsr:@deno/loader@~0.3.10",
-        "jsr:@std/path@^1.1.1"
+        "jsr:@std/path@^1.1.1",
+        "npm:esbuild@~0.25.5"
       ]
     },
     "@deno/loader@0.3.14": {
@@ -100,9 +139,17 @@
         "jsr:@std/http",
         "jsr:@std/jsonc",
         "jsr:@std/media-types@^1.1.0",
+        "jsr:@std/net",
         "jsr:@std/path@^1.1.2",
         "jsr:@std/semver",
-        "jsr:@std/uuid"
+        "jsr:@std/uuid",
+        "npm:@opentelemetry/api",
+        "npm:@preact/signals@^2.5.1",
+        "npm:esbuild-wasm",
+        "npm:esbuild@0.25.7",
+        "npm:preact-render-to-string",
+        "npm:preact@^10.28.2",
+        "npm:preact@^10.29.1"
       ]
     },
     "@fresh/plugin-vite@1.1.2": {
@@ -114,11 +161,24 @@
         "jsr:@std/dotenv",
         "jsr:@std/fmt@^1.0.7",
         "jsr:@std/media-types@1",
-        "jsr:@std/path@1"
+        "jsr:@std/path@1",
+        "npm:@babel/core",
+        "npm:@babel/preset-react",
+        "npm:@prefresh/vite",
+        "npm:@remix-run/node-fetch-server",
+        "npm:@types/babel__core",
+        "npm:rollup",
+        "npm:vite@^7.1.4"
       ]
     },
     "@hono/hono@4.6.3": {
       "integrity": "a1f5a18cd12a0db54755b0461dd5a4e2d93a6f85403073eb710103eacc42daf3"
+    },
+    "@std/assert@1.0.19": {
+      "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
+      "dependencies": [
+        "jsr:@std/internal@^1.0.12"
+      ]
     },
     "@std/bytes@1.0.6": {
       "integrity": "f6ac6adbd8ccd99314045f5703e23af0a68d7f7e58364b47d2c7f408aeb5820a"
@@ -153,11 +213,20 @@
     "@std/internal@1.0.14": {
       "integrity": "291516b3d4c35024d6ffbc0a9df5bf4c64116e05b50012cf846710152d2ffdf7"
     },
+    "@std/json@1.1.0": {
+      "integrity": "93330d3ed4054d6b1ffe54b075432c80a5f671be77277b978931e018014cb1cc"
+    },
     "@std/jsonc@1.0.2": {
-      "integrity": "909605dae3af22bd75b1cbda8d64a32cf1fd2cf6efa3f9e224aba6d22c0f44c7"
+      "integrity": "909605dae3af22bd75b1cbda8d64a32cf1fd2cf6efa3f9e224aba6d22c0f44c7",
+      "dependencies": [
+        "jsr:@std/json"
+      ]
     },
     "@std/media-types@1.1.0": {
       "integrity": "c9d093f0c05c3512932b330e3cc1fe1d627b301db33a4c2c2185c02471d6eaa4"
+    },
+    "@std/net@1.0.6": {
+      "integrity": "110735f93e95bb9feb95790a8b1d1bf69ec0dc74f3f97a00a76ea5efea25500c"
     },
     "@std/path@1.0.6": {
       "integrity": "ab2c55f902b380cf28e0eec501b4906e4c1960d13f00e11cfbcd21de15f18fed"
@@ -165,7 +234,7 @@
     "@std/path@1.1.5": {
       "integrity": "ccea00982ea28c36becaf6e62f855406c76a8c32d462f66f415bbb7d83a271bc",
       "dependencies": [
-        "jsr:@std/internal"
+        "jsr:@std/internal@^1.0.14"
       ]
     },
     "@std/semver@1.0.8": {
@@ -810,7 +879,7 @@
     "@prefresh/utils@1.2.1": {
       "integrity": "sha512-vq/sIuN5nYfYzvyayXI4C2QkprfNaHUQ9ZX+3xLD8nL3rWyzpxOm1+K7RtMbhd+66QcaISViK7amjnheQ/4WZw=="
     },
-    "@prefresh/vite@2.4.12_preact@10.29.2_vite@7.3.3": {
+    "@prefresh/vite@2.4.12_preact@10.29.2_vite@7.3.3__@types+node@25.9.3_@types+node@25.9.3": {
       "integrity": "sha512-FY1fzXpUjiuosznMV0YM7XAOPZjB5FIdWS0W24+XnlxYkt9hNAwwsiKYn+cuTEoMtD/ZVazS5QVssBr9YhpCQA==",
       "dependencies": [
         "@babel/core",
@@ -1045,7 +1114,7 @@
         "@tailwindcss/oxide-win32-x64-msvc"
       ]
     },
-    "@tailwindcss/vite@4.3.0_vite@7.3.3": {
+    "@tailwindcss/vite@4.3.0_vite@7.3.3__@types+node@25.9.3_@types+node@25.9.3": {
       "integrity": "sha512-t6J3OrB5Fc0ExuhohouH0fWUGMYL6PTLhW+E7zIk/pdbnJARZDCwjBznFnkh5ynRnIRSI4YjtTH0t6USjJISrw==",
       "dependencies": [
         "@tailwindcss/node",
@@ -1085,6 +1154,12 @@
     },
     "@types/estree@1.0.8": {
       "integrity": "sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w=="
+    },
+    "@types/node@25.9.3": {
+      "integrity": "sha512-603BddQMv3pUcr4U2dhujk83N2tTDVr/34wII2B6bJy6g+8WD6yUb11jszNs0gdi4PesVWl7ABt8nYMVpnLUcg==",
+      "dependencies": [
+        "undici-types"
+      ]
     },
     "awesome-phonenumber@7.1.0": {
       "integrity": "sha512-i/pC5xvaNVrduufGtnw8O+abLWq70wd6YutiPYR2NqrnwtjBMk7rG/vJTktnAivSok+ZqlkFZzuVICgObpQi4w=="
@@ -1247,6 +1322,11 @@
         "picomatch@4.0.4"
       ]
     },
+    "fsevents@2.3.2": {
+      "integrity": "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==",
+      "os": ["darwin"],
+      "scripts": true
+    },
     "fsevents@2.3.3": {
       "integrity": "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==",
       "os": ["darwin"],
@@ -1258,8 +1338,8 @@
     "graceful-fs@4.2.11": {
       "integrity": "sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ=="
     },
-    "handlebars@4.7.8": {
-      "integrity": "sha512-vafaFqs8MZkRrSX7sFVUdo3ap/eNiLnb4IakshzvP56X5Nr1iGKAIqdX6tMlm6HcNRIkr6AxO5jFEoJzzpT8aQ==",
+    "handlebars@4.7.9": {
+      "integrity": "sha512-4E71E0rpOaQuJR2A3xDZ+GM1HyWYv1clR58tC8emQNeQe3RH7MAzSbat+V0wG78LQBo6m6bzSG/L4pBuCsgnUQ==",
       "dependencies": [
         "minimist",
         "neo-async",
@@ -1409,6 +1489,20 @@
     "picomatch@4.0.4": {
       "integrity": "sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A=="
     },
+    "playwright-core@1.60.0": {
+      "integrity": "sha512-9bW6zvX/m0lEbgTKJ6YppOKx8H3VOPBMOCFh2irXFOT4BbHgrx5hPjwJYLT40Lu+4qtD36qKc/Hn56StUW57IA==",
+      "bin": true
+    },
+    "playwright@1.60.0": {
+      "integrity": "sha512-hheHdokM8cdqCb0lcE3s+zT4t4W+vvjpGxsZlDnikarzx8tSzMebh3UiFtgqwFwnTnjYQcsyMF8ei2mCO/tpeA==",
+      "dependencies": [
+        "playwright-core"
+      ],
+      "optionalDependencies": [
+        "fsevents@2.3.2"
+      ],
+      "bin": true
+    },
     "postcss@8.5.15": {
       "integrity": "sha512-FfR8sjd4em2T6fb3I2MwAJU7HWVMr9zba+enmQeeWFfCbm+UOC/0X4DS8XtpUTMwWMGbjKYP7xjfNekzyGmB3A==",
       "dependencies": [
@@ -1460,7 +1554,7 @@
         "@rollup/rollup-win32-ia32-msvc",
         "@rollup/rollup-win32-x64-gnu",
         "@rollup/rollup-win32-x64-msvc",
-        "fsevents"
+        "fsevents@2.3.3"
       ],
       "bin": true
     },
@@ -1494,6 +1588,9 @@
       "integrity": "sha512-v3Xu+yuwBXisp6QYTcH4UbH+xYJXqnq2m/LtQVWKWzYc1iehYnLixoQDN9FH6/j9/oybfd6W9Ghwkl8+UMKTKQ==",
       "bin": true
     },
+    "undici-types@7.24.6": {
+      "integrity": "sha512-WRNW+sJgj5OBN4/0JpHFqtqzhpbnV0GuB+OozA9gCL7a993SmU+1JBZCzLNxYsbMfIeDL+lTsphD5jN5N+n0zg=="
+    },
     "update-browserslist-db@1.2.3_browserslist@4.28.2": {
       "integrity": "sha512-Js0m9cx+qOgDxo0eMiFGEueWztz+d4+M3rGlmKPT+T4IS/jP4ylw3Nwpu6cpTTP8R1MAC1kF4VbdLt3ARf209w==",
       "dependencies": [
@@ -1503,9 +1600,10 @@
       ],
       "bin": true
     },
-    "vite@7.3.3": {
+    "vite@7.3.3_@types+node@25.9.3": {
       "integrity": "sha512-/4XH147Ui7OGTjg3HbdWe5arnZQSbfuRzdr9Ec7TQi5I7R+ir0Rlc9GIvD4v0XZurELqA035KVXJXpR61xhiTA==",
       "dependencies": [
+        "@types/node",
         "esbuild@0.27.7",
         "fdir",
         "picomatch@4.0.4",
@@ -1514,7 +1612,10 @@
         "tinyglobby"
       ],
       "optionalDependencies": [
-        "fsevents"
+        "fsevents@2.3.3"
+      ],
+      "optionalPeers": [
+        "@types/node"
       ],
       "bin": true
     },
@@ -1537,25 +1638,26 @@
       "jsr:@danet/core@2",
       "jsr:@fresh/core@^2.3.3",
       "jsr:@fresh/plugin-vite@^1.1.2",
-      "jsr:@mrg-keystone/danet@^1.12.0",
+      "jsr:@mrg-keystone/keep@^1.12.0",
       "npm:@preact/signals@^2.9.0",
       "npm:@tailwindcss/vite@^4.1.12",
       "npm:@types/babel__core@^7.20.5",
+      "npm:@types/node@^25.9.3",
       "npm:preact@^10.29.1",
-      "npm:reflect-metadata@0.1.13",
       "npm:tailwindcss@^4.1.10",
       "npm:vite@^7.1.3"
     ],
     "links": {
-      "jsr:@mrg-keystone/danet@1.12.0": {
+      "jsr:@mrg-keystone/keep@1.14.2": {
         "dependencies": [
           "jsr:@danet/core@2",
-          "jsr:@danet/swagger@2",
+          "jsr:@danet/swagger@^2.1.1",
           "jsr:@hono/hono@4.6.3",
           "jsr:@std/assert@*",
           "npm:handlebars@^4.7.8",
           "npm:jose@5",
           "npm:openapi3-ts@4.5.0",
+          "npm:playwright@^1.49.0",
           "npm:reflect-metadata@0.1.13",
           "npm:zod@3"
         ]

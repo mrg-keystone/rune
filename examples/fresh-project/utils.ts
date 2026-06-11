@@ -1,12 +1,11 @@
 import { createDefine } from "fresh";
-import type { BackendClient } from "@mrg-keystone/keep";
+import type { KeepState } from "@mrg-keystone/keep";
 
 // This specifies the type of "ctx.state" which is used to share
-// data among middlewares, layouts and routes.
-export interface State {
+// data among middlewares, layouts and routes. KeepState contributes
+// `api` — the in-process client set by `embed` in main.ts.
+export interface State extends KeepState {
   shared: string;
-  // In-process Danet client (set by middleware in main.ts): call the API with no token.
-  api: BackendClient;
 }
 
 export const define = createDefine<State>();

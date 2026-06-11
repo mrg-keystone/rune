@@ -1,4 +1,3 @@
-import "reflect-metadata";
 import { bootstrapServer, Public } from "@mrg-keystone/keep";
 import { Controller, Get, Module, NotFoundException, Param } from "@danet/core";
 
@@ -39,4 +38,6 @@ class HealthController {
 @Module({ controllers: [UsersController, HealthController] })
 class AppModule {}
 
-export const api = await bootstrapServer("fresh-project", AppModule, { swagger: false });
+export const api = await bootstrapServer("fresh-project", AppModule, {
+  swagger: false,
+});

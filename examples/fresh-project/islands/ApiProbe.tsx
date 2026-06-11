@@ -7,7 +7,8 @@ export default function ApiProbe() {
   const body = useSignal("");
   const loading = useSignal(false);
   const hasToken = useSignal(
-    typeof localStorage !== "undefined" && !!localStorage.getItem("danet:token"),
+    typeof localStorage !== "undefined" &&
+      !!localStorage.getItem("danet:token"),
   );
 
   const probe = async () => {
@@ -47,7 +48,8 @@ export default function ApiProbe() {
         forget token
       </button>
       {status.value !== null && (
-        <pre class="mt-3 p-2 bg-gray-100 text-sm overflow-auto">HTTP {status.value}{"\n"}{body.value}</pre>
+        <pre class="mt-3 p-2 bg-gray-100 text-sm overflow-auto">HTTP {status.value}
+{body.value}</pre>
       )}
     </div>
   );

@@ -36,10 +36,17 @@ store.__danetNativeFetch ??= globalThis.fetch.bind(globalThis);
 const nativeFetch = store.__danetNativeFetch;
 
 /** A `fetch` that injects the stored token on same-origin `/api/*` calls and clears it on 401. */
-export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+export async function apiFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
   // Resolve the URL WITHOUT reconstructing the request — for non-/api calls we hand `input`/`init`
   // straight to native fetch, so streaming/duplex bodies and exotic init combos are never mangled.
-  const url = input instanceof Request ? input.url : input instanceof URL ? input.href : String(input);
+  const url = input instanceof Request
+    ? input.url
+    : input instanceof URL
+    ? input.href
+    : String(input);
   if (!sameOriginApi(url)) return nativeFetch(input, init);
 
   const req = new Request(input, init);
