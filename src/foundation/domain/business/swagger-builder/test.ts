@@ -39,3 +39,27 @@ Deno.test("SwaggerBuilder - respects filters", async () => {
   assertEquals(swaggerDocs.length, 1);
   assertEquals(swaggerDocs[0].doc.info.title, "ModuleA");
 });
+
+Deno.test("SwaggerBuilder - concurrent multi-module build leaves console.log intact", async () => {
+  // Regression: build() inits one throwaway facade per module CONCURRENTLY, and each init
+  // silences console.log. With per-call save/restore the second facade captured the first's
+  // no-op as its "original" and restored that — console.log stayed dead for the host app.
+  class LogModuleA {}
+  Reflect.defineMetadata("module", {}, LogModuleA);
+  class LogModuleB {}
+  Reflect.defineMetadata("module", {}, LogModuleB);
+
+  const server = Server.create();
+  server.registerModule(LogModuleA);
+  server.registerModule(LogModuleB);
+
+  const original = console.log;
+  const { swaggerDocs } = await new SwaggerBuilder().build(server);
+
+  assertEquals(swaggerDocs.length, 2);
+  assertEquals(
+    console.log,
+    original,
+    "console.log must be restored to the host app's original after the concurrent facade inits",
+  );
+});

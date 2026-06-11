@@ -10,6 +10,13 @@ import {
 
 const HTTP_METHODS = ["get", "post", "put", "patch", "delete"] as const;
 
+// Refcount for the console.log silence in setupFacade. Composed apps init several throwaway
+// facades CONCURRENTLY (Promise.all over modules); only the 0→1 transition saves the real
+// console.log and only the 1→0 transition restores it, so overlapping inits can't capture
+// each other's no-op as the "original".
+let facadeSilenceDepth = 0;
+let realConsoleLog: typeof console.log | undefined;
+
 /**
  * Walk a module's controllers and copy each `@Endpoint` handler's process metadata onto the
  * matching OpenAPI operation as the `x-keep-process` vendor extension (matched by operationId,
@@ -85,17 +92,24 @@ export class DanetDocumentBuilder {
     };
     @Module(facadeMetadata)
     class FacadeModule {}
-    const origLog = console.log;
     const host = new DanetApplication();
-    try {
-      // DanetApplication.init() prints banner/init noise to console.log; silence it just for
-      // this throwaway facade init so building docs doesn't spam the host app's logs. Restored
-      // in the finally below (and on throw).
+    // DanetApplication.init() prints banner/init noise to console.log; silence it just for
+    // this throwaway facade init so building docs doesn't spam the host app's logs. The swap
+    // is REFCOUNTED: composed apps build all module docs concurrently, and per-call
+    // save/restore would let the second facade capture the first's no-op as its "original"
+    // and restore that — leaving console.log dead for the host app forever.
+    if (facadeSilenceDepth++ === 0) {
+      realConsoleLog = console.log;
       console.log = () => {};
+    }
+    try {
       await host.init(FacadeModule);
       return host;
     } finally {
-      console.log = origLog;
+      if (--facadeSilenceDepth === 0 && realConsoleLog) {
+        console.log = realConsoleLog;
+        realConsoleLog = undefined;
+      }
     }
   }
 
