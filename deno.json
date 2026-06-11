@@ -1,15 +1,23 @@
 {
   "name": "@mrg-keystone/keep",
-  "version": "1.14.0",
+  "version": "1.14.1",
   "description": "Opinionated Deno backend framework: DI bootstrap, token/Firebase auth & identity, auto Swagger docs, in-process API client, and Fresh frontend embedding. Built on @danet/core.",
   "license": "MIT",
   "exports": {
     ".": "./src/bootstrap/mod.ts"
   },
   "publish": {
-    "exclude": ["**/*.test.ts", "**/test.ts", "e2e/", "examples/", "TODOS.md"]
+    "exclude": [
+      "**/*.test.ts",
+      "**/test.ts",
+      "e2e/",
+      "examples/",
+      "TODOS.md"
+    ]
   },
-  "exclude": ["e2e/cake/"],
+  "exclude": [
+    "e2e/cake/"
+  ],
   "tasks": {
     "test": "deno test -A --unstable-raw-imports",
     "test:e2e": "deno test -A --unstable-raw-imports --config e2e/cake/deno.json e2e/cake/",
