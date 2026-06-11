@@ -1,8 +1,10 @@
 // Scaffolded once; fill in the bodies. `sync` preserves this file.
-import { InvoiceBase } from "./sig.ts";
 
-export class Invoice extends InvoiceBase {
-  override save(issueDto: unknown): unknown {
+import { InvoiceDto } from "@/src/billing/dto/invoice.ts";
+import { IssueDto } from "@/src/billing/dto/issue.ts";
+
+export class Invoice {
+  save(issueDto: IssueDto): Promise<InvoiceDto> {
     throw new Error("not implemented");
   }
 }

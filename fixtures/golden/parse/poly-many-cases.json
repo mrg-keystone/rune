@@ -121,7 +121,26 @@
       "line": 20
     }
   ],
-  "typs": [],
+  "typs": [
+    {
+      "name": "message",
+      "typeName": "number",
+      "description": "the message",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 23
+    },
+    {
+      "name": "id",
+      "typeName": "string",
+      "description": "the id",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 25
+    }
+  ],
   "nons": [
     {
       "name": "channel",

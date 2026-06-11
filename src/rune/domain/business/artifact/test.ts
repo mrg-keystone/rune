@@ -56,6 +56,32 @@ Deno.test("rejects a bad schemaVersion structurally", () => {
   assertEquals(r.errors.some((e) => e.path.includes("schemaVersion")), true);
 });
 
+Deno.test("flags a profile gap (inconsistent var keys)", () => {
+  const a = base();
+  a.profiles = [
+    { id: "deno", vars: { runtime: "deno", ext: "ts" } },
+    { id: "node", vars: { runtime: "node" } },
+  ];
+  const r = validateArtifact(a);
+  assert(!r.ok);
+  assert(r.errors.some((e) => e.message.includes("gap")));
+});
+
+Deno.test("accepts constraint modifiers with kind/decorator/param", () => {
+  const a = base();
+  a.modifiers!.push(
+    { id: "uuid", token: ":uuid", appliesTo: ["dto"], kind: "constraint", decorator: "IsUUID", param: "none" },
+    { id: "min", token: ":min", appliesTo: ["dto"], kind: "constraint", decorator: "Min", param: "number" },
+  );
+  const r = validateArtifact(a);
+  assert(r.ok, r.errors.map((e) => e.message).join("; "));
+  // the optional fields must survive the parse (zod strips unknown keys)
+  const uuid = r.artifact!.modifiers!.find((m) => m.id === "uuid")!;
+  assertEquals(uuid.decorator, "IsUUID");
+  assertEquals(uuid.kind, "constraint");
+  assertEquals(uuid.param, "none");
+});
+
 // ---- canonical layout folded into the artifact (single source of truth) ----
 
 Deno.test("canonicalPaths is sourced from the keywords.json artifact", async () => {

@@ -47,3 +47,40 @@ Deno.test("runCheck — exit 2 on a missing-[TYP] spec", async () => {
 Deno.test("runCheck — exit 2 when no spec path is given", async () => {
   assertEquals(await runCheck([]), 2);
 });
+
+// [TYP] constraint modifiers flow through check: valid ones are clean,
+// unknown/misapplied ones surface as parse errors.
+const CONSTRAINED = `[MOD] m
+
+[TYP:uuid] id: string
+    an id
+[TYP:min=0,max=100] qty: number
+    a quantity
+[DTO] ThingDto: id, qty
+    a thing
+[NON] thing
+    a thing`;
+
+const BAD_MODIFIER = CONSTRAINED.replace("[TYP:uuid]", "[TYP:bogus]");
+
+Deno.test("runCheck — exit 0 on a spec with constraint modifiers", async () => {
+  const dir = await Deno.makeTempDir();
+  const file = join(dir, "thing.rune");
+  await Deno.writeTextFile(file, CONSTRAINED);
+  try {
+    assertEquals(await runCheck([file]), 0);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("runCheck — exit 2 on an unknown [TYP] modifier", async () => {
+  const dir = await Deno.makeTempDir();
+  const file = join(dir, "thing.rune");
+  await Deno.writeTextFile(file, BAD_MODIFIER);
+  try {
+    assertEquals(await runCheck([file]), 2);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

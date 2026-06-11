@@ -3,20 +3,43 @@
 // bodies — no abstract base, no sig.ts. Polymorphic ([PLY]) nouns are excluded;
 // they get an abstract base + variant implementations via the poly-* templates.
 //
-// Signatures use `unknown` for params/returns; tighten them as you implement.
-// Exact input/output DTO parity for coordinators/entrypoints is enforced
-// separately by rune-signature-parity.
+// Signatures resolve through the spec's [DTO]/[TYP] declarations when the
+// caller threads them in (RenderImplOptions); anything unresolvable stays
+// `unknown` — tighten as you implement. Exact input/output DTO parity for
+// coordinators/entrypoints is enforced separately by rune-signature-parity.
 
 import {
   type CseNode,
+  type DtoNode,
   type RuneAst,
   type StepLike,
+  type TypNode,
 } from "@rune/domain/business/rune-parse/mod.ts";
+import {
+  type Binding,
+  transformName,
+} from "@rune/domain/business/rune-bindings/mod.ts";
 
 export interface MethodSig {
   verb: string;
   params: string[];
+  /** The step's declared return ("TaskDto", "id", "void", "" when omitted). */
+  output: string;
   isStatic: boolean;
+}
+
+/** Type resolution + signature shape for renderImpl. All optional: with no
+ * options the output is the legacy `unknown`-typed sync stub. */
+export interface RenderImplOptions {
+  /** Wrap returns in Promise<…> — data adapters are awaited by coordinators. */
+  async?: boolean;
+  /** [TYP] declarations by name: params/returns resolve to their primitive. */
+  typMap?: Map<string, TypNode>;
+  /** [DTO] declarations by name: Dto-suffixed names resolve to the class. */
+  dtoByName?: Map<string, DtoNode>;
+  /** Module + <name> binding for the isCore-aware DTO import paths. */
+  module?: string;
+  nameBinding?: Binding;
 }
 
 // Group method signatures by noun across every [REQ] flow. Polymorphic ([PLY])
@@ -39,6 +62,7 @@ export function collectNounMethods(ast: RuneAst): Map<string, MethodSig[]> {
         add(step.noun, {
           verb: step.verb,
           params: step.params,
+          output: step.output,
           isStatic: step.isStatic,
         });
       } else if (step.kind === "ply") {
@@ -55,45 +79,118 @@ export function collectNounMethods(ast: RuneAst): Map<string, MethodSig[]> {
 
 // Scaffolded-once impl: a plain concrete class. Statics and instance methods
 // from the spec, bodies stubbed. No abstract base, no `override`, no sig import.
-export function renderImpl(noun: string, methods: MethodSig[]): string {
+// With opts the signatures are typed from the spec's [DTO]/[TYP] declarations;
+// adapter classes (opts.async) get Promise-wrapped returns (the coordinator
+// awaits them). Bodies throw, so the un-`async` Promise signatures type-check
+// without tripping deno lint's require-await.
+export function renderImpl(
+  noun: string,
+  methods: MethodSig[],
+  opts: RenderImplOptions = {},
+): string {
   const pascal = toPascal(noun);
   const instance = methods.filter((m) => !m.isStatic);
   const statics = methods.filter((m) => m.isStatic);
+  const usedDtos = new Set<string>();
+
+  const resolve = (name: string): string =>
+    resolveType(name, opts, usedDtos) ?? "unknown";
+  const ret = (m: MethodSig): string => {
+    const t = resolveOutput(noun, m.output, opts, usedDtos);
+    return opts.async ? `Promise<${t}>` : t;
+  };
+
+  const body: string[] = [];
+  body.push(`export class ${pascal} {`);
+  for (const m of statics) {
+    body.push(`  static ${m.verb}(${renderParams(m.params, resolve)}): ${ret(m)} {`);
+    body.push(`    throw new Error("not implemented");`);
+    body.push("  }");
+  }
+  for (const m of instance) {
+    body.push(`  ${m.verb}(${renderParams(m.params, resolve)}): ${ret(m)} {`);
+    body.push(`    throw new Error("not implemented");`);
+    body.push("  }");
+  }
+  body.push("}");
 
   const lines: string[] = [];
   lines.push(
     "// Scaffolded once; fill in the bodies. `sync` preserves this file.",
   );
   lines.push("");
-  lines.push(`export class ${pascal} {`);
-  for (const m of statics) {
-    lines.push(`  static ${m.verb}(${renderParams(m.params)}): unknown {`);
-    lines.push(`    throw new Error("not implemented");`);
-    lines.push("  }");
+  for (const name of [...usedDtos].sort()) {
+    const node = opts.dtoByName?.get(name);
+    const dir = node?.isCore ? "src/core/dto" : `src/${opts.module}/dto`;
+    const file = transformName(name, opts.nameBinding!);
+    lines.push(`import { ${name} } from "@/${dir}/${file}.ts";`);
   }
-  for (const m of instance) {
-    lines.push(`  ${m.verb}(${renderParams(m.params)}): unknown {`);
-    lines.push(`    throw new Error("not implemented");`);
-    lines.push("  }");
-  }
-  lines.push("}");
+  if (usedDtos.size > 0) lines.push("");
+  lines.push(...body);
   lines.push("");
   return lines.join("\n");
 }
 
+// ---- type resolution ----
+
+// A name resolves to a [DTO] class (recorded for import) or a [TYP] primitive;
+// null = no contract in the spec.
+function resolveType(
+  name: string,
+  opts: RenderImplOptions,
+  usedDtos: Set<string>,
+): string | null {
+  if (
+    /Dto$/.test(name) && opts.dtoByName?.has(name) && opts.module &&
+    opts.nameBinding
+  ) {
+    usedDtos.add(name);
+    return name;
+  }
+  switch (opts.typMap?.get(name)?.typeName) {
+    case "string":
+      return "string";
+    case "number":
+      return "number";
+    case "boolean":
+      return "boolean";
+    case "Uint8Array":
+      return "Uint8Array";
+  }
+  return null;
+}
+
+// Return types additionally understand `void`, the noun itself (a fluent step
+// like `task.normalize(): task` returns the class), and "" → unknown.
+function resolveOutput(
+  noun: string,
+  output: string,
+  opts: RenderImplOptions,
+  usedDtos: Set<string>,
+): string {
+  const resolved = resolveType(output, opts, usedDtos);
+  if (resolved !== null) return resolved;
+  if (output === "void") return "void";
+  if (output === noun) return toPascal(noun);
+  return "unknown";
+}
+
 // ---- helpers ----
 
-/** Render a rune param list as typed TS params (`name: unknown`), deduping and
- * sanitising identifiers. Shared with the poly templates so base/impl method
- * signatures type-check the same way the sig/impl split does. */
-export function renderParams(params: string[]): string {
+/** Render a rune param list as typed TS params, deduping and sanitising
+ * identifiers. Types come from `resolve` (default: `unknown` — the poly
+ * templates keep that shape so base/impl method signatures type-check). */
+export function renderParams(
+  params: string[],
+  resolve: (name: string) => string = () => "unknown",
+): string {
   const seen = new Set<string>();
   return params
     .map((p, i) => {
       let id = toCamelIdent(p);
       if (id === "" || seen.has(id)) id = `arg${i}`;
       seen.add(id);
-      return `${id}: unknown`;
+      return `${id}: ${resolve(p)}`;
     })
     .join(", ");
 }

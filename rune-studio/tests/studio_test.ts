@@ -139,14 +139,76 @@ Deno.test("lint: generated dto-validation passes on real output", () => {
 
 Deno.test("lint: generated import rules catch a bad codegen template", () => {
   const r: any = structuredClone(reg);
-  // Inject a relative import into the engine's dto template; the generated-code
-  // rules (run over engine output) should flag it.
-  r.codegen.templates.dto =
-    'import { x } from "../oops.ts";\nexport const {{dto.name}}Schema = x;\n';
+  // Inject a relative import into the engine's adapter smoke-test template (a
+  // tpl()-honoring role); the generated-code rules (run over engine output)
+  // should flag it.
+  r.codegen.templates["adapter-smk-test"] =
+    'import { x } from "../oops.ts";\nDeno.test("{{step.noun}} — connectivity", () => {});\n';
   const hits = lintAll(EXAMPLE, r).generated.filter((d) =>
     d.ruleId === "import-aliases"
   );
   assert(hits.length > 0, "relative import in generated code flagged");
+});
+
+Deno.test("lint: typ-modifier validates constraint modifiers with exact messages", () => {
+  const spec = `[TYP:uuid] id: string\n    a uuid\n` +
+    `[TYP:fancy] a: string\n    bad\n` +
+    `[TYP:uuid] n: number\n    wrong base\n` +
+    `[TYP:min] qty: number\n    missing value\n` +
+    `[TYP:int=3] count: number\n    stray value\n`;
+  const hits = lint(spec, reg).filter((d) => d.ruleId === "typ-modifier");
+  const messages = hits.map((d) => d.message);
+  assert(
+    messages.includes(
+      '[TYP] unknown modifier "fancy" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive)',
+    ),
+    "unknown modifier flagged",
+  );
+  assert(
+    messages.includes(
+      '[TYP] modifier "uuid" requires a string type, but "n" is number',
+    ),
+    "wrong base flagged",
+  );
+  assert(
+    messages.includes(
+      '[TYP] modifier "min" requires a numeric value (e.g. min=0)',
+    ),
+    "missing value flagged",
+  );
+  assert(
+    messages.includes('[TYP] modifier "int" does not take a value'),
+    "stray value flagged",
+  );
+  // the valid declaration produces no diagnostic
+  assert(!hits.some((d) => d.line === 1), "valid [TYP:uuid] is clean");
+});
+
+Deno.test("lint: typ-modifier accepts composed + valued modifiers", () => {
+  const spec = `[TYP:ext,uuid] id: string\n    external uuid\n` +
+    `[TYP:min=0,max=100] qty: number\n    bounded\n`;
+  assertEquals(lint(spec, reg).filter((d) => d.ruleId === "typ-modifier"), []);
+});
+
+Deno.test("lint: no-dto-cast flags a coordinator DTO cast in generated files", () => {
+  const files = [
+    {
+      path: "src/app/domain/coordinators/place/mod.ts",
+      content: "const order = load() as OrderDto;\n",
+    },
+    {
+      path: "src/app/domain/business/cart/mod.ts",
+      content: "const x = y as OtherDto;\n", // not a coordinator — ignored
+    },
+  ];
+  const hits = lintFiles(files, reg, { byTag: {} }).filter((d: any) =>
+    d.ruleId === "no-dto-cast"
+  );
+  assertEquals(hits.length, 1);
+  assertEquals(
+    hits[0].message,
+    'coordinator casts to "OrderDto" — validate the seam with assert(OrderDto, ...) instead of a blind cast',
+  );
 });
 
 Deno.test("lint: filesystem rules over a file list (forbidden-dirs, module-fragmentation)", () => {

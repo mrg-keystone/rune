@@ -58,16 +58,37 @@ function tagLiterals(tag, modifiers) {
   return [...base, ...variants];
 }
 
+// Modifier-aware tags take an open-ended modifier list ([TYP:ext,uuid],
+// [TYP:min=0,max=100], [ENT:card]) — enumerating every literal can't cover
+// valued/composed modifiers, so these tags get a token PATTERN rule instead.
+// [REQ] (and the rest) stay literal-only: a modifier there is a spec error the
+// parser must surface, not silently accept.
+const MODIFIER_PATTERN_TAGS = new Set(["ent", "dto", "typ", "non"]);
+
+/** A `[TAG]`/`[TAG:mods]` token pattern: [TYP] -> token(seq("[TYP", …, "]")). */
+function tagTokenPattern(literal) {
+  const head = literal.replace(/\]$/, "");
+  return `token(seq(${
+    JSON.stringify(head)
+  }, optional(seq(":", /[^\\]\\s]+/)), "]"))`;
+}
+
 /** Build the contents of grammar.js from the registry. */
 export function buildGrammar(reg) {
   const modifiers = reg.modifiers ?? [];
 
   const tagRules = reg.tags
     .map((tag) => {
-      const lits = tagLiterals(tag, modifiers);
-      const tagRule = lits.length === 1
-        ? JSON.stringify(lits[0])
-        : `choice(${lits.map((l) => JSON.stringify(l)).join(", ")})`;
+      let tagRule;
+      if (MODIFIER_PATTERN_TAGS.has(tag.id)) {
+        const pats = [tag.tag, ...(tag.synonyms ?? [])].map(tagTokenPattern);
+        tagRule = pats.length === 1 ? pats[0] : `choice(${pats.join(", ")})`;
+      } else {
+        const lits = tagLiterals(tag, modifiers);
+        tagRule = lits.length === 1
+          ? JSON.stringify(lits[0])
+          : `choice(${lits.map((l) => JSON.stringify(l)).join(", ")})`;
+      }
       return (
         `    // ${tag.tag} ${tag.label} (indent ${tag.indent})\n` +
         `    ${tag.id}_tag: ($) => ${tagRule},\n` +

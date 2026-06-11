@@ -23,5 +23,14 @@
     "#std/assert": "jsr:@std/assert",
     "#std/path": "jsr:@std/path"
   },
-  "compilerOptions": { "strict": true }
+  "compilerOptions": { "strict": true },
+  "exclude": [
+    "src/calendar/",
+    "src/client/",
+    "src/engine/",
+    "src/providers/",
+    "src/submit/",
+    "src/sync/",
+    "src/todos/"
+  ]
 }

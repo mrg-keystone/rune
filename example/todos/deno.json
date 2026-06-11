@@ -10,6 +10,8 @@
     "class-transformer": "npm:class-transformer@^0.5",
     "reflect-metadata": "npm:reflect-metadata@^0.2",
     "#std/assert": "jsr:@std/assert",
-    "#std/path": "jsr:@std/path"
+    "#std/path": "jsr:@std/path",
+    "@mrg-keystone/keep": "jsr:@mrg-keystone/keep@^1",
+    "#assert": "jsr:@mrg-keystone/keep@^1/assert"
   }
 }

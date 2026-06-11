@@ -1,6 +1,6 @@
 // Artifact-driven lint configuration (WO-4d / D3).
 //
-// The engine's 23 rules (mod-root.ts) carry the rule LOGIC; the artifact's
+// The engine's 24 rules (mod-root.ts) carry the rule LOGIC; the artifact's
 // type-keyed `lint` array carries the POLICY (enabled / severity / message).
 // This module is the single place the two are reconciled: RULE_TYPE_MAP links
 // each engine rule name to its artifact lint `type`, and resolveSettings ->
@@ -31,6 +31,7 @@ export const RULE_TYPE_MAP: Record<string, string> = {
   "poly-stray": "poly-stray",
   "module-fragmentation": "module-fragmentation",
   "data-class-returns": "data-class-returns",
+  "no-dto-cast": "no-dto-cast",
   "rune-signature-parity": "signature-parity",
   "rune-fault-coverage": "fault-coverage",
   "rune-extra-files": "orphan-files",

@@ -28,6 +28,7 @@ import {
   renderParams,
   toPascal,
 } from "@rune/domain/business/rune-sig/mod.ts";
+import { TYP_MODIFIERS } from "@rune/domain/business/rune-modifiers/mod.ts";
 import type { Artifact } from "@rune/domain/business/artifact/mod.ts";
 
 export interface FilePlan {
@@ -152,10 +153,17 @@ export function planManifest(
   // smk.test covers every boundary fault (not just the first step's).
   const boundaryFaults = collectBoundaryFaults(ast);
 
+  // The spec's type declarations, by name: [TYP] nodes (primitive + modifiers
+  // drive field types, validator decorators, and the coordinator seam asserts)
+  // and [DTO] nodes (nested-DTO resolution + isCore-aware import paths).
+  const typMap = new Map(ast.typs.map((t) => [t.name, t]));
+  const dtoByName = new Map(ast.dtos.map((d) => [d.name, d]));
+  const types: TypeContext = { typMap, dtoByName, nameBinding };
+
   // Collect intended files by element type.
   const polyNouns = new Set<string>();
   for (const req of ast.reqs) {
-    addCoordinator(emit, module, req, runePath, nameBinding);
+    addCoordinator(emit, module, req, runePath, types);
     walkStepsForFiles(
       req.steps,
       module,
@@ -164,19 +172,16 @@ export function planManifest(
       polyNouns,
       runePath,
       boundaryFaults,
+      types,
     );
   }
-  // Map each [TYP] name to its declared primitive so DTO fields are typed (not
-  // `unknown`) and get the right class-validator decorator.
-  const typMap = new Map(ast.typs.map((t) => [t.name, t.typeName]));
   for (const dto of ast.dtos) {
-    addDto(emit, module, dto, runePath, nameBinding, typMap);
+    addDto(emit, module, dto, runePath, types);
   }
-  for (const typ of ast.typs) addTyp(emit, module, typ, runePath);
+  for (const typ of ast.typs) addTyp(emit, module, typ, runePath, types);
   // Entrypoints: group [ENT]s by surface into one keep controller; compute each
   // ent's order/dependsOn/bind from the DTO field graph across all ents.
   if (ast.ents.length > 0) {
-    const dtoByName = new Map(ast.dtos.map((d) => [d.name, d]));
     const externalTypes = new Set(
       ast.typs.filter((t) => t.isExternal).map((t) => t.name),
     );
@@ -188,7 +193,7 @@ export function planManifest(
       bySurface.set(ent.surface, list);
     }
     for (const [surface, ents] of bySurface) {
-      addEntrypointSurface(emit, module, surface, ents, ast.reqs, entProcess, nameBinding, runePath, typMap);
+      addEntrypointSurface(emit, module, surface, ents, ast.reqs, entProcess, runePath, types);
     }
   }
   if (ast.reqs.length > 0) addModRoot(emit, module, ast.reqs, runePath);
@@ -215,6 +220,14 @@ export function planManifest(
  * path wins (replaces the old per-adder `out.has(...)` de-dupe guards). */
 type Emit = (role: string, path: string, content: string) => void;
 
+/** The spec's [TYP]/[DTO] declarations + the <name> binding, threaded into the
+ * renderers so signatures, seam asserts, and import paths resolve. */
+interface TypeContext {
+  typMap: Map<string, TypNode>;
+  dtoByName: Map<string, DtoNode>;
+  nameBinding: Binding;
+}
+
 function walkStepsForFiles(
   steps: StepLike[] | CseNode["steps"],
   module: string,
@@ -223,6 +236,7 @@ function walkStepsForFiles(
   polyNouns: Set<string>,
   runePath: string,
   boundaryFaults: Map<string, string[]>,
+  types: TypeContext,
 ): void {
   for (const step of steps) {
     if (step.kind === "step") {
@@ -234,6 +248,7 @@ function walkStepsForFiles(
           step.noun,
           nounMethods.get(step.noun) ?? [],
           runePath,
+          types,
         );
       }
     } else if (step.kind === "boundary") {
@@ -244,6 +259,7 @@ function walkStepsForFiles(
         nounMethods.get(step.noun) ?? [],
         runePath,
         boundaryFaults.get(step.noun) ?? step.faults,
+        types,
       );
     } else if (step.kind === "ply") {
       polyNouns.add(step.noun);
@@ -257,6 +273,7 @@ function walkStepsForFiles(
           polyNouns,
           runePath,
           boundaryFaults,
+          types,
         );
       }
     }
@@ -270,7 +287,7 @@ function addCoordinator(
   module: string,
   req: ReqNode,
   runePath: string,
-  nameBinding: Binding,
+  types: TypeContext,
 ): void {
   const dir = `src/${module}/domain/coordinators/${
     processName(req.noun, req.verb)
@@ -278,7 +295,7 @@ function addCoordinator(
   emit(
     "coordinator-mod",
     `${dir}/mod.ts`,
-    renderCoordinator(req, module, nameBinding, runePath),
+    renderCoordinator(req, module, runePath, types),
   );
   emit(
     "coordinator-int-test",
@@ -297,10 +314,21 @@ function addBusinessFeature(
   noun: string,
   methods: MethodSig[],
   runePath: string,
+  types: TypeContext,
 ): void {
   const kebab = applyCase(noun, "kebab");
   const dir = `src/${module}/domain/business/${kebab}`;
-  emit("business-impl", `${dir}/mod.ts`, renderImpl(noun, methods));
+  // Business classes are pure (no I/O): sync signatures.
+  emit(
+    "business-impl",
+    `${dir}/mod.ts`,
+    renderImpl(noun, methods, {
+      typMap: types.typMap,
+      dtoByName: types.dtoByName,
+      module,
+      nameBinding: types.nameBinding,
+    }),
+  );
   emit(
     "business-test",
     `${dir}/test.ts`,
@@ -378,10 +406,22 @@ function addAdapter(
   methods: MethodSig[],
   runePath: string,
   faults: string[],
+  types: TypeContext,
 ): void {
   const kebab = applyCase(step.noun, "kebab");
   const dir = `src/${module}/domain/data/${kebab}`;
-  emit("adapter-impl", `${dir}/mod.ts`, renderImpl(step.noun, methods));
+  // Data adapters do I/O: Promise-wrapped returns (the coordinator awaits).
+  emit(
+    "adapter-impl",
+    `${dir}/mod.ts`,
+    renderImpl(step.noun, methods, {
+      async: true,
+      typMap: types.typMap,
+      dtoByName: types.dtoByName,
+      module,
+      nameBinding: types.nameBinding,
+    }),
+  );
   // Cover every fault declared on ANY boundary step for this noun, not just the
   // first one — one adapter serves all of the noun's boundary calls, and
   // rune-fault-coverage expects a test for each declared fault.
@@ -397,12 +437,11 @@ function addDto(
   module: string,
   dto: DtoNode,
   runePath: string,
-  nameBinding: Binding,
-  typMap: Map<string, string>,
+  types: TypeContext,
 ): void {
-  const fileName = transformName(dto.name, nameBinding);
+  const fileName = transformName(dto.name, types.nameBinding);
   const dir = dto.isCore ? "src/core/dto" : `src/${module}/dto`;
-  emit("dto", `${dir}/${fileName}.ts`, renderDto(dto, typMap, runePath));
+  emit("dto", `${dir}/${fileName}.ts`, renderDto(dto, runePath, module, types));
 }
 
 function addTyp(
@@ -410,11 +449,12 @@ function addTyp(
   module: string,
   typ: TypNode,
   runePath: string,
+  types: TypeContext,
 ): void {
   const fileName = applyCase(typ.name, "kebab");
   const dir = typ.isCore ? "src/core/dto" : `src/${module}/dto`;
   // A [DTO] may have already produced this path; emit() keeps the first writer.
-  emit("typ", `${dir}/${fileName}.ts`, renderTyp(typ, runePath));
+  emit("typ", `${dir}/${fileName}.ts`, renderTyp(typ, runePath, module, types));
 }
 
 // Map a rune [TYP] primitive to a TS type + the class-validator decorator that
@@ -438,14 +478,41 @@ function tsFor(typeName: string | undefined): { ts: string; dec: string | null }
   }
 }
 
-// A DTO is a class-validator / class-transformer class. Field types come from the
-// [TYP] declarations (no more `unknown`), and each typed field gets its validator.
+// Resolve a [DTO] property's base name to a nested DTO class, mirroring the
+// parser's resolution (rune-parse): the name IS a DTO verbatim, the
+// `pascal(name)+"Dto"` convention names one, or its [TYP] aliases one.
+function nestedDtoFor(
+  base: string,
+  types: TypeContext,
+): DtoNode | undefined {
+  const verbatim = types.dtoByName.get(base);
+  if (verbatim) return verbatim;
+  const byConvention = types.dtoByName.get(`${toPascal(base)}Dto`);
+  if (byConvention) return byConvention;
+  const typ = types.typMap.get(base);
+  return typ ? types.dtoByName.get(typ.typeName) : undefined;
+}
+
+// The isCore-aware directory a DTO class is generated into.
+function dtoDir(name: string, module: string, types: TypeContext): string {
+  return types.dtoByName.get(name)?.isCore
+    ? "src/core/dto"
+    : `src/${module}/dto`;
+}
+
+// A DTO is a class-validator / class-transformer class. Field types come from
+// the [TYP] declarations (no more `unknown`), each typed field gets its
+// validator plus the decorators of its [TYP] constraint modifiers, and fields
+// naming another [DTO] become @ValidateNested/@Type(() => X) members.
 function renderDto(
   dto: DtoNode,
-  typMap: Map<string, string>,
   runePath: string,
+  module: string,
+  types: TypeContext,
 ): string {
   const validators = new Set<string>();
+  const nestedImports = new Set<string>();
+  let hasNested = false;
   const fields = dto.properties.map((raw) => {
     // A property may carry the documented modifiers: `(s)` (array of the base
     // type, property name pluralized — `taskId(s)` -> `taskIds: taskId[]`) and
@@ -453,15 +520,8 @@ function renderDto(
     const optional = raw.includes("?");
     const array = /\(s\)/.test(raw);
     const base = raw.replace(/\(s\)/g, "").replace(/\?/g, "").trim();
-    const { ts: baseTs, dec } = tsFor(typMap.get(base));
     const name = array ? `${base}s` : base;
-    const ts = array ? `${baseTs}[]` : baseTs;
     const decorators: string[] = [];
-    // A field whose base resolves to no [TYP] lands as `unknown` with no validator
-    // — leave a visible marker so the un-validated gap isn't silently shipped.
-    if (baseTs === "unknown") {
-      decorators.push(`// TODO: tighten — "${base}" has no [TYP], left as ${ts}`);
-    }
     if (optional) {
       validators.add("IsOptional");
       decorators.push("@IsOptional()");
@@ -470,9 +530,62 @@ function renderDto(
       validators.add("IsArray");
       decorators.push("@IsArray()");
     }
-    if (dec) {
-      validators.add(dec);
-      decorators.push(array ? `@${dec}({ each: true })` : `@${dec}()`);
+
+    // Nested DTO field: validated recursively. class-transformer's @Type tells
+    // assert's plainToInstance which class the plain sub-object becomes.
+    const nested = nestedDtoFor(base, types);
+    if (nested) {
+      hasNested = true;
+      if (nested.name !== dto.name) nestedImports.add(nested.name);
+      validators.add("ValidateNested");
+      decorators.push(
+        array ? "@ValidateNested({ each: true })" : "@ValidateNested()",
+      );
+      decorators.push(`@Type(() => ${nested.name})`);
+      const ts = array ? `${nested.name}[]` : nested.name;
+      return { name, ts, decorators, optional };
+    }
+
+    const typ = types.typMap.get(base);
+    const { ts: baseTs, dec } = tsFor(typ?.typeName);
+    const ts = array ? `${baseTs}[]` : baseTs;
+    // A field whose base resolves to no [TYP] lands as `unknown` with no
+    // validator — @Allow() keeps it on the instance (assert validates with
+    // whitelist: true, which strips undecorated properties), and the marker
+    // keeps the un-validated gap visible.
+    if (baseTs === "unknown") {
+      validators.add("Allow");
+      decorators.unshift(
+        `// TODO: tighten — "${base}" has no [TYP], left as ${ts}`,
+        "@Allow()",
+      );
+      return { name, ts, decorators, optional };
+    }
+    // The [TYP]'s constraint modifiers, in source order. `int` REPLACES the
+    // IsNumber base check (class-validator's IsInt subsumes it).
+    const constraints: string[] = [];
+    let baseDec = dec;
+    for (const mod of typ?.modifiers ?? []) {
+      const eq = mod.indexOf("=");
+      const id = eq === -1 ? mod : mod.slice(0, eq);
+      const value = eq === -1 ? null : mod.slice(eq + 1);
+      const spec = TYP_MODIFIERS.get(id);
+      if (!spec?.decorator) continue; // ext/core — placement, not validation
+      if (id === "int") baseDec = null;
+      validators.add(spec.decorator);
+      constraints.push(array ? spec.eachCall(value) : spec.call(value));
+    }
+    if (baseDec) {
+      validators.add(baseDec);
+      decorators.push(array ? `@${baseDec}({ each: true })` : `@${baseDec}()`);
+    }
+    decorators.push(...constraints);
+    // A [TYP] resolving to a non-primitive (union, generic, Uint8Array) is
+    // typed at compile time but has no validator — @Allow() keeps it past
+    // assert's whitelist instead of letting it be silently stripped.
+    if (!baseDec && constraints.length === 0) {
+      validators.add("Allow");
+      decorators.push("@Allow()");
     }
     return { name, ts, decorators, optional };
   });
@@ -483,12 +596,22 @@ function renderDto(
     "// Edit the body. Re-running manifest will not overwrite this file.",
   );
   lines.push("");
+  if (hasNested) {
+    // @Type reads Reflect metadata at decoration time — the side-effect import
+    // must come first.
+    lines.push(`import "reflect-metadata";`);
+    lines.push(`import { Type } from "class-transformer";`);
+  }
   if (validators.size > 0) {
     lines.push(
       `import { ${[...validators].sort().join(", ")} } from "class-validator";`,
     );
-    lines.push("");
   }
+  for (const n of [...nestedImports].sort()) {
+    const file = transformName(n, types.nameBinding);
+    lines.push(`import { ${n} } from "@/${dtoDir(n, module, types)}/${file}.ts";`);
+  }
+  if (hasNested || validators.size > 0) lines.push("");
   lines.push(`// ${dto.description}`);
   lines.push(`export class ${dto.name} {`);
   fields.forEach((f, i) => {
@@ -501,18 +624,40 @@ function renderDto(
   return lines.join("\n");
 }
 
-// A [TYP] is a named alias for its declared primitive.
-function renderTyp(typ: TypNode, runePath: string): string {
+// A [TYP] is a named alias for its declared primitive — or for a [DTO]
+// (resolution case (c)), in which case the class must be imported or the
+// alias would not type-check.
+function renderTyp(
+  typ: TypNode,
+  runePath: string,
+  module: string,
+  types: TypeContext,
+): string {
   const { ts } = tsFor(typ.typeName);
-  return [
+  const tag = typ.modifiers.length > 0
+    ? `[TYP:${typ.modifiers.join(",")}]`
+    : "[TYP]";
+  const lines = [
     `// Generated by rune manifest from ${runePath}.`,
     "// Edit the body. Re-running manifest will not overwrite this file.",
     "",
+  ];
+  if (types.dtoByName.has(typ.typeName)) {
+    const file = transformName(typ.typeName, types.nameBinding);
+    lines.push(
+      `import type { ${typ.typeName} } from "@/${
+        dtoDir(typ.typeName, module, types)
+      }/${file}.ts";`,
+      "",
+    );
+  }
+  lines.push(
     `// ${typ.description}`,
-    `// rune declares: [TYP] ${typ.name}: ${typ.typeName}`,
+    `// rune declares: ${tag} ${typ.name}: ${typ.typeName}`,
     `export type ${toPascal(typ.name)} = ${ts};`,
     "",
-  ].join("\n");
+  );
+  return lines.join("\n");
 }
 
 function camel(name: string): string {
@@ -544,21 +689,58 @@ function renderBusinessTest(
   return L.join("\n");
 }
 
-// A coordinator is the imperative SHELL for a [REQ]: it loads inputs through the
-// data adapters (boundary steps that RETURN a dto), hands them to a pure inner
-// `<verb>Core` (the functional CORE — all business logic, no I/O), then takes the
-// dtos the core returns and feeds them to the data adapters that produce side
-// effects (boundary steps returning `void`). Scaffolded straight from the rune.
+// How a seam value is validated at runtime: a Dto name → assert(Cls, …); a
+// [TYP] alias to a primitive → assert.<prim>(…) (the alias type IS the
+// primitive, no cast needed); anything else has no runtime contract.
+type Seam =
+  | { kind: "dto"; cls: string }
+  | { kind: "primitive"; fn: "string" | "number" | "boolean" | "uint8Array"; ts: string }
+  | { kind: "opaque" };
+
+function seamFor(type: string, typMap: Map<string, TypNode>): Seam {
+  if (/Dto$/.test(type)) return { kind: "dto", cls: type };
+  switch (typMap.get(type)?.typeName) {
+    case "string":
+      return { kind: "primitive", fn: "string", ts: "string" };
+    case "number":
+      return { kind: "primitive", fn: "number", ts: "number" };
+    case "boolean":
+      return { kind: "primitive", fn: "boolean", ts: "boolean" };
+    case "Uint8Array":
+      return { kind: "primitive", fn: "uint8Array", ts: "Uint8Array" };
+  }
+  return { kind: "opaque" };
+}
+
+// The TS spelling of a seam type: primitive [TYP] aliases collapse to their
+// primitive; Dto and opaque names keep their spelling.
+function seamTs(type: string, typMap: Map<string, TypNode>): string {
+  const seam = seamFor(type, typMap);
+  return seam.kind === "primitive" ? seam.ts : type;
+}
+
+// A coordinator is the imperative SHELL for a [REQ]: it validates the request
+// input, loads inputs through the data adapters (boundary steps that RETURN a
+// value — validated at the seam), hands them to a pure inner `<verb>Core` (the
+// functional CORE — all business logic, no I/O), then takes the dtos the core
+// returns and feeds them to the data adapters that produce side effects
+// (boundary steps returning `void` — validated before they leave), and
+// validates the result. Scaffolded straight from the rune.
 function renderCoordinator(
   req: ReqNode,
   module: string,
-  nameBinding: Binding,
   runePath: string,
+  types: TypeContext,
 ): string {
+  const { typMap } = types;
   const isBoundary = (s: StepLike): s is BoundaryStepNode => s.kind === "boundary";
   const boundaries = req.steps.filter(isBoundary);
-  const reads = boundaries.filter((s) => s.output !== "void");
-  const writes = boundaries.filter((s) => s.output !== "void" ? false : true);
+  const reads = boundaries.filter((s) => s.output !== "void" && s.output !== "");
+  const writes = boundaries.filter((s) => s.output === "void");
+  // A boundary with NO declared output is a fire-and-forget side effect: it
+  // joins the writes (nothing to bind — the old read path rendered `as ;`),
+  // args straight off the validated input.
+  const sends = boundaries.filter((s) => s.output === "");
   const boundaryNouns = [...new Set(boundaries.map((s) => s.noun))];
 
   const readVars = reads.map((r) => ({
@@ -573,9 +755,28 @@ function renderCoordinator(
     let f = camel(w.verb);
     while (usedFields.has(f)) f += "X";
     usedFields.add(f);
-    const dtoParam = w.params.find((p) => /Dto$/.test(p));
-    return { field: f, type: dtoParam ?? "unknown", noun: w.noun, verb: w.verb };
+    // The value the core must produce for this write: the DTO param if there
+    // is one, else the first param. Its type mirrors the typed adapter stub's
+    // param (rune-sig resolves the same way), so the core return type and the
+    // adapter signature agree; opaque params stay `unknown` on both sides.
+    const param = w.params.find((p) => /Dto$/.test(p)) ?? w.params[0];
+    const seam: Seam = param ? seamFor(param, typMap) : { kind: "opaque" };
+    const type = seam.kind === "opaque" ? "unknown" : seamTs(param, typMap);
+    return { field: f, type, seam, noun: w.noun, verb: w.verb };
   });
+
+  const inputSeam = seamFor(req.input, typMap);
+  const outputSeam = seamFor(req.output, typMap);
+  // Validated input replaces `input` everywhere downstream.
+  const inputRef = inputSeam.kind === "opaque" ? "input" : "validInput";
+  const stepArgs = (params: string[]): string =>
+    params
+      .map((p) => /Dto$/.test(p) ? `undefined as never` : `${inputRef}.${p}`)
+      .join(", ");
+  const usesAssert = inputSeam.kind !== "opaque" ||
+    outputSeam.kind !== "opaque" ||
+    readVars.some((r) => seamFor(r.type, typMap).kind !== "opaque") ||
+    writeFields.some((w) => w.seam.kind !== "opaque");
 
   const dtos = dtoImports(
     [
@@ -584,16 +785,19 @@ function renderCoordinator(
       ...readVars.map((r) => r.type),
       ...writeFields.map((w) => w.type),
     ],
-    nameBinding,
+    module,
+    types,
   );
 
   const L: string[] = [];
   L.push(`// Generated by rune manifest from ${runePath}.`);
   L.push("// Edit the body. Re-running manifest will not overwrite this file.");
   L.push("");
+  // Value imports: the DTO classes are runtime contracts (assert targets).
   for (const d of dtos) {
-    L.push(`import type { ${d.type} } from "@/src/${module}/dto/${d.file}.ts";`);
+    L.push(`import { ${d.type} } from "@/${d.dir}/${d.file}.ts";`);
   }
+  if (usesAssert) L.push(`import { assert } from "#assert";`);
   L.push(
     `import { ${toPascal(req.noun)} } from "@/src/${module}/domain/business/${
       applyCase(req.noun, "kebab")
@@ -612,47 +816,77 @@ function renderCoordinator(
     `// Coordinator for [REQ] ${req.noun}.${req.verb}(${req.input}): ${req.output}.`,
   );
   L.push(
-    `export async function ${req.verb}(input: ${req.input}): Promise<${req.output}> {`,
+    `export async function ${req.verb}(input: ${
+      seamTs(req.input, typMap)
+    }): Promise<${seamTs(req.output, typMap)}> {`,
   );
+  const inputCtx = `"${req.noun}.${req.verb} input"`;
+  if (inputSeam.kind === "dto") {
+    L.push(`  const validInput = assert(${inputSeam.cls}, input, ${inputCtx});`);
+  } else if (inputSeam.kind === "primitive") {
+    L.push(`  const validInput = assert.${inputSeam.fn}(input, ${inputCtx});`);
+  }
   for (const n of boundaryNouns) {
     L.push(`  const ${camel(n)}Data = new ${toPascal(n)}Data();`);
   }
   if (readVars.length) {
     L.push("");
-    L.push("  // reads — load inputs through the data adapters");
+    L.push("  // reads — load inputs through the data adapters (validated at the seam)");
     for (const r of readVars) {
-      const args = r.params
-        .map((p) => /Dto$/.test(p) ? `undefined as never` : `input.${p}`)
-        .join(", ");
-      L.push(
-        `  const ${r.name} = await ${camel(r.noun)}Data.${r.verb}(${args}) as ${r.type};`,
-      );
+      const call = `await ${camel(r.noun)}Data.${r.verb}(${stepArgs(r.params)})`;
+      const seam = seamFor(r.type, typMap);
+      const ctx = `"${r.noun}.${r.verb}"`;
+      if (seam.kind === "dto") {
+        L.push(`  const ${r.name} = assert(${seam.cls}, ${call}, ${ctx});`);
+      } else if (seam.kind === "primitive") {
+        L.push(`  const ${r.name} = assert.${seam.fn}(${call}, ${ctx});`);
+      } else {
+        L.push(
+          `  const ${r.name} = ${call} as ${r.type}; // unvalidated: ${r.type} has no runtime contract`,
+        );
+      }
     }
   }
   L.push("");
   L.push("  // core — pure business logic, no I/O");
   L.push(
-    `  const out = ${req.verb}Core(${["input", ...readVars.map((r) => r.name)].join(", ")});`,
+    `  const out = ${req.verb}Core(${[inputRef, ...readVars.map((r) => r.name)].join(", ")});`,
   );
-  if (writeFields.length) {
+  if (writeFields.length || sends.length) {
     L.push("");
-    L.push("  // writes — side effects through the data adapters");
+    L.push("  // writes — side effects through the data adapters (validated before they leave)");
     for (const w of writeFields) {
-      L.push(`  await ${camel(w.noun)}Data.${w.verb}(out.${w.field});`);
+      const ctx = `"${w.noun}.${w.verb} input"`;
+      const arg = w.seam.kind === "dto"
+        ? `assert(${w.seam.cls}, out.${w.field}, ${ctx})`
+        : w.seam.kind === "primitive"
+        ? `assert.${w.seam.fn}(out.${w.field}, ${ctx})`
+        : `out.${w.field}`;
+      L.push(`  await ${camel(w.noun)}Data.${w.verb}(${arg});`);
+    }
+    for (const s of sends) {
+      L.push(`  await ${camel(s.noun)}Data.${s.verb}(${stepArgs(s.params)});`);
     }
   }
   L.push("");
-  L.push("  return out.result;");
+  const outputCtx = `"${req.noun}.${req.verb} output"`;
+  if (outputSeam.kind === "dto") {
+    L.push(`  return assert(${outputSeam.cls}, out.result, ${outputCtx});`);
+  } else if (outputSeam.kind === "primitive") {
+    L.push(`  return assert.${outputSeam.fn}(out.result, ${outputCtx});`);
+  } else {
+    L.push("  return out.result;");
+  }
   L.push("}");
   L.push("");
 
   const coreParams = [
-    `input: ${req.input}`,
-    ...readVars.map((r) => `${r.name}: ${r.type}`),
+    `input: ${seamTs(req.input, typMap)}`,
+    ...readVars.map((r) => `${r.name}: ${seamTs(r.type, typMap)}`),
   ].join(", ");
   const ret = [
     ...writeFields.map((w) => `${w.field}: ${w.type}`),
-    `result: ${req.output}`,
+    `result: ${seamTs(req.output, typMap)}`,
   ].join("; ");
   // Describe only the parts this verb actually has, so a no-reads or no-writes
   // coordinator doesn't carry a misleading "the dtos the reads loaded" boilerplate.
@@ -761,14 +995,18 @@ function renderEntrypointController(
   ents: EntNode[],
   reqs: ReqNode[],
   process: Map<EntNode, EntProcess>,
-  nameBinding: Binding,
   runePath: string,
+  types: TypeContext,
 ): string {
   const className = `${toPascal(surface)}Controller`;
   const moduleConst = `${camel(surface)}Module`;
 
   // Value imports (the DTO classes are referenced at runtime in @Endpoint).
-  const dtos = dtoImports(ents.flatMap((e) => [e.input, e.output]), nameBinding);
+  const dtos = dtoImports(
+    ents.flatMap((e) => [e.input, e.output]),
+    module,
+    types,
+  );
 
   // Match each ent to its [REQ] coordinator by (input, output) DTO pair.
   const coordImports = new Set<string>();
@@ -793,7 +1031,7 @@ function renderEntrypointController(
   L.push("// Edit the body. Re-running manifest will not overwrite this file.");
   L.push("");
   L.push(`import { Endpoint, EndpointController, endpointModule } from "@mrg-keystone/keep";`);
-  for (const d of dtos) L.push(`import { ${d.type} } from "@/src/${module}/dto/${d.file}.ts";`);
+  for (const d of dtos) L.push(`import { ${d.type} } from "@/${d.dir}/${d.file}.ts";`);
   for (const line of coordImports) L.push(line);
   L.push("");
   L.push(`@EndpointController(${JSON.stringify(applyCase(surface, "kebab"))})`);
@@ -845,7 +1083,7 @@ function renderEntrypointE2e(
   runePath: string,
   ents: EntNode[],
   process: Map<EntNode, EntProcess>,
-  typMap: Map<string, string>,
+  typMap: Map<string, TypNode>,
 ): string {
   const moduleConst = `${camel(surface)}Module`;
   // Collect the surface's $external inputs (bind values like "$memberId") so the
@@ -861,7 +1099,7 @@ function renderEntrypointE2e(
     }
   }
   const placeholder = (name: string): string => {
-    const t = typMap.get(name);
+    const t = typMap.get(name)?.typeName;
     if (t === "number" || t === "integer") return "7";
     if (t === "boolean") return "true";
     return JSON.stringify(`${name}-stub`);
@@ -907,20 +1145,19 @@ function addEntrypointSurface(
   ents: EntNode[],
   reqs: ReqNode[],
   process: Map<EntNode, EntProcess>,
-  nameBinding: Binding,
   runePath: string,
-  typMap: Map<string, string>,
+  types: TypeContext,
 ): void {
   const dir = `src/${module}/entrypoints/${applyCase(surface, "kebab")}`;
   emit(
     "entrypoint-mod",
     `${dir}/mod.ts`,
-    renderEntrypointController(module, surface, ents, reqs, process, nameBinding, runePath),
+    renderEntrypointController(module, surface, ents, reqs, process, runePath, types),
   );
   emit(
     "entrypoint-e2e",
     `${dir}/e2e.test.ts`,
-    renderEntrypointE2e(module, surface, runePath, ents, process, typMap),
+    renderEntrypointE2e(module, surface, runePath, ents, process, types.typMap),
   );
 }
 
@@ -944,18 +1181,24 @@ function addModRoot(
   );
 }
 
-/** Dedup'd `{ type, file }` import descriptors for the DTO-typed names, each
- * file resolved via the same <name> binding the dto/ files use. */
+/** Dedup'd `{ type, file, dir }` import descriptors for the DTO-typed names:
+ * each file resolved via the same <name> binding the dto/ files use, each dir
+ * isCore-aware (a [DTO:core] lives in src/core/dto, not the module's dto/). */
 function dtoImports(
   names: (string | undefined)[],
-  nameBinding: Binding,
-): { type: string; file: string }[] {
+  module: string,
+  types: TypeContext,
+): { type: string; file: string; dir: string }[] {
   const seen = new Set<string>();
-  const out: { type: string; file: string }[] = [];
+  const out: { type: string; file: string; dir: string }[] = [];
   for (const name of names) {
     if (!name || !/Dto$/.test(name) || seen.has(name)) continue;
     seen.add(name);
-    out.push({ type: name, file: transformName(name, nameBinding) });
+    out.push({
+      type: name,
+      file: transformName(name, types.nameBinding),
+      dir: dtoDir(name, module, types),
+    });
   }
   return out;
 }
@@ -1038,17 +1281,6 @@ function resolvePath(ctx: Record<string, unknown>, path: string): unknown {
 const HEADER = `// Generated by rune manifest from {{runePath}}.
 // Edit the body. Re-running manifest will not overwrite this file.\n`;
 
-const COORDINATOR_MOD_TPL = `${HEADER}
-{{#each imports}}${"import"} type { {{this.type}} } ${"from"} "@/src/{{module}}/dto/{{this.file}}.ts";
-{{/each}}
-// Coordinator for [REQ] {{req.noun}}.{{req.verb}}({{req.input}}): {{req.output}}.
-
-export async function {{req.verb}}(input: {{req.input}}): Promise<{{req.output}}> {
-  // TODO: implement the flow as declared in the rune.
-  throw new Error("not implemented");
-}
-`;
-
 const COORDINATOR_INT_TEST_TPL = `${HEADER}
 import { {{req.verb}} } from "./mod.ts";
 
@@ -1061,14 +1293,6 @@ Deno.test("{{this}}", async () => {
   // TODO: assert this fault path
 });
 {{/each}}
-`;
-
-const BUSINESS_TEST_TPL = `${HEADER}
-import { {{noun}} } from "./mod.ts";
-
-Deno.test("{{noun}} — placeholder", () => {
-  // TODO: implement unit tests
-});
 `;
 
 const POLY_BASE_MOD_TPL = `${HEADER}
@@ -1126,45 +1350,6 @@ Deno.test("{{this}}", async () => {
 {{/each}}
 `;
 
-const DTO_TPL = `${HEADER}
-import { z } from "#zod";
-
-// {{dto.description}}
-export const {{dto.name}}Schema = z.object({
-{{#each dto.properties}}
-  {{this}}: z.unknown(), // TODO: tighten
-{{/each}}
-});
-
-export type {{dto.name}} = z.infer<typeof {{dto.name}}Schema>;
-`;
-
-const TYP_TPL = `${HEADER}
-import { z } from "#zod";
-
-// {{typ.description}}
-// rune declares: [TYP] {{typ.name}}: {{typ.typeName}}
-export const {{typ.name}}Schema = z.unknown(); // TODO: tighten to {{typ.typeName}}
-export type {{typ.name}} = z.infer<typeof {{typ.name}}Schema>;
-`;
-
-const ENTRYPOINT_MOD_TPL = `${HEADER}
-// Entrypoint surface: {{ent.surface}}.
-
-export async function {{ent.action}}(input: {{ent.input}}): Promise<{{ent.output}}> {
-  // TODO: dispatch to the corresponding [REQ] coordinator.
-  throw new Error("not implemented");
-}
-`;
-
-const ENTRYPOINT_E2E_TPL = `${HEADER}
-import { {{ent.action}} } from "./mod.ts";
-
-Deno.test("{{ent.action}} — e2e placeholder", async () => {
-  // TODO: implement end-to-end test
-});
-`;
-
 const MOD_ROOT_TPL = `${HEADER}
 // Public API surface for module "{{module}}".
 {{#each reqs}}
@@ -1178,22 +1363,18 @@ ${"export"} { {{this.verb}} } from "./domain/coordinators/{{this.processFile}}/m
 // (mirrored into the artifact's codegen.templates by scripts/gen-codegen-templates.ts).
 // planManifest reads the artifact's overrides when given (opts.codegen), else
 // these — so generated output is byte-identical until a template is deliberately
-// edited in the artifact (L3 holds; mutate-to-prove L6). The signature files
-// (sig.ts + business/data mod.ts) come from rune-sig and are not yet templated.
+// edited in the artifact (L3 holds; mutate-to-prove L6). ONLY the tpl()-honoring
+// roles live here: dto/typ/coordinator-mod/entrypoint-mod/entrypoint-e2e/
+// business-test (and the rune-sig impls) are rendered programmatically — their
+// shape comes from the spec's types, not a substitutable body.
 export const DEFAULT_TEMPLATES: Record<string, string> = {
-  "coordinator-mod": COORDINATOR_MOD_TPL,
   "coordinator-int-test": COORDINATOR_INT_TEST_TPL,
-  "business-test": BUSINESS_TEST_TPL,
   "poly-base-mod": POLY_BASE_MOD_TPL,
   "poly-base-test": POLY_BASE_TEST_TPL,
   "poly-mod": POLY_MOD_TPL,
   "poly-impl-mod": POLY_IMPL_MOD_TPL,
   "poly-impl-test": POLY_IMPL_TEST_TPL,
   "adapter-smk-test": ADAPTER_SMK_TEST_TPL,
-  "dto": DTO_TPL,
-  "typ": TYP_TPL,
-  "entrypoint-mod": ENTRYPOINT_MOD_TPL,
-  "entrypoint-e2e": ENTRYPOINT_E2E_TPL,
   "mod-root": MOD_ROOT_TPL,
 };
 

@@ -224,6 +224,8 @@ const REQUIRED_IMPORTS: Record<string, string> = {
   "#std/path": "jsr:@std/path",
   // Generated [ENT] controllers + e2e tests import the keep backend framework.
   "@mrg-keystone/keep": "jsr:@mrg-keystone/keep@^1",
+  // Generated coordinators validate their seams via keep's assert runtime.
+  "#assert": "jsr:@mrg-keystone/keep@^1/assert",
 };
 
 // Compiler options the generated code needs. class-validator / class-transformer

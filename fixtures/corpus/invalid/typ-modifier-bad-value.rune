@@ -1,0 +1,2 @@
+[TYP:min] quantity: number
+    a numeric type whose min modifier is missing its value

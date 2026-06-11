@@ -1,19 +1,21 @@
 // Scaffolded once; fill in the bodies. `sync` preserves this file.
 
+import { ListDto } from "@/src/lists/dto/list.ts";
+
 export class List {
-  fill(name: unknown): unknown {
+  fill(name: string): List {
     throw new Error("not implemented");
   }
-  save(listDto: unknown): unknown {
+  save(listDto: ListDto): void {
     throw new Error("not implemented");
   }
-  toDto(): unknown {
+  toDto(): ListDto {
     throw new Error("not implemented");
   }
-  load(id: unknown): unknown {
+  load(id: string): ListDto {
     throw new Error("not implemented");
   }
-  append(taskId: unknown): unknown {
+  append(taskId: string): List {
     throw new Error("not implemented");
   }
 }

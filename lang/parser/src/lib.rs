@@ -82,6 +82,7 @@ pub enum LineKind {
     TypDef {
         name: String,
         type_name: String,
+        modifier: Option<String>,
     },
     TypDesc {
         text: String,
@@ -209,11 +210,12 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
             continue;
         }
 
-        // [ENT]/[DTO]/[TYP]/[NON] accept the same `:modifier` syntax (e.g. `:core`)
+        // [ENT]/[DTO]/[NON] accept the same `:modifier` syntax (e.g. `:core`)
         // as [REQ], but this parser feeds only diagnostics + highlighting, where the
         // modifier value carries no meaning — only the TS codegen engine routes on
         // `:core`. So it's matched (to stay syntax-compatible) and dropped as
-        // `_modifier` here; [REQ] keeps it because its LineKind exposes it downstream.
+        // `_modifier` here; [REQ] and [TYP] keep it because their LineKind exposes
+        // it downstream ([TYP] for constraint-modifier validation in the LSP).
         // [ENT] / [ENT:modifier] — same signature shape as [REQ]
         if let Some((_modifier, rest)) = match_tag(trimmed, "ENT") {
             in_dto_block = false;
@@ -247,15 +249,17 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
             continue;
         }
 
-        // [TYP] / [TYP:modifier]
-        if let Some((_modifier, rest)) = match_tag(trimmed, "TYP") {
+        // [TYP] / [TYP:modifier] — keeps the modifier (constraint list like
+        // `ext,uuid` or `min=0,max=100`); the LSP validates it, mirroring how
+        // [REQ] exposes its modifier downstream.
+        if let Some((modifier, rest)) = match_tag(trimmed, "TYP") {
             in_dto_block = false;
             in_typ_block = true;
             in_non_block = false;
             if let Some(colon_pos) = rest.find(':') {
                 let name = rest[..colon_pos].trim().to_string();
                 let type_name = rest[colon_pos + 1..].trim().to_string();
-                results.push(ParsedLine { line_num, kind: LineKind::TypDef { name, type_name } });
+                results.push(ParsedLine { line_num, kind: LineKind::TypDef { name, type_name, modifier } });
             } else {
                 results.push(ParsedLine { line_num, kind: LineKind::Unknown("[TYP] missing type".to_string()) });
             }
@@ -734,14 +738,15 @@ mod tests {
     fn test_parse_typ_def() {
         let doc = "[TYP] id: string";
         let lines = parse_document(doc);
-        assert!(matches!(&lines[0].kind, LineKind::TypDef { name, type_name } if name == "id" && type_name == "string"));
+        assert!(matches!(&lines[0].kind, LineKind::TypDef { name, type_name, modifier }
+            if name == "id" && type_name == "string" && modifier.is_none()));
     }
 
     #[test]
     fn test_parse_typ_with_description() {
         let doc = "[TYP] id: string\n    a unique identifier";
         let lines = parse_document(doc);
-        assert!(matches!(&lines[0].kind, LineKind::TypDef { name, type_name } if name == "id" && type_name == "string"));
+        assert!(matches!(&lines[0].kind, LineKind::TypDef { name, type_name, .. } if name == "id" && type_name == "string"));
         assert!(matches!(&lines[1].kind, LineKind::TypDesc { text, .. } if text == "a unique identifier"));
     }
 
@@ -749,14 +754,14 @@ mod tests {
     fn test_parse_typ_array_type() {
         let doc = "[TYP] search: UrlDto[]";
         let lines = parse_document(doc);
-        assert!(matches!(&lines[0].kind, LineKind::TypDef { name, type_name } if name == "search" && type_name == "UrlDto[]"));
+        assert!(matches!(&lines[0].kind, LineKind::TypDef { name, type_name, .. } if name == "search" && type_name == "UrlDto[]"));
     }
 
     #[test]
     fn test_parse_typ_generic_type() {
         let doc = "[TYP] metadata: Record<string, Primitive>";
         let lines = parse_document(doc);
-        assert!(matches!(&lines[0].kind, LineKind::TypDef { name, type_name } if name == "metadata" && type_name == "Record<string, Primitive>"));
+        assert!(matches!(&lines[0].kind, LineKind::TypDef { name, type_name, .. } if name == "metadata" && type_name == "Record<string, Primitive>"));
     }
 
     #[test]
@@ -867,8 +872,45 @@ mod tests {
     fn test_parse_typ_core_modifier() {
         let doc = "[TYP:core] id: string";
         let lines = parse_document(doc);
-        assert!(matches!(&lines[0].kind, LineKind::TypDef { name, type_name }
-            if name == "id" && type_name == "string"));
+        assert!(matches!(&lines[0].kind, LineKind::TypDef { name, type_name, modifier }
+            if name == "id" && type_name == "string"
+                && modifier == &Some("core".to_string())));
+    }
+
+    #[test]
+    fn test_parse_typ_uuid_modifier() {
+        let doc = "[TYP:uuid] id: string";
+        let lines = parse_document(doc);
+        assert!(matches!(&lines[0].kind, LineKind::TypDef { name, type_name, modifier }
+            if name == "id" && type_name == "string"
+                && modifier == &Some("uuid".to_string())));
+    }
+
+    #[test]
+    fn test_parse_typ_ext_uuid_modifier() {
+        let doc = "[TYP:ext,uuid] externalId: string";
+        let lines = parse_document(doc);
+        assert!(matches!(&lines[0].kind, LineKind::TypDef { name, type_name, modifier }
+            if name == "externalId" && type_name == "string"
+                && modifier == &Some("ext,uuid".to_string())));
+    }
+
+    #[test]
+    fn test_parse_typ_min_modifier() {
+        let doc = "[TYP:min=0] qty: number";
+        let lines = parse_document(doc);
+        assert!(matches!(&lines[0].kind, LineKind::TypDef { name, type_name, modifier }
+            if name == "qty" && type_name == "number"
+                && modifier == &Some("min=0".to_string())));
+    }
+
+    #[test]
+    fn test_parse_typ_core_nonempty_modifier() {
+        let doc = "[TYP:core,nonempty] label: string";
+        let lines = parse_document(doc);
+        assert!(matches!(&lines[0].kind, LineKind::TypDef { name, type_name, modifier }
+            if name == "label" && type_name == "string"
+                && modifier == &Some("core,nonempty".to_string())));
     }
 
     #[test]

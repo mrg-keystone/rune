@@ -299,6 +299,75 @@ const CHECKERS = {
     return out;
   },
 
+  // [TYP] constraint-modifier validation (validated seams tier 3). Local copy
+  // of the allowed-modifier table — the engine's single source lives in
+  // src/rune/domain/business/rune-modifiers/mod.ts; messages here must stay
+  // byte-identical to the parser's (and the Rust LSP's).
+  "typ-modifier": ({ lines, rule }) => {
+    const SPECS = {
+      ext: { base: null, takesValue: false },
+      core: { base: null, takesValue: false },
+      uuid: { base: "string", takesValue: false },
+      email: { base: "string", takesValue: false },
+      url: { base: "string", takesValue: false },
+      nonempty: { base: "string", takesValue: false },
+      int: { base: "number", takesValue: false },
+      min: { base: "number", takesValue: true },
+      max: { base: "number", takesValue: true },
+      positive: { base: "number", takesValue: false },
+    };
+    const ALLOWED =
+      "ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive";
+    const out = [];
+    const push = (i, message) =>
+      out.push({
+        line: i + 1,
+        col: 0,
+        len: 0,
+        severity: rule.severity,
+        message,
+        ruleId: rule.id,
+      });
+    lines.forEach((l, i) => {
+      // Mirror the engine: inline `//` comments are stripped before parsing,
+      // and the TYP name is everything before the first colon (dashes legal).
+      const slash = l.indexOf("//");
+      const noComment = slash === -1 ? l : l.slice(0, slash);
+      const m = noComment.match(
+        /^\s*\[TYP:([^\]]+)\]\s*([^:]+?)\s*:\s*(.+?)\s*$/,
+      );
+      if (!m) return;
+      const [, rawMods, name, declaredType] = m;
+      for (const raw of rawMods.split(",")) {
+        const item = raw.trim();
+        if (!item) continue;
+        const eq = item.indexOf("=");
+        const id = eq === -1 ? item : item.slice(0, eq);
+        const value = eq === -1 ? null : item.slice(eq + 1);
+        const spec = SPECS[id];
+        if (!spec) {
+          push(i, `[TYP] unknown modifier "${id}" (allowed: ${ALLOWED})`);
+          continue;
+        }
+        if (value !== null && !spec.takesValue) {
+          push(i, `[TYP] modifier "${id}" does not take a value`);
+          continue;
+        }
+        if (spec.takesValue && (value === null || !/^-?\d+(\.\d+)?$/.test(value))) {
+          push(i, `[TYP] modifier "${id}" requires a numeric value (e.g. min=0)`);
+          continue;
+        }
+        if (spec.base !== null && declaredType !== spec.base) {
+          push(
+            i,
+            `[TYP] modifier "${id}" requires a ${spec.base} type, but "${name}" is ${declaredType}`,
+          );
+        }
+      }
+    });
+    return out;
+  },
+
   // a [TYP] must resolve to a primitive — it may not reference a DTO
   "type-not-dto": ({ model, rule }) => {
     const out = [];
@@ -514,7 +583,7 @@ const GEN_CHECKERS = {
   // every generated DTO file must carry runtime validation (shape-checker: dto-validation)
   "dto-has-validation": ({ files, rule, params }) => {
     const re = new RegExp(
-      params.pattern || "@Is|@Valid|z\\.|\\.parse\\(|validate",
+      params.pattern || "@Is|@Valid|@Allow|z\\.|\\.parse\\(|validate",
       "i",
     );
     const out = [];
@@ -758,6 +827,26 @@ const GEN_CHECKERS = {
           file: f.path,
           severity: rule.severity,
           message: msg(rule.message, {}),
+          ruleId: rule.id,
+        });
+      }
+    }
+    return out;
+  },
+
+  // a coordinator may not blind-cast to a DTO class — the seam must be
+  // validated with assert(XxxDto, ...) (shape-checker: no-dto-cast)
+  "no-dto-cast": ({ files, rule }) => {
+    const out = [];
+    for (const f of files) {
+      if (!/\/domain\/coordinators\//.test(normPath(f.path))) continue;
+      // engine-parity exemption (no-dto-cast/mod.ts): .test. AND .spec.
+      if (/\.(?:test|spec)\./.test(f.path)) continue;
+      for (const m of f.content.matchAll(/\bas\s+([A-Z]\w*Dto)\b/g)) {
+        out.push({
+          file: f.path,
+          severity: rule.severity,
+          message: msg(rule.message, { dto: m[1] }),
           ruleId: rule.id,
         });
       }

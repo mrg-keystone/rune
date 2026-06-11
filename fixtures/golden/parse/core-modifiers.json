@@ -29,6 +29,10 @@
       "typeName": "string",
       "description": "a globally shared identifier type",
       "isCore": true,
+      "isExternal": false,
+      "modifiers": [
+        "core"
+      ],
       "line": 0
     },
     {
@@ -36,6 +40,10 @@
       "typeName": "number",
       "description": "an epoch-millis timestamp shared across modules",
       "isCore": true,
+      "isExternal": false,
+      "modifiers": [
+        "core"
+      ],
       "line": 3
     }
   ],

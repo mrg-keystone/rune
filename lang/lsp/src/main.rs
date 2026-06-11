@@ -34,7 +34,18 @@ impl Backend {
         let text = rope.to_string();
         drop(docs);
 
-        let lines = parse_document(&text);
+        let diagnostics = Self::compute_diagnostics(&text);
+
+        self.client
+            .publish_diagnostics(uri.clone(), diagnostics, None)
+            .await;
+    }
+
+    /// Pure diagnostic computation, split out of the publish-to-client path so
+    /// the corpus-parity tests can drive validation directly. Mirrors what
+    /// `rune sync`/`manifest` enforces.
+    fn compute_diagnostics(text: &str) -> Vec<Diagnostic> {
+        let lines = parse_document(text);
         let mut diagnostics = Vec::new();
 
         // 80 column limit.
@@ -106,7 +117,7 @@ impl Backend {
                 LineKind::Empty => {
                     first_pass_dto = None;
                 }
-                LineKind::TypDef { name, type_name } => {
+                LineKind::TypDef { name, type_name, .. } => {
                     if let Some(&first) = defined_types_lines.get(name) {
                         diagnostics.push(diag_err(line_num, format!(
                             "Duplicate type definition '{}' (first defined on line {})",
@@ -207,7 +218,13 @@ impl Backend {
                         }
                     }
                     if let Some(m) = modifier {
-                        diagnostics.push(diag_err(line_num, format!("[REQ:{}] is invalid — coordinators are module-level", m)));
+                        // Parity with the TS parser: the core modifier keeps its
+                        // specific message; any other modifier gets the generic one.
+                        if m == "core" {
+                            diagnostics.push(diag_err(line_num, "[REQ:core] is invalid — coordinators are module-level".to_string()));
+                        } else {
+                            diagnostics.push(diag_err(line_num, "[REQ] does not take a modifier".to_string()));
+                        }
                     }
                     if *indent != 0 {
                         diagnostics.push(diag_err(line_num, "[REQ] must start at column 0".to_string()));
@@ -338,12 +355,17 @@ impl Backend {
                     consecutive_empty = 0;
                 }
 
-                LineKind::TypDef { name, type_name } => {
+                LineKind::TypDef { name, type_name, modifier } => {
                     if !is_valid_primitive_type(type_name) {
                         if type_name.ends_with("Dto") {
                             diagnostics.push(diag_err(line_num, format!("Type '{}' cannot reference DTO '{}' - types must be primitives", name, type_name)));
                         } else if defined_types.contains_key(type_name) {
                             diagnostics.push(diag_err(line_num, format!("Type '{}' cannot reference type '{}' - types must be primitives", name, type_name)));
+                        }
+                    }
+                    if let Some(m) = modifier {
+                        for msg in validate_typ_modifiers(m, name, type_name) {
+                            diagnostics.push(diag_err(line_num, msg));
                         }
                     }
                     in_req = false;
@@ -459,9 +481,7 @@ impl Backend {
             }
         }
 
-        self.client
-            .publish_diagnostics(uri.clone(), diagnostics, None)
-            .await;
+        diagnostics
     }
 }
 
@@ -610,6 +630,75 @@ fn is_valid_primitive_type(s: &str) -> bool {
     }
 
     false
+}
+
+/// Validate a `[TYP:...]` constraint-modifier list (e.g. `ext,uuid` or
+/// `min=0,max=100`) against the design contract §5. Returns one message per
+/// problem, byte-identical to the TS engine + studio so all three emit the
+/// same diagnostics. `name` is the type name, `declared_type` the primitive it
+/// aliases (e.g. "string", "number").
+/// Mirrors the TS engine's `^-?\d+(\.\d+)?$` numeric-value check exactly:
+/// plain decimals only — no exponents, no leading `+`, no bare `.5` / `5.`.
+fn is_plain_decimal(v: &str) -> bool {
+    let s = v.strip_prefix('-').unwrap_or(v);
+    let mut parts = s.splitn(2, '.');
+    let all_digits = |p: &str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit());
+    let int = parts.next().unwrap_or("");
+    let frac = parts.next();
+    all_digits(int) && frac.map_or(true, all_digits)
+}
+
+fn validate_typ_modifiers(raw: &str, name: &str, declared_type: &str) -> Vec<String> {
+    let mut errors = Vec::new();
+    for item in raw.split(',') {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        // `min=0` splits into id + value; bare modifiers have no value.
+        // NO trim around '=' — the TS engine slices at indexOf('=') verbatim,
+        // so `min = 5` yields the unknown modifier `min ` there; mirror that.
+        let (id, value) = match item.split_once('=') {
+            Some((i, v)) => (i, Some(v)),
+            None => (item, None),
+        };
+        // Required base type per modifier; None = ext/core (no base requirement).
+        let base: Option<&str> = match id {
+            "ext" | "core" => None,
+            "uuid" | "email" | "url" | "nonempty" => Some("string"),
+            "int" | "min" | "max" | "positive" => Some("number"),
+            _ => {
+                errors.push(format!(
+                    "[TYP] unknown modifier \"{}\" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive)",
+                    id
+                ));
+                continue;
+            }
+        };
+        let takes_value = id == "min" || id == "max";
+        if takes_value {
+            let numeric = value.map(is_plain_decimal).unwrap_or(false);
+            if !numeric {
+                errors.push(format!(
+                    "[TYP] modifier \"{}\" requires a numeric value (e.g. min=0)",
+                    id
+                ));
+                continue;
+            }
+        } else if value.is_some() {
+            errors.push(format!("[TYP] modifier \"{}\" does not take a value", id));
+            continue;
+        }
+        if let Some(b) = base {
+            if declared_type != b {
+                errors.push(format!(
+                    "[TYP] modifier \"{}\" requires a {} type, but \"{}\" is {}",
+                    id, b, name, declared_type
+                ));
+            }
+        }
+    }
+    errors
 }
 
 #[tower_lsp::async_trait]
@@ -834,7 +923,7 @@ impl LanguageServer for Backend {
         let mut non_defs: HashMap<String, Option<String>> = HashMap::new();
         let mut i = 0;
         while i < parsed.len() {
-            if let LineKind::TypDef { name, type_name } = &parsed[i].kind {
+            if let LineKind::TypDef { name, type_name, .. } = &parsed[i].kind {
                 let mut desc_lines = Vec::new();
                 let mut j = i + 1;
                 while j < parsed.len() {
@@ -1144,4 +1233,145 @@ async fn main() {
 
     let (service, socket) = LspService::new(Backend::new);
     Server::new(stdin, stdout, socket).serve(service).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn corpus_dir() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/corpus")
+    }
+
+    /// Sorted list of `*.rune` files under a corpus subdirectory.
+    fn rune_files(sub: &str) -> Vec<std::path::PathBuf> {
+        let dir = corpus_dir().join(sub);
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("read_dir {:?}: {}", dir, e))
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().map(|x| x == "rune").unwrap_or(false))
+            .collect();
+        files.sort();
+        assert!(!files.is_empty(), "no .rune fixtures in {:?}", dir);
+        files
+    }
+
+    /// Every fixture in the valid corpus must validate clean — this is the
+    /// parity gate that keeps the Rust LSP in lock-step with the TS engine.
+    #[test]
+    fn valid_corpus_has_no_diagnostics() {
+        let mut failures = Vec::new();
+        for path in rune_files("valid") {
+            let text = std::fs::read_to_string(&path).unwrap();
+            let diags = Backend::compute_diagnostics(&text);
+            if !diags.is_empty() {
+                let msgs: Vec<String> = diags.iter().map(|d| d.message.clone()).collect();
+                failures.push(format!(
+                    "{}:\n  - {}",
+                    path.file_name().unwrap().to_string_lossy(),
+                    msgs.join("\n  - ")
+                ));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "valid fixtures produced diagnostics:\n{}",
+            failures.join("\n")
+        );
+    }
+
+    /// Every fixture in the invalid corpus must produce at least one diagnostic.
+    #[test]
+    fn invalid_corpus_has_diagnostics() {
+        let mut failures = Vec::new();
+        for path in rune_files("invalid") {
+            let text = std::fs::read_to_string(&path).unwrap();
+            let diags = Backend::compute_diagnostics(&text);
+            if diags.is_empty() {
+                failures.push(path.file_name().unwrap().to_string_lossy().to_string());
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "invalid fixtures produced no diagnostics: {}",
+            failures.join(", ")
+        );
+    }
+
+    // --- [TYP] constraint-modifier validator (design §5) -------------------
+
+    #[test]
+    fn typ_modifier_ok_compose() {
+        assert!(validate_typ_modifiers("ext,uuid", "externalId", "string").is_empty());
+        assert!(validate_typ_modifiers("min=0,max=100", "qty", "number").is_empty());
+        assert!(validate_typ_modifiers("nonempty", "name", "string").is_empty());
+        assert!(validate_typ_modifiers("core", "id", "string").is_empty());
+        assert!(validate_typ_modifiers("int", "count", "number").is_empty());
+        assert!(validate_typ_modifiers("positive", "amount", "number").is_empty());
+    }
+
+    #[test]
+    fn typ_modifier_unknown() {
+        assert_eq!(
+            validate_typ_modifiers("bogus", "id", "string"),
+            vec!["[TYP] unknown modifier \"bogus\" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive)".to_string()]
+        );
+    }
+
+    #[test]
+    fn typ_modifier_wrong_base() {
+        assert_eq!(
+            validate_typ_modifiers("uuid", "count", "number"),
+            vec!["[TYP] modifier \"uuid\" requires a string type, but \"count\" is number".to_string()]
+        );
+        assert_eq!(
+            validate_typ_modifiers("int", "name", "string"),
+            vec!["[TYP] modifier \"int\" requires a number type, but \"name\" is string".to_string()]
+        );
+    }
+
+    #[test]
+    fn typ_modifier_bad_value() {
+        assert_eq!(
+            validate_typ_modifiers("min", "qty", "number"),
+            vec!["[TYP] modifier \"min\" requires a numeric value (e.g. min=0)".to_string()]
+        );
+        assert_eq!(
+            validate_typ_modifiers("max=abc", "qty", "number"),
+            vec!["[TYP] modifier \"max\" requires a numeric value (e.g. min=0)".to_string()]
+        );
+    }
+
+    #[test]
+    fn typ_modifier_unexpected_value() {
+        assert_eq!(
+            validate_typ_modifiers("uuid=5", "id", "string"),
+            vec!["[TYP] modifier \"uuid\" does not take a value".to_string()]
+        );
+    }
+
+    // Parity with the TS engine's `^-?\d+(\.\d+)?$` value check: the f64
+    // grammar (exponents, leading +, bare dots) must be REJECTED, and
+    // whitespace around `=` is NOT trimmed (`min = 5` → unknown "min ").
+    #[test]
+    fn typ_modifier_value_grammar_matches_engine() {
+        let bad = |raw: &str| {
+            assert_eq!(
+                validate_typ_modifiers(raw, "qty", "number"),
+                vec!["[TYP] modifier \"min\" requires a numeric value (e.g. min=0)".to_string()],
+                "expected bad-value for {raw}"
+            );
+        };
+        bad("min=1e3");
+        bad("min=+5");
+        bad("min=.5");
+        bad("min=5.");
+        bad("min=");
+        assert!(validate_typ_modifiers("min=-3", "qty", "number").is_empty());
+        assert!(validate_typ_modifiers("min=1.25", "qty", "number").is_empty());
+        assert_eq!(
+            validate_typ_modifiers("min = 5", "qty", "number"),
+            vec!["[TYP] unknown modifier \"min \" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive)".to_string()]
+        );
+    }
 }

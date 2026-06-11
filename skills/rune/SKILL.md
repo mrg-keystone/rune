@@ -56,6 +56,11 @@ before you `sync`. The full step-by-step is **The lifecycle** below.
   the `[TYP]`s), and coordinators split into an **imperative shell + a pure
   `<verb>Core`**. `mod.ts` and test files are *dev-owned* — created once with
   stubs, never overwritten; everything else regenerates each run.
+- **Every seam is validated.** Generated DTOs carry class-validator constraints
+  from `[TYP:modifiers]`, and the generated coordinator `assert`s every seam —
+  input, adapter reads/writes, result — via `#assert` (keep's runtime). A failed
+  contract throws `RuneAssertError`; keep maps it to HTTP 422. See
+  **Validation** below.
 
 ## Writing a .rune — the shape
 
@@ -224,6 +229,66 @@ time (so hand edits are never overwritten); `{{name}}` reads a shared environmen
 variable, `{{$name}}` a declared module input, and `{{module:step.field}}` another
 module's captured output.
 
+## Validation: constraints in the spec, asserts at every seam
+
+Constraint modifiers ride in the `[TYP]` bracket slot — a comma-separated
+list, composing freely with `ext`/`core` — and become class-validator
+decorators on every generated DTO field of that type:
+
+```
+[TYP:uuid] id: string                  # @IsUUID()
+[TYP:min=0,max=100] qty: number        # @Min(0) @Max(100)
+[TYP:ext,uuid] memberId: string        # ext semantics + @IsUUID()
+```
+
+| Modifier   | Needs    | Decorator                                  |
+| ---------- | -------- | ------------------------------------------ |
+| `uuid`     | `string` | `@IsUUID()`                                |
+| `email`    | `string` | `@IsEmail()`                               |
+| `url`      | `string` | `@IsUrl()`                                 |
+| `nonempty` | `string` | `@IsNotEmpty()`                            |
+| `int`      | `number` | `@IsInt()` — **replaces** `@IsNumber()`    |
+| `min=N`    | `number` | `@Min(N)`                                  |
+| `max=N`    | `number` | `@Max(N)`                                  |
+| `positive` | `number` | `@IsPositive()`                            |
+
+`(s)` array properties get the `{ each: true }` decorator forms. Only
+`min`/`max` take a value (`min=0`, numeric). String constraints need a
+`string` type, number constraints a `number` type; `rune check` and the LSP
+reject anything else — and reject any `[REQ:x]` (REQ takes no modifier).
+
+The generated coordinator then **validates every seam** via
+`import { assert } from "#assert"` — keep's assert runtime; `rune sync` maps
+the alias in the project's `deno.json` (`rune manifest` alone doesn't write
+the import map):
+
+```ts
+export async function create(input: CreateTaskDto): Promise<TaskDto> {
+  const validInput = assert(CreateTaskDto, input, "task.create input");
+  // reads — validated at the seam
+  const taskLoad = assert(TaskDto, await taskData.load(validInput.id),
+    "task.load");
+  // core — pure business logic, no I/O
+  const out = createCore(validInput, taskLoad);
+  // writes — validated before they leave
+  await taskData.save(assert(TaskDto, out.save, "task.save input"));
+  return assert(TaskDto, out.result, "task.create output");
+}
+```
+
+So the bodies *you* fill in are validated at the shell: whatever your adapter
+or core returns must satisfy the DTO contract before it crosses a seam.
+Types that resolve to primitives are checked with
+`assert.string` / `assert.number` / `assert.boolean` / `assert.uint8Array`.
+Validation whitelists: fields the DTO class doesn't declare are stripped —
+the class is the contract.
+
+A failed contract throws `RuneAssertError { target, context, failures }`
+with dotted failure paths (`"lines.1.qty"`); keep maps it to **HTTP 422**
+with that body. Entrypoint controllers stay validation-free — validation
+lives in the coordinator, keep maps the 422. `RUNE_ASSERT=off` turns every
+assert into a passthrough (trusted prod mode).
+
 ## The rules that bite (from constraints.md)
 
 These are the ones that cause "won't parse / won't lint" surprises:
@@ -245,6 +310,11 @@ These are the ones that cause "won't parse / won't lint" surprises:
   `?` / `(s)` allowed) — no untyped fields. `rune check`/`sync` rejects a field
   with no declaration (e.g. `[DTO] BookDto: id, borrowed` with no `[TYP] borrowed`).
 - Same `noun.verb` must keep one signature throughout; no duplicate names.
+- **No blind DTO casts in coordinators** (`no-dto-cast`, lint error): an
+  `as XxxDto` in a coordinator fires
+  `coordinator casts to "XxxDto" — validate the seam with assert(XxxDto, ...)
+  instead of a blind cast`. Generated code already asserts its seams — don't
+  reintroduce casts by hand (test files are exempt).
 
 When in doubt about a rule, read `lang/docs/constraints.md` (the full table) — don't
 guess. To learn interactively, `deno task studio` documents every construct live.
@@ -280,7 +350,7 @@ This is one repeating cycle — **write → check → generate → fill in → v
 2. **Generate — `rune sync <file.rune>`.** Scaffolds the module under
    `src/<module>/domain/...`, `dto/`, `mod-root.ts`, **and writes/updates the
    project's `deno.json`** — the import map (`@/`, `class-validator`,
-   `class-transformer`, `#std/*`) plus the `experimentalDecorators` /
+   `class-transformer`, `#assert`, `#std/*`) plus the `experimentalDecorators` /
    `emitDecoratorMetadata` the DTO classes need. Non-destructive: never clobbers
    your bodies; idempotent on re-run.
    When the project has `[ENT]` surfaces it also maintains the **app bootstrap**
@@ -293,12 +363,20 @@ This is one repeating cycle — **write → check → generate → fill in → v
    - business features & data adapters → **plain concrete classes** (`mod.ts`),
      stubbed with `throw new Error("not implemented")`, plus **one test stub per
      method** (`test.ts`). No `sig.ts` — only a `[PLY]` noun gets an abstract base
-     (`<noun>/base/mod.ts`) that its `[CSE]` variants extend.
+     (`<noun>/base/mod.ts`) that its `[CSE]` variants extend. Stub signatures are
+     **typed from the spec** (DTO classes and resolved primitives — no more
+     blanket `unknown`; only unresolvable types fall back to it); adapter
+     methods return `Promise<...>` (the coordinator awaits them), business
+     methods are sync.
    - DTOs → **class-validator / class-transformer classes** with fields typed from
-     the `[TYP]`s (`@IsString() id!: string`), no `unknown`.
+     the `[TYP]`s (`@IsString() id!: string`), no `unknown`. `[TYP:modifiers]`
+     constraints add their decorators (`@IsUUID()`, `@Min(0)`); nested DTO
+     fields generate `@ValidateNested()` + `@Type(() => ChildDto)` and compile
+     (they previously emitted `unknown`).
    - coordinators → an **imperative shell** (`<verb>`) that loads via data adapters
      → calls a pure inner **`<verb>Core`** (all business logic, no I/O) → writes via
-     data adapters → returns the result.
+     data adapters → returns the result — every seam asserted (see
+     **Validation** above).
    You implement the stubs; `rune sync` never overwrites them. *Caveat:* because
    `mod.ts` is create-once, changing a spec's methods does NOT auto-update an
    existing `mod.ts` — reconcile by hand, or delete the file and re-sync for a fresh

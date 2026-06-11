@@ -1,19 +1,21 @@
 // Scaffolded once; fill in the bodies. `sync` preserves this file.
 
+import { TaskDto } from "@/src/tasks/dto/task.ts";
+
 export class Task {
-  fill(title: unknown): unknown {
+  fill(title: string): Promise<Task> {
     throw new Error("not implemented");
   }
-  save(taskDto: unknown): unknown {
+  save(taskDto: TaskDto): Promise<void> {
     throw new Error("not implemented");
   }
-  toDto(): unknown {
+  toDto(): Promise<TaskDto> {
     throw new Error("not implemented");
   }
-  load(id: unknown): unknown {
+  load(id: string): Promise<TaskDto> {
     throw new Error("not implemented");
   }
-  markDone(): unknown {
+  markDone(): Promise<Task> {
     throw new Error("not implemented");
   }
 }

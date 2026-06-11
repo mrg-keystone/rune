@@ -52,7 +52,26 @@
       "line": 10
     }
   ],
-  "typs": [],
+  "typs": [
+    {
+      "name": "page",
+      "typeName": "number",
+      "description": "the page",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 13
+    },
+    {
+      "name": "items",
+      "typeName": "string",
+      "description": "the items",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 15
+    }
+  ],
   "nons": [],
   "errors": []
 }

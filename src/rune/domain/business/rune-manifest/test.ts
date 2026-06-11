@@ -1,5 +1,5 @@
 import { assertEquals, assertStringIncludes } from "#std/assert";
-import { artifactToOptions, planManifest } from "./mod.ts";
+import { artifactToOptions, DEFAULT_TEMPLATES, planManifest } from "./mod.ts";
 
 Deno.test("planManifest — coordinator + DTO + TYP for a simple rune", () => {
   const rune = `[MOD] recording
@@ -486,7 +486,7 @@ Deno.test("planManifest — DTO field modifiers: (s) -> array, ? -> optional", (
   assertEquals(dto!.content.includes("(s)"), false);
 });
 
-Deno.test("planManifest — renderDto maps [TYP] primitives to validators; unmapped stays unknown", () => {
+Deno.test("planManifest — renderDto maps [TYP] primitives to validators; unmapped gets @Allow", () => {
   const rune = `[MOD] m
 
 [TYP] name: string
@@ -508,12 +508,15 @@ Deno.test("planManifest — renderDto maps [TYP] primitives to validators; unmap
   assertEquals(c.includes("age!: number"), true);
   assertEquals(c.includes("@IsBoolean()"), true);
   assertEquals(c.includes("active!: boolean"), true);
-  // unmapped field (no [TYP]) -> `unknown`, no decorator, visible TODO marker
+  // unmapped field (no [TYP]) -> `unknown` + @Allow() (assert validates with
+  // whitelist: true — an undecorated field would be silently stripped) and a
+  // visible TODO marker.
   assertEquals(c.includes("mystery!: unknown"), true);
   assertEquals(c.includes("TODO: tighten"), true);
+  assertStringIncludes(c, '// TODO: tighten — "mystery" has no [TYP], left as unknown\n  @Allow()\n  mystery!: unknown;');
   // imports are the sorted union of the decorators actually used
   assertEquals(
-    c.includes('import { IsBoolean, IsNumber, IsString } from "class-validator";'),
+    c.includes('import { Allow, IsBoolean, IsNumber, IsString } from "class-validator";'),
     true,
   );
 });
@@ -556,6 +559,378 @@ Deno.test("planManifest — boundary noun deduped across multiple calls", () => 
     f.path.endsWith("data/metadata/mod.ts")
   );
   assertEquals(adapterMods.length, 1);
+});
+
+// ---- nested DTOs: @ValidateNested/@Type + isCore-aware imports ----
+
+Deno.test("planManifest — nested DTO fields: convention, [TYP] alias, (s) arrays, core path", () => {
+  const rune = `[MOD] orders
+
+[TYP] qty: number
+    q
+[TYP] sku: string
+    s
+[TYP] payment: PaymentDto
+    alias to a dto
+[DTO] LineItemDto: sku, qty
+    one line
+[DTO] PaymentDto: sku
+    pay info
+[DTO:core] AuditDto: sku
+    shared audit record
+[DTO] OrderDto: lineItem(s), payment, audit
+    an order`;
+  const plan = planManifest("specs/orders.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const dto = plan.toCreate.find((f) => f.path === "src/orders/dto/order.ts");
+  if (!dto) throw new Error("no order.ts generated");
+  const c = dto.content;
+  // @Type reads Reflect metadata at decoration time — side-effect import first.
+  assertStringIncludes(c, 'import "reflect-metadata";\nimport { Type } from "class-transformer";');
+  // The sorted one-line class-validator import.
+  assertStringIncludes(c, 'import { IsArray, ValidateNested } from "class-validator";');
+  // Nested classes are value imports; the :core one routes to src/core/dto.
+  assertStringIncludes(c, 'import { AuditDto } from "@/src/core/dto/audit.ts";');
+  assertStringIncludes(c, 'import { LineItemDto } from "@/src/orders/dto/line-item.ts";');
+  assertStringIncludes(c, 'import { PaymentDto } from "@/src/orders/dto/payment.ts";');
+  // (s) array of a nested DTO: each-form + @Type + pluralized array field.
+  assertStringIncludes(
+    c,
+    "  @IsArray()\n  @ValidateNested({ each: true })\n  @Type(() => LineItemDto)\n  lineItems!: LineItemDto[];",
+  );
+  // [TYP] alias to a DTO resolves to the class (scalar form).
+  assertStringIncludes(
+    c,
+    "  @ValidateNested()\n  @Type(() => PaymentDto)\n  payment!: PaymentDto;",
+  );
+  // pascal+Dto convention resolves too.
+  assertStringIncludes(
+    c,
+    "  @ValidateNested()\n  @Type(() => AuditDto)\n  audit!: AuditDto;",
+  );
+});
+
+Deno.test("planManifest — a property naming a DTO verbatim nests it", () => {
+  const rune = `[MOD] pay
+
+[TYP] sku: string
+    s
+[DTO] PaymentDto: sku
+    pay info
+[DTO] WrapDto: PaymentDto
+    wraps a payment`;
+  const plan = planManifest("specs/pay.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const dto = plan.toCreate.find((f) => f.path === "src/pay/dto/wrap.ts");
+  if (!dto) throw new Error("no wrap.ts generated");
+  assertStringIncludes(
+    dto.content,
+    "  @ValidateNested()\n  @Type(() => PaymentDto)\n  PaymentDto!: PaymentDto;",
+  );
+  assertStringIncludes(dto.content, 'import { PaymentDto } from "@/src/pay/dto/payment.ts";');
+});
+
+// ---- [TYP] constraint modifiers -> class-validator decorators ----
+
+Deno.test("planManifest — [TYP] constraint modifiers become decorators; int replaces IsNumber", () => {
+  const rune = `[MOD] inv
+
+[TYP:uuid] id: string
+    u
+[TYP:nonempty] title: string
+    t
+[TYP:int] qty: number
+    q
+[TYP:min=0,max=100] score: number
+    s
+[TYP:positive] price: number
+    p
+[TYP:ext,uuid] memberId: string
+    ext composes with constraints
+[DTO] ItemDto: id, title, qty, score(s), price, memberId
+    an item`;
+  const plan = planManifest("specs/inv.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const dto = plan.toCreate.find((f) => f.path === "src/inv/dto/item.ts");
+  if (!dto) throw new Error("no item.ts generated");
+  const c = dto.content;
+  // string constraints compose with the base check.
+  assertStringIncludes(c, "  @IsString()\n  @IsUUID()\n  id!: string;");
+  assertStringIncludes(c, "  @IsString()\n  @IsNotEmpty()\n  title!: string;");
+  // int REPLACES IsNumber.
+  assertStringIncludes(c, "  @IsInt()\n  qty!: number;");
+  assertEquals(c.includes("@IsNumber()\n  qty"), false);
+  // min=0 each-form on an (s) array (0 must survive — falsy value).
+  assertStringIncludes(
+    c,
+    "  @IsArray()\n  @IsNumber({ each: true })\n  @Min(0, { each: true })\n  @Max(100, { each: true })\n  scores!: number[];",
+  );
+  assertStringIncludes(c, "  @IsNumber()\n  @IsPositive()\n  price!: number;");
+  // ext is placement-only; the uuid beside it still validates.
+  assertStringIncludes(c, "  @IsString()\n  @IsUUID()\n  memberId!: string;");
+  // sorted one-line union of everything used.
+  assertStringIncludes(
+    c,
+    'import { IsArray, IsInt, IsNotEmpty, IsNumber, IsPositive, IsString, IsUUID, Max, Min } from "class-validator";',
+  );
+});
+
+Deno.test("planManifest — a [TYP] aliasing a [DTO] imports the class it aliases", () => {
+  const rune = `[MOD] pay
+
+[TYP] sku: string
+    s
+[TYP] payment: PaymentDto
+    alias to a module dto
+[TYP] audit: AuditDto
+    alias to a core dto
+[DTO] PaymentDto: sku
+    pay info
+[DTO:core] AuditDto: sku
+    shared`;
+  const plan = planManifest("specs/pay.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const payment = plan.toCreate.find((f) => f.path === "src/pay/dto/payment.ts");
+  // The DTO class wins the payment.ts slot (first writer); the alias files get
+  // their own slots and import the class so the alias type-checks.
+  assertStringIncludes(payment!.content, "export class PaymentDto");
+  const audit = plan.toCreate.find((f) => f.path === "src/pay/dto/audit.ts");
+  assertStringIncludes(audit!.content, 'import type { AuditDto } from "@/src/core/dto/audit.ts";');
+  assertStringIncludes(audit!.content, "export type Audit = AuditDto;");
+});
+
+Deno.test("planManifest — renderTyp carries the modifiers in its declaration comment", () => {
+  const rune = `[MOD] inv
+
+[TYP:min=0,max=100] score: number
+    a bounded score
+[TYP] plain: string
+    no modifiers`;
+  const plan = planManifest("specs/inv.rune", rune, new Set());
+  const score = plan.toCreate.find((f) => f.path === "src/inv/dto/score.ts");
+  const plain = plan.toCreate.find((f) => f.path === "src/inv/dto/plain.ts");
+  assertStringIncludes(score!.content, "// rune declares: [TYP:min=0,max=100] score: number");
+  assertStringIncludes(plain!.content, "// rune declares: [TYP] plain: string");
+});
+
+// ---- coordinator weave: assert at every seam ----
+
+const TASKS_RUNE = `[MOD] tasks
+
+[REQ] task.create(CreateTaskDto): TaskDto
+    db:task.load(id): TaskDto
+    db:task.save(TaskDto): void
+
+[DTO] CreateTaskDto: id, title
+    in
+[DTO] TaskDto: id, title
+    the task
+
+[TYP] id: string
+    i
+[TYP] title: string
+    t`;
+
+Deno.test("planManifest — coordinator weave: input/read/write/output asserts", () => {
+  const plan = planManifest("specs/tasks.rune", TASKS_RUNE, new Set());
+  assertEquals(plan.errors, []);
+  const coord = plan.toCreate.find((f) =>
+    f.path === "src/tasks/domain/coordinators/task-create/mod.ts"
+  );
+  if (!coord) throw new Error("no coordinator generated");
+  const c = coord.content;
+  // DTO classes are runtime contracts now: value imports + the assert runtime.
+  assertStringIncludes(c, 'import { CreateTaskDto } from "@/src/tasks/dto/create-task.ts";');
+  assertStringIncludes(c, 'import { TaskDto } from "@/src/tasks/dto/task.ts";');
+  assertStringIncludes(c, 'import { assert } from "#assert";');
+  assertEquals(c.includes("import type"), false);
+  // input assert is the first statement; downstream reads use validInput.
+  assertStringIncludes(
+    c,
+    'export async function create(input: CreateTaskDto): Promise<TaskDto> {\n  const validInput = assert(CreateTaskDto, input, "task.create input");',
+  );
+  assertStringIncludes(c, "  // reads — load inputs through the data adapters (validated at the seam)");
+  assertStringIncludes(
+    c,
+    '  const taskLoad = assert(TaskDto, await taskData.load(validInput.id), "task.load");',
+  );
+  assertStringIncludes(c, "  const out = createCore(validInput, taskLoad);");
+  assertStringIncludes(c, "  // writes — side effects through the data adapters (validated before they leave)");
+  assertStringIncludes(
+    c,
+    '  await taskData.save(assert(TaskDto, out.save, "task.save input"));',
+  );
+  assertStringIncludes(c, '  return assert(TaskDto, out.result, "task.create output");');
+  // the raw `input.` reference and the old blind cast are gone.
+  assertEquals(c.includes("input.id"), false);
+  assertEquals(/ as TaskDto/.test(c), false);
+});
+
+Deno.test("planManifest — coordinator weave: no reads / no writes omit their sections", () => {
+  const noRead = `[MOD] m
+
+[REQ] task.archive(ArchiveDto): ReceiptDto
+    db:task.save(TaskDto): void
+
+[DTO] ArchiveDto: id
+    in
+[DTO] TaskDto: id
+    t
+[DTO] ReceiptDto: id
+    out
+[TYP] id: string
+    i`;
+  const planA = planManifest("specs/m.rune", noRead, new Set());
+  const a = planA.toCreate.find((f) => f.path.endsWith("task-archive/mod.ts"))!.content;
+  assertEquals(a.includes("// reads"), false);
+  assertStringIncludes(a, "  const out = archiveCore(validInput);");
+  assertStringIncludes(a, '  await taskData.save(assert(TaskDto, out.save, "task.save input"));');
+
+  const noWrite = `[MOD] m
+
+[REQ] task.peek(PeekDto): TaskDto
+    db:task.load(id): TaskDto
+
+[DTO] PeekDto: id
+    in
+[DTO] TaskDto: id
+    t
+[TYP] id: string
+    i`;
+  const planB = planManifest("specs/m.rune", noWrite, new Set());
+  const b = planB.toCreate.find((f) => f.path.endsWith("task-peek/mod.ts"))!.content;
+  assertEquals(b.includes("// writes"), false);
+  assertStringIncludes(b, '  const taskLoad = assert(TaskDto, await taskData.load(validInput.id), "task.load");');
+  assertStringIncludes(b, '  return assert(TaskDto, out.result, "task.peek output");');
+});
+
+Deno.test("planManifest — coordinator weave: empty-output boundary is a write (no `as ;`)", () => {
+  const rune = `[MOD] audit
+
+[REQ] event.record(EventDto): ReceiptDto
+    db:log.append(message)
+
+[DTO] EventDto: message
+    in
+[DTO] ReceiptDto: message
+    out
+[TYP] message: string
+    m`;
+  const plan = planManifest("specs/audit.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const c = plan.toCreate.find((f) => f.path.endsWith("event-record/mod.ts"))!.content;
+  // the proven invalid-TS shape is gone…
+  assertEquals(c.includes("as ;"), false);
+  // …replaced by a fire-and-forget write fed from the validated input.
+  assertStringIncludes(c, "  // writes — side effects through the data adapters (validated before they leave)");
+  assertStringIncludes(c, "  await logData.append(validInput.message);");
+  // it contributes no read variable and no core-output field.
+  assertEquals(c.includes("logAppend"), false);
+  assertStringIncludes(c, "  const out = recordCore(validInput);");
+  assertStringIncludes(c, "): { result: ReceiptDto } {");
+});
+
+Deno.test("planManifest — coordinator weave: primitive and opaque read seams", () => {
+  const rune = `[MOD] geo
+
+[REQ] place.find(FindDto): PlaceDto
+    db:counter.next(): id
+    ex:geo.lookup(query): GeoPoint
+
+[DTO] FindDto: query
+    in
+[DTO] PlaceDto: query
+    out
+[TYP] id: string
+    i
+[TYP] query: string
+    q`;
+  const plan = planManifest("specs/geo.rune", rune, new Set());
+  const c = plan.toCreate.find((f) => f.path.endsWith("place-find/mod.ts"))!.content;
+  // [TYP] alias to a primitive: assert.<prim>, no cast — the alias IS the primitive.
+  assertStringIncludes(c, '  const counterNext = assert.string(await counterData.next(), "counter.next");');
+  // unresolvable named type keeps the cast, flagged as unvalidated.
+  assertStringIncludes(
+    c,
+    '  const geoLookup = await geoData.lookup(validInput.query) as GeoPoint; // unvalidated: GeoPoint has no runtime contract',
+  );
+  // the core signature collapses the alias to its primitive.
+  assertStringIncludes(c, "counterNext: string, geoLookup: GeoPoint");
+});
+
+Deno.test("planManifest — :core DTOs import from src/core/dto in coordinator + controller", () => {
+  const rune = `[MOD] billing
+
+[ENT] http.charge(ChargeDto): AuditDto
+
+[REQ] charge.run(ChargeDto): AuditDto
+    [NEW] charge
+    [RET] AuditDto
+
+[DTO] ChargeDto: amount
+    in
+[DTO:core] AuditDto: amount
+    shared audit record
+[TYP] amount: number
+    a`;
+  const plan = planManifest("specs/billing.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const coord = plan.toCreate.find((f) => f.path.endsWith("charge-run/mod.ts"))!.content;
+  assertStringIncludes(coord, 'import { ChargeDto } from "@/src/billing/dto/charge.ts";');
+  assertStringIncludes(coord, 'import { AuditDto } from "@/src/core/dto/audit.ts";');
+  const ctrl = plan.toCreate.find((f) => f.path === "src/billing/entrypoints/http/mod.ts")!.content;
+  assertStringIncludes(ctrl, 'import { ChargeDto } from "@/src/billing/dto/charge.ts";');
+  assertStringIncludes(ctrl, 'import { AuditDto } from "@/src/core/dto/audit.ts";');
+});
+
+// ---- typed stubs through the full plan ----
+
+Deno.test("planManifest — adapter stubs are typed and Promise-wrapped", () => {
+  const plan = planManifest("specs/tasks.rune", TASKS_RUNE, new Set());
+  const adapter = plan.toCreate.find((f) =>
+    f.path === "src/tasks/domain/data/task/mod.ts"
+  );
+  if (!adapter) throw new Error("no adapter generated");
+  assertStringIncludes(adapter.content, 'import { TaskDto } from "@/src/tasks/dto/task.ts";');
+  assertStringIncludes(adapter.content, "  load(id: string): Promise<TaskDto> {");
+  assertStringIncludes(adapter.content, "  save(taskDto: TaskDto): Promise<void> {");
+  assertStringIncludes(adapter.content, 'throw new Error("not implemented");');
+});
+
+Deno.test("planManifest — business stubs are typed and sync", () => {
+  const rune = `[MOD] tasks
+
+[REQ] task.create(CreateTaskDto): TaskDto
+    task.build(title): TaskDto
+
+[DTO] CreateTaskDto: title
+    in
+[DTO] TaskDto: title
+    t
+[TYP] title: string
+    x`;
+  const plan = planManifest("specs/tasks.rune", rune, new Set());
+  const impl = plan.toCreate.find((f) =>
+    f.path === "src/tasks/domain/business/task/mod.ts"
+  );
+  if (!impl) throw new Error("no business impl generated");
+  assertStringIncludes(impl.content, "  build(title: string): TaskDto {");
+  assertEquals(impl.content.includes("Promise<"), false);
+});
+
+// ---- dead templates removed (design §8) ----
+
+Deno.test("DEFAULT_TEMPLATES — only the tpl()-honoring roles remain", () => {
+  assertEquals(Object.keys(DEFAULT_TEMPLATES).sort(), [
+    "adapter-smk-test",
+    "coordinator-int-test",
+    "mod-root",
+    "poly-base-mod",
+    "poly-base-test",
+    "poly-impl-mod",
+    "poly-impl-test",
+    "poly-mod",
+  ]);
 });
 
 // ---- WO-8: registry-driven lifecycle policy ----

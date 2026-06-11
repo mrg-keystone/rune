@@ -44,7 +44,7 @@ module.exports = grammar({
     mod_line: ($) => seq($.mod_tag, field("name", $.identifier)),
 
     // [ENT] Entrypoint (indent 0)
-    ent_tag: ($) => "[ENT]",
+    ent_tag: ($) => token(seq("[ENT", optional(seq(":", /[^\]\s]+/)), "]")),
     ent_line: ($) => seq($.ent_tag, $.signature, ":", $.return_type),
 
     // [PLY] Polymorphic step (indent 4)
@@ -64,15 +64,15 @@ module.exports = grammar({
     ret_line: ($) => seq($.ret_tag, choice(prec(2, $.dto_reference), $.type_name)),
 
     // [TYP] Type definition (indent 0)
-    typ_tag: ($) => choice("[TYP]", "[TYP:core]"),
+    typ_tag: ($) => token(seq("[TYP", optional(seq(":", /[^\]\s]+/)), "]")),
     typ_line: ($) => seq($.typ_tag, $.typ_name, ":", $.typ_type),
 
     // [DTO] DTO definition (indent 0)
-    dto_tag: ($) => choice("[DTO]", "[DTO:core]"),
+    dto_tag: ($) => token(seq("[DTO", optional(seq(":", /[^\]\s]+/)), "]")),
     dto_line: ($) => seq($.dto_tag, $.dto_def_name, ":", $.dto_prop, repeat(seq(",", optional($._ws), $.dto_prop))),
 
     // [NON] Noun declaration (indent 0)
-    non_tag: ($) => "[NON]",
+    non_tag: ($) => token(seq("[NON", optional(seq(":", /[^\]\s]+/)), "]")),
     non_line: ($) => seq($.non_tag, field("name", $.identifier)),
     // ---- end generated keyword rules ----------------------------------
 

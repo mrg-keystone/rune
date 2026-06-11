@@ -91,7 +91,26 @@
       "line": 17
     }
   ],
-  "typs": [],
+  "typs": [
+    {
+      "name": "amount",
+      "typeName": "number",
+      "description": "the amount",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 20
+    },
+    {
+      "name": "token",
+      "typeName": "string",
+      "description": "the token",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 22
+    }
+  ],
   "nons": [
     {
       "name": "card",

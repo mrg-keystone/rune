@@ -1,0 +1,33 @@
+[MOD] inventory
+
+[REQ] item.add(AddItemDto): ItemDto
+    db:item.save(AddItemDto): ItemDto
+      conflict
+    [RET] ItemDto
+
+[TYP:ext,uuid] externalId: string
+    an external identifier supplied by the source system
+
+[TYP:uuid] id: string
+    a generated unique identifier for the item
+
+[TYP:nonempty] name: string
+    a non-empty human-readable item name
+
+[TYP:nonempty] tag: string
+    a non-empty label applied to an item
+
+[TYP:min=0,max=100] quantity: number
+    a stock count bounded between zero and one hundred
+
+[TYP:uuid] aisle: string
+    the warehouse aisle identifier
+
+[DTO] LocationDto: aisle
+    where an item is physically stored
+
+[DTO] AddItemDto: externalId, name, quantity, tag(s)
+    a request to add an item to the inventory
+
+[DTO] ItemDto: id, name, quantity, tag(s), location
+    a stored inventory item with its location and tags

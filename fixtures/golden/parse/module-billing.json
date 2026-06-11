@@ -54,7 +54,35 @@
       "line": 10
     }
   ],
-  "typs": [],
+  "typs": [
+    {
+      "name": "customerId",
+      "typeName": "string",
+      "description": "the customerId",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 13
+    },
+    {
+      "name": "amount",
+      "typeName": "number",
+      "description": "the amount",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 15
+    },
+    {
+      "name": "id",
+      "typeName": "string",
+      "description": "the id",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 17
+    }
+  ],
   "nons": [],
   "errors": []
 }

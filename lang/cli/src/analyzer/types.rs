@@ -16,7 +16,7 @@ pub fn extract_types(lines: &[ParsedLine]) -> Vec<TypeInfo> {
     let mut i = 0;
 
     while i < lines.len() {
-        if let LineKind::TypDef { name, type_name } = &lines[i].kind {
+        if let LineKind::TypDef { name, type_name, .. } = &lines[i].kind {
             let mut description = None;
 
             // Look for description on following lines

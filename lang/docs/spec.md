@@ -175,6 +175,25 @@ Define named types using `[TYP]` blocks. Types are the primitive building blocks
 - Types give semantic meaning to primitives (e.g., `id` vs raw `string`)
 - Types that resolve to primitives (e.g., `url: string`) are valid at system boundaries
 
+### Type modifiers
+
+The bracket slot takes a comma-separated modifier list:
+
+```
+[TYP:uuid] id: string
+    a unique identifier
+[TYP:min=0,max=100] qty: number
+    an order quantity
+[TYP:ext,uuid] memberId: string
+    minted by the members module
+```
+
+- Format: `[TYP:mod,mod,...] name: primitive` — one bracket slot, commas
+- Routing/source modifiers (`core`, `ext`) and constraint modifiers
+  (`uuid`, `min=0`, ...) compose freely in the same list
+- Constraint modifiers become class-validator decorators on generated DTO
+  fields — see **Constraint Modifiers** below for the full table
+
 ### Type Descriptions
 
 Types can include multi-line descriptions indented 4 spaces below the definition:
@@ -330,6 +349,24 @@ The LSP enforces these rules:
 - Description must be indented 4 spaces
 - Missing descriptions generate an error
 
+### Modifier validation
+
+`[TYP]` modifiers are validated (the LSP and `rune check` emit identical
+messages):
+
+- Unknown modifier:
+  `[TYP] unknown modifier "<m>" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive)`
+- Constraint on the wrong base primitive:
+  `[TYP] modifier "<m>" requires a <string|number> type, but "<name>" is <declaredType>`
+- Missing or non-numeric value on `min`/`max`:
+  `[TYP] modifier "<m>" requires a numeric value (e.g. min=0)`
+  — and a value on a modifier that takes none:
+  `[TYP] modifier "<m>" does not take a value`
+
+`[REQ]` takes **no** modifier: any `[REQ:x]` is an error
+(`[REQ] does not take a modifier`; `[REQ:core]` keeps its specific message —
+coordinators are module-level by definition).
+
 ## Module Directive
 
 A `.rune` file describes one module. The `[MOD]` directive at the top of the file names it.
@@ -360,6 +397,45 @@ By default, every `[REQ]`, `[DTO]`, `[TYP]`, and untagged business step belongs 
 - **Not allowed** on `[REQ:core]` — coordinators are module-level by definition; `core/` has no `coordinators/` slot
 - Without the modifier, the element belongs to the current `[MOD]`
 - Core elements are importable from any module; module elements are not
+
+## Constraint Modifiers
+
+Beyond routing (`core`) and sourcing (`ext`), the `[TYP]` bracket slot takes
+**constraint modifiers** — runtime validation rules attached to the type.
+Every generated DTO field of that type carries the matching class-validator
+decorator, and the generated coordinator asserts them at every seam.
+
+```
+[TYP:uuid] id: string
+    a unique identifier
+[TYP:min=0,max=100] qty: number
+    an order quantity
+[TYP:ext,uuid] memberId: string
+    minted by the members module
+```
+
+| Modifier   | Requires | Decorator (scalar)  | Decorator (`(s)` array)                |
+| ---------- | -------- | ------------------- | -------------------------------------- |
+| `ext`      | —        | —                   | —                                      |
+| `core`     | —        | —                   | —                                      |
+| `uuid`     | `string` | `@IsUUID()`         | `@IsUUID(undefined, { each: true })`   |
+| `email`    | `string` | `@IsEmail()`        | `@IsEmail(undefined, { each: true })`  |
+| `url`      | `string` | `@IsUrl()`          | `@IsUrl(undefined, { each: true })`    |
+| `nonempty` | `string` | `@IsNotEmpty()`     | `@IsNotEmpty({ each: true })`          |
+| `int`      | `number` | `@IsInt()`          | `@IsInt({ each: true })`               |
+| `min=N`    | `number` | `@Min(N)`           | `@Min(N, { each: true })`              |
+| `max=N`    | `number` | `@Max(N)`           | `@Max(N, { each: true })`              |
+| `positive` | `number` | `@IsPositive()`     | `@IsPositive({ each: true })`          |
+
+- Modifiers are comma-separated in the single bracket slot; order is kept
+- `ext` / `core` keep their semantics and compose with constraints
+  (`[TYP:ext,uuid]` is both an external input and a UUID)
+- Only `min` / `max` take a value (`min=0`); the value must be numeric
+- A constraint requires its base primitive: string constraints on `string`
+  types, number constraints on `number` types
+- `int` **replaces** `@IsNumber()` on the field (it is strictly narrower)
+- A DTO array property of a constrained type (`qty(s)`) uses the
+  `{ each: true }` decorator forms
 
 ## Entrypoint
 
@@ -468,11 +544,16 @@ All keyword tags are exactly 3 letters inside brackets (`[XXX]`). This ensures c
 | `[TYP]` | Type definition               |
 | `[DTO]` | DTO definition                |
 
-Modifiers (appended inside the bracket):
+Modifiers (appended inside the bracket; `[TYP]` takes a comma-separated list):
 
-| Modifier | Applies to              | Effect                          |
-| -------- | ----------------------- | ------------------------------- |
-| `:core`  | `[DTO]`, `[TYP]`        | routes to `src/core/...`        |
+| Modifier                             | Applies to       | Effect                                 |
+| ------------------------------------ | ---------------- | -------------------------------------- |
+| `:core`                              | `[DTO]`, `[TYP]` | routes to `src/core/...`               |
+| `:ext`                               | `[TYP]`          | value produced outside this module     |
+| `:uuid` `:email` `:url` `:nonempty`  | `[TYP]` (string) | constraint → class-validator decorator |
+| `:int` `:min=N` `:max=N` `:positive` | `[TYP]` (number) | constraint → class-validator decorator |
+
+See **Constraint Modifiers** for the full decorator table.
 
 ## Traced Example
 

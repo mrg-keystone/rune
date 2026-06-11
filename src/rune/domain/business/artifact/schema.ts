@@ -64,6 +64,12 @@ export const ModifierSchema = z.object({
   appliesTo: z.array(z.string()),
   syntax: z.string().optional(),
   description: z.string().optional(),
+  // [TYP] constraint modifiers (validation tier 3): "constraint" entries carry
+  // the class-validator decorator they emit and whether they take a value
+  // ("min=0"). Optional so routing modifiers (core/ext) stay as they are.
+  kind: z.string().optional(),
+  decorator: z.string().optional(),
+  param: z.enum(["none", "number"]).optional(),
 });
 
 export const BoundariesSchema = z.object({
@@ -85,6 +91,14 @@ export const LintRuleSchema = z.object({
   // governance (D6): org-locked rules cannot be weakened by a project overlay.
   locked: z.boolean().optional(),
   owner: z.string().optional(),
+});
+
+// ---- codegen profiles (D7) -------------------------------------------------
+
+export const ProfileSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().optional(),
+  vars: z.record(z.string(), z.unknown()),
 });
 
 // ---- bindings: canonical-path placeholder -> rune element (WO-4a) ----------
@@ -149,12 +163,17 @@ export const ArtifactSchema = z.object({
   // canonical folder layout (the `structure` rule's spec); folded in from the
   // former assets/canonical-paths.json so the artifact is the one source.
   canonicalPaths: z.record(z.string(), z.unknown()).optional(),
+  // codegen profiles (optional today; an artifact that DOES declare them must
+  // keep them gap-free — see semanticErrors. zod would otherwise strip the key
+  // and the L1 profile-gap fixture would silently validate).
+  profiles: z.array(ProfileSchema).optional(),
 });
 
 export type CodegenTemplate = z.infer<typeof CodegenTemplateSchema>;
 export type Tag = z.infer<typeof TagSchema>;
 export type Modifier = z.infer<typeof ModifierSchema>;
 export type LintRule = z.infer<typeof LintRuleSchema>;
+export type Profile = z.infer<typeof ProfileSchema>;
 export type Binding = z.infer<typeof BindingSchema>;
 export type TemplatePolicy = z.infer<typeof TemplatePolicySchema>;
 export type Codegen = z.infer<typeof CodegenSchema>;

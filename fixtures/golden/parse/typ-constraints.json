@@ -1,0 +1,143 @@
+{
+  "module": "inventory",
+  "reqs": [
+    {
+      "noun": "item",
+      "verb": "add",
+      "input": "AddItemDto",
+      "output": "ItemDto",
+      "steps": [
+        {
+          "kind": "boundary",
+          "tag": "db",
+          "noun": "item",
+          "verb": "save",
+          "params": [
+            "AddItemDto"
+          ],
+          "output": "ItemDto",
+          "isStatic": false,
+          "faults": [
+            "conflict"
+          ],
+          "line": 3
+        },
+        {
+          "kind": "ret",
+          "value": "ItemDto",
+          "line": 5
+        }
+      ],
+      "line": 2
+    }
+  ],
+  "ents": [],
+  "dtos": [
+    {
+      "name": "LocationDto",
+      "properties": [
+        "aisle"
+      ],
+      "description": "where an item is physically stored",
+      "isCore": false,
+      "line": 25
+    },
+    {
+      "name": "AddItemDto",
+      "properties": [
+        "externalId",
+        "name",
+        "quantity",
+        "tag(s)"
+      ],
+      "description": "a request to add an item to the inventory",
+      "isCore": false,
+      "line": 28
+    },
+    {
+      "name": "ItemDto",
+      "properties": [
+        "id",
+        "name",
+        "quantity",
+        "tag(s)",
+        "location"
+      ],
+      "description": "a stored inventory item with its location and tags",
+      "isCore": false,
+      "line": 31
+    }
+  ],
+  "typs": [
+    {
+      "name": "externalId",
+      "typeName": "string",
+      "description": "an external identifier supplied by the source system",
+      "isCore": false,
+      "isExternal": true,
+      "modifiers": [
+        "ext",
+        "uuid"
+      ],
+      "line": 7
+    },
+    {
+      "name": "id",
+      "typeName": "string",
+      "description": "a generated unique identifier for the item",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [
+        "uuid"
+      ],
+      "line": 10
+    },
+    {
+      "name": "name",
+      "typeName": "string",
+      "description": "a non-empty human-readable item name",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [
+        "nonempty"
+      ],
+      "line": 13
+    },
+    {
+      "name": "tag",
+      "typeName": "string",
+      "description": "a non-empty label applied to an item",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [
+        "nonempty"
+      ],
+      "line": 16
+    },
+    {
+      "name": "quantity",
+      "typeName": "number",
+      "description": "a stock count bounded between zero and one hundred",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [
+        "min=0",
+        "max=100"
+      ],
+      "line": 19
+    },
+    {
+      "name": "aisle",
+      "typeName": "string",
+      "description": "the warehouse aisle identifier",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [
+        "uuid"
+      ],
+      "line": 22
+    }
+  ],
+  "nons": [],
+  "errors": []
+}

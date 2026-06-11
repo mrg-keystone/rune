@@ -1,0 +1,2 @@
+[TYP:uuid] count: number
+    a numeric type wrongly marked as a uuid string

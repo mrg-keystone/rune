@@ -122,6 +122,19 @@
           },
           "description": {
             "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "decorator": {
+            "type": "string"
+          },
+          "param": {
+            "type": "string",
+            "enum": [
+              "none",
+              "number"
+            ]
           }
         },
         "required": [
@@ -330,6 +343,33 @@
         "type": "string"
       },
       "additionalProperties": {}
+    },
+    "profiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string"
+          },
+          "vars": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "id",
+          "vars"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [

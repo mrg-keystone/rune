@@ -85,6 +85,21 @@ Edit the spec and re-run `rune sync` anytime — `deno check` shows you exactly 
 to reconcile (a new abstract method to implement, or a stray one to delete).
 `rune sync --force` prunes files a spec no longer declares.
 
+## First-class validation
+
+- **Constraints in the spec**: `[TYP:uuid] id: string`,
+  `[TYP:min=0,max=100] qty: number` — comma-separated `[TYP]` modifiers
+  (`uuid`, `email`, `url`, `nonempty`, `int`, `min=N`, `max=N`, `positive`;
+  they compose with `ext`/`core`) become class-validator decorators on the
+  generated DTO fields.
+- **Asserts at every seam**: generated coordinators validate input, adapter
+  reads/writes, and the result via `assert` from `#assert` (keep's runtime).
+  A failed contract throws `RuneAssertError`, which keep maps to HTTP 422
+  with `{ target, context, failures }` and dotted paths (`lines.1.qty`).
+- `RUNE_ASSERT=off` turns every assert into a passthrough (trusted prod);
+  the `no-dto-cast` lint keeps hand-written coordinator code from bypassing
+  the seams with blind `as XxxDto` casts.
+
 ## Language
 
 The language itself — tags, codegen templates, lint rules, folder layout — lives in

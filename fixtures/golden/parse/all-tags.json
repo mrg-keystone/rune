@@ -95,7 +95,18 @@
       "typeName": "number",
       "description": "a positive monetary amount",
       "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
       "line": 11
+    },
+    {
+      "name": "items",
+      "typeName": "string",
+      "description": "the items",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 26
     }
   ],
   "nons": [

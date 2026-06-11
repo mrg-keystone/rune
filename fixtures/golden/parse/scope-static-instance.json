@@ -78,7 +78,17 @@
       "line": 16
     }
   ],
-  "typs": [],
+  "typs": [
+    {
+      "name": "name",
+      "typeName": "string",
+      "description": "the name",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 19
+    }
+  ],
   "nons": [
     {
       "name": "account",

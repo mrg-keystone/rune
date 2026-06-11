@@ -13,6 +13,7 @@ Derived from LSP implementation.
 | Fault format: lowercase, hyphenated, space-separated | ERROR |
 | `[DTO]` format: `[DTO] NameDto: prop1, prop2` | ERROR |
 | `[TYP]` format: `[TYP] name: type` | ERROR |
+| `[TYP]` modifier form: `[TYP:mod,mod,...] name: type` (comma-separated) | ERROR |
 | Tags must be exactly 3 letters in brackets | ERROR |
 | Instance methods use `.` separator | ERROR |
 | Static methods use `::` separator | ERROR |
@@ -33,6 +34,13 @@ Derived from LSP implementation.
 
 ## Scope
 
+> **Documented, intentionally not enforced.** These rules describe how to
+> reason about scope when authoring a spec, but the LSP deliberately does NOT
+> implement them: diagnostics mirror what `rune sync`/`manifest` (the TS
+> parser) actually enforce — structure + shape — and the generator performs no
+> scope/usage checks. Inventing them would wrongly reject specs the valid
+> corpus exercises. See the design comment at `lang/lsp/src/main.rs:25-30`.
+
 | Rule | Severity |
 |------|----------|
 | Instance method noun must be in scope | ERROR |
@@ -51,6 +59,7 @@ Derived from LSP implementation.
 | Output must be DTO | ERROR |
 | Last step must return REQ output type | ERROR |
 | No duplicate `noun.verb` pairs | ERROR |
+| `[REQ]` takes no modifier (any `[REQ:x]` is rejected) | ERROR |
 | Double blank line between REQs | WARNING |
 
 ## Signatures
@@ -85,6 +94,16 @@ Derived from LSP implementation.
 | Cannot reference other `[TYP]` definitions | ERROR |
 | Each name must be unique | ERROR |
 | All defined types must be used | WARNING |
+| Bracket modifiers are comma-separated: `[TYP:ext,uuid]` | - |
+| Unknown modifier (allowed: `ext`, `core`, `uuid`, `email`, `url`, `nonempty`, `int`, `min=<n>`, `max=<n>`, `positive`) | ERROR |
+| `uuid` / `email` / `url` / `nonempty` require a `string` type | ERROR |
+| `int` / `min=N` / `max=N` / `positive` require a `number` type | ERROR |
+| `min` / `max` require a numeric value (e.g. `min=0`) | ERROR |
+| Value on a modifier that takes none | ERROR |
+
+Constraint modifiers become class-validator decorators on generated DTO
+fields (`(s)` array properties use the `{ each: true }` forms) — the full
+decorator table is in `spec.md` under **Constraint Modifiers**.
 
 Built-in primitives: `string`, `number`, `boolean`, `void`, `Uint8Array`, `Class`, `Primitive`
 
@@ -152,3 +171,38 @@ Array property syntax:
 | No blank lines between steps within REQ | - |
 | Double blank line between REQs | WARNING |
 | Blank line ends DTO/TYP description block | - |
+
+## Generated code: validated seams
+
+Generated coordinators validate every seam at runtime via
+`import { assert } from "#assert"` — keep's assert runtime; `rune sync` maps
+the `#assert` alias in the project's `deno.json`. Context labels use the
+REQ's `noun.verb` for input/result and the boundary step's `noun.verb` for
+reads/writes:
+
+- the request **input**: `assert(InputDto, input, "task.create input")`,
+  first statement of the shell
+- every data-adapter **read**: `assert(TDto, await ..., "task.load")`;
+  reads whose type resolves to a primitive use
+  `assert.string` / `assert.number` / `assert.boolean` / `assert.uint8Array`
+- every DTO **write** argument before it leaves:
+  `assert(WDto, out.field, "task.save input")`
+- the **result**:
+  `return assert(OutputDto, out.result, "task.create output")`
+
+A failed contract throws `RuneAssertError`; keep maps it to HTTP 422 with
+`{ target, context, failures }` and dotted failure paths (`lines.1.qty`).
+Named types with no runtime contract keep an `as` cast plus a trailing
+`// unvalidated: <type> has no runtime contract` comment. `RUNE_ASSERT=off`
+turns every assert into a passthrough (trusted prod mode). Entrypoint
+controllers stay validation-free — validation lives in the coordinator.
+
+### Lint: no-dto-cast
+
+| Rule | Severity |
+|------|----------|
+| A coordinator must not cast with `as XxxDto` | ERROR |
+
+Message: `coordinator casts to "<X>Dto" — validate the seam with
+assert(<X>Dto, ...) instead of a blind cast`. Applies to coordinator-layer
+files only (test files exempt).

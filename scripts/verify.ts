@@ -433,11 +433,11 @@ async function gateL6(): Promise<GateResult> {
   }
   const tmplMutated = structuredClone(artifact.codegen.templates);
   const MARKER = "// L6-TEMPLATE-MUTATION-MARKER";
-  tmplMutated["dto"] = MARKER + "\n" + tmplMutated["dto"];
+  tmplMutated["adapter-smk-test"] = MARKER + "\n" + tmplMutated["adapter-smk-test"];
   const planTmpl = planManifest(rel, text, new Set(), { codegen: tmplMutated });
-  const dtoFile = planTmpl.toCreate.find((f) => f.path.includes("/dto/"));
-  if (!dtoFile || !dtoFile.content.includes(MARKER)) {
-    bad.push("mutating the 'dto' codegen template did not change the generated DTO file content");
+  const smkFile = planTmpl.toCreate.find((f) => f.path.endsWith("/smk.test.ts"));
+  if (!smkFile || !smkFile.content.includes(MARKER)) {
+    bad.push("mutating the 'adapter-smk-test' codegen template did not change the generated smoke-test content");
   }
 
   // (c) PARSE recognition mutation (WO-4c). The parser recognises tag literals

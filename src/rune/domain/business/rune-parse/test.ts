@@ -34,7 +34,19 @@ Deno.test("parse — bare [REQ]", () => {
 Deno.test("parse — [REQ:core] is rejected", () => {
   const ast = parse("[REQ:core] foo.bar(InDto): OutDto");
   assertEquals(ast.errors.length, 1);
-  assertEquals(ast.errors[0].message.includes("invalid"), true);
+  assertEquals(
+    ast.errors[0].message,
+    "[REQ:core] is invalid — coordinators are module-level",
+  );
+});
+
+Deno.test("parse — any other [REQ:x] modifier is rejected", () => {
+  const ast = parse("[REQ:flow] foo.bar(InDto): OutDto");
+  assertEquals(ast.errors.length, 1);
+  assertEquals(ast.errors[0].message, "[REQ] does not take a modifier");
+  // The signature still parses — same recovery as the :core case.
+  assertEquals(ast.reqs.length, 1);
+  assertEquals(ast.reqs[0].noun, "foo");
 });
 
 Deno.test("parse — step under REQ", () => {
@@ -151,6 +163,102 @@ Deno.test("parse — [TYP] with description", () => {
 Deno.test("parse — [TYP:core] sets isCore", () => {
   const ast = parse("[TYP:core] timestamp: number");
   assertEquals(ast.typs[0].isCore, true);
+});
+
+Deno.test("parse — plain [TYP] has empty modifiers", () => {
+  const ast = parse("[TYP] url: string");
+  assertEquals(ast.errors, []);
+  assertEquals(ast.typs[0].modifiers, []);
+  assertEquals(ast.typs[0].isCore, false);
+  assertEquals(ast.typs[0].isExternal, false);
+});
+
+Deno.test("parse — [TYP:uuid] populates modifiers", () => {
+  const ast = parse("[TYP:uuid] id: string");
+  assertEquals(ast.errors, []);
+  assertEquals(ast.typs[0].modifiers, ["uuid"]);
+  assertEquals(ast.typs[0].isCore, false);
+  assertEquals(ast.typs[0].isExternal, false);
+});
+
+Deno.test("parse — [TYP:ext,uuid] sets isExternal and keeps both", () => {
+  const ast = parse("[TYP:ext,uuid] id: string");
+  assertEquals(ast.errors, []);
+  assertEquals(ast.typs[0].isExternal, true);
+  assertEquals(ast.typs[0].isCore, false);
+  assertEquals(ast.typs[0].modifiers, ["ext", "uuid"]);
+});
+
+Deno.test("parse — [TYP:core,nonempty] sets isCore and keeps both", () => {
+  const ast = parse("[TYP:core,nonempty] name: string");
+  assertEquals(ast.errors, []);
+  assertEquals(ast.typs[0].isCore, true);
+  assertEquals(ast.typs[0].isExternal, false);
+  assertEquals(ast.typs[0].modifiers, ["core", "nonempty"]);
+});
+
+Deno.test("parse — [TYP:min=0,max=100] keeps values, source order", () => {
+  const ast = parse("[TYP:min=0,max=100] qty: number");
+  assertEquals(ast.errors, []);
+  assertEquals(ast.typs[0].modifiers, ["min=0", "max=100"]);
+});
+
+Deno.test("parse — unknown [TYP] modifier message is byte-exact", () => {
+  const ast = parse("[TYP:bogus] id: string");
+  assertEquals(ast.errors.length, 1);
+  assertEquals(
+    ast.errors[0].message,
+    '[TYP] unknown modifier "bogus" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive)',
+  );
+  // The typ itself still parses; the invalid modifier is dropped.
+  assertEquals(ast.typs[0].modifiers, []);
+});
+
+Deno.test("parse — string constraint on a number type is byte-exact", () => {
+  const ast = parse("[TYP:uuid] count: number");
+  assertEquals(ast.errors.length, 1);
+  assertEquals(
+    ast.errors[0].message,
+    '[TYP] modifier "uuid" requires a string type, but "count" is number',
+  );
+});
+
+Deno.test("parse — number constraint on a string type is byte-exact", () => {
+  const ast = parse("[TYP:min=0] name: string");
+  assertEquals(ast.errors.length, 1);
+  assertEquals(
+    ast.errors[0].message,
+    '[TYP] modifier "min" requires a number type, but "name" is string',
+  );
+});
+
+Deno.test("parse — [TYP:min] without value is byte-exact", () => {
+  const ast = parse("[TYP:min] qty: number");
+  assertEquals(ast.errors.length, 1);
+  assertEquals(
+    ast.errors[0].message,
+    '[TYP] modifier "min" requires a numeric value (e.g. min=0)',
+  );
+});
+
+Deno.test("parse — value on a value-less [TYP] modifier is byte-exact", () => {
+  const ast = parse("[TYP:uuid=4] id: string");
+  assertEquals(ast.errors.length, 1);
+  assertEquals(
+    ast.errors[0].message,
+    '[TYP] modifier "uuid" does not take a value',
+  );
+});
+
+Deno.test("parse — ext composes with constraints and descriptions", () => {
+  const ast = parse(
+    `[TYP:ext,uuid] externalId: string
+    an id minted by another module`,
+  );
+  assertEquals(ast.errors, []);
+  assertEquals(ast.typs[0].isExternal, true);
+  assertEquals(ast.typs[0].modifiers, ["ext", "uuid"]);
+  assertEquals(ast.typs[0].description, "an id minted by another module");
 });
 
 Deno.test("parse — multi-line description joins with spaces", () => {

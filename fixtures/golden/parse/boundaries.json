@@ -145,7 +145,17 @@
       "line": 23
     }
   ],
-  "typs": [],
+  "typs": [
+    {
+      "name": "payload",
+      "typeName": "string",
+      "description": "the payload",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 26
+    }
+  ],
   "nons": [],
   "errors": []
 }

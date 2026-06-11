@@ -1,6 +1,11 @@
 // Rune line-based parser. Pure function: text → structured AST.
 // Mirrors rune/parser/src/lib.rs but produces a tree instead of a flat line list.
 
+import {
+  parseTypModifiers,
+  TYP_MODIFIERS,
+} from "@rune/domain/business/rune-modifiers/mod.ts";
+
 export type BoundaryTag = "db" | "fs" | "mq" | "ex" | "os" | "lg";
 
 export interface RuneAst {
@@ -109,6 +114,14 @@ export interface TypNode {
    * external-input binds instead of leaving them unwired.
    */
   isExternal: boolean;
+  /**
+   * Raw bracket modifiers in source order, e.g. `[TYP:ext,uuid]` →
+   * ["ext", "uuid"], `[TYP:min=0,max=100]` → ["min=0", "max=100"]. Includes
+   * ext/core; constraint modifiers map to class-validator decorators via
+   * TYP_MODIFIERS (rune-modifiers). Invalid items are dropped (and reported
+   * in ast.errors).
+   */
+  modifiers: string[];
   line: number;
 }
 
@@ -194,11 +207,14 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
       continue;
     }
 
-    // [REQ] (possibly with :core, but :core is invalid here)
+    // [REQ] — takes no modifier at all (mirrors the Rust LSP, which rejects
+    // any [REQ:x]; the :core form keeps its long-standing specific message).
     const reqTag = rec.match(trimmed, "req");
     if (reqTag) {
       if (reqTag.modifier === "core") {
         ast.errors.push({ line: i, message: "[REQ:core] is invalid — coordinators are module-level" });
+      } else if (reqTag.modifier !== null) {
+        ast.errors.push({ line: i, message: "[REQ] does not take a modifier" });
       }
       const sig = parseReqSignature(reqTag.rest);
       if (!sig) {
@@ -264,23 +280,40 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
       continue;
     }
 
-    // [TYP] / [TYP:core]
+    // [TYP] — the bracket slot is a comma-separated modifier list:
+    // [TYP:core], [TYP:ext,uuid], [TYP:min=0,max=100]. ext/core compose with
+    // the constraint modifiers; validation messages mirror the LSP byte-for-byte.
     const typTag = rec.match(trimmed, "typ");
     if (typTag) {
-      const isCore = typTag.modifier === "core";
-      const isExternal = typTag.modifier === "ext";
+      const { mods, errors: modErrors } = parseTypModifiers(typTag.modifier);
+      for (const message of modErrors) ast.errors.push({ line: i, message });
       const colon = typTag.rest.indexOf(":");
       if (colon === -1) {
         ast.errors.push({ line: i, message: "[TYP] missing type" });
       } else {
         const name = typTag.rest.slice(0, colon).trim();
         const typeName = typTag.rest.slice(colon + 1).trim();
+        // Base-type applicability: a constraint only fits its base primitive
+        // (e.g. uuid → string). The parser knows the declared type, so the
+        // check lives here, not in parseTypModifiers.
+        for (const mod of mods) {
+          const id = mod.split("=")[0];
+          const spec = TYP_MODIFIERS.get(id);
+          if (spec?.base && spec.base !== typeName) {
+            ast.errors.push({
+              line: i,
+              message:
+                `[TYP] modifier "${id}" requires a ${spec.base} type, but "${name}" is ${typeName}`,
+            });
+          }
+        }
         const node: TypNode = {
           name,
           typeName,
           description: "",
-          isCore,
-          isExternal,
+          isCore: mods.includes("core"),
+          isExternal: mods.includes("ext"),
+          modifiers: mods,
           line: i,
         };
         ast.typs.push(node);

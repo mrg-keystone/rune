@@ -13,6 +13,9 @@ const VALIDATION_PATTERNS = [
   /\bv\.\w+\(/,
   /@Is\w+\(/,
   /@Valid\w*\(/,
+  // @Allow marks a field the whitelist keeps — it is class-validator config,
+  // emitted for fields the spec couldn't resolve to a [TYP]/[DTO].
+  /@Allow\(/,
   /@Transform\(/,
   /\bplainToInstance\b/,
   /\binstanceToPlain\b/,

@@ -66,6 +66,7 @@
       "action": "createOrder",
       "input": "NewOrderDto",
       "output": "OrderDto",
+      "modifier": null,
       "line": 2
     },
     {
@@ -73,6 +74,7 @@
       "action": "payOrder",
       "input": "PayDto",
       "output": "ReceiptDto",
+      "modifier": null,
       "line": 3
     }
   ],
@@ -121,6 +123,8 @@
       "typeName": "string",
       "description": "the item to order",
       "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
       "line": 24
     },
     {
@@ -128,6 +132,8 @@
       "typeName": "string",
       "description": "the order id",
       "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
       "line": 26
     },
     {
@@ -135,6 +141,8 @@
       "typeName": "string",
       "description": "the receipt code",
       "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
       "line": 28
     }
   ],

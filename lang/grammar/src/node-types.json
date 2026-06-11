@@ -167,11 +167,6 @@
     "fields": {}
   },
   {
-    "type": "dto_tag",
-    "named": true,
-    "fields": {}
-  },
-  {
     "type": "ent_line",
     "named": true,
     "fields": {},
@@ -664,11 +659,6 @@
     "fields": {}
   },
   {
-    "type": "typ_tag",
-    "named": true,
-    "fields": {}
-  },
-  {
     "type": "typ_tuple_type",
     "named": true,
     "fields": {},
@@ -779,23 +769,7 @@
     "named": false
   },
   {
-    "type": "[DTO:core]",
-    "named": false
-  },
-  {
-    "type": "[DTO]",
-    "named": false
-  },
-  {
     "type": "[NEW]",
-    "named": false
-  },
-  {
-    "type": "[TYP:core]",
-    "named": false
-  },
-  {
-    "type": "[TYP]",
     "named": false
   },
   {
@@ -825,6 +799,10 @@
   },
   {
     "type": "dto_optional_marker",
+    "named": true
+  },
+  {
+    "type": "dto_tag",
     "named": true
   },
   {
@@ -889,6 +867,10 @@
   },
   {
     "type": "typ_enum_value",
+    "named": true
+  },
+  {
+    "type": "typ_tag",
     "named": true
   },
   {
