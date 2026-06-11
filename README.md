@@ -848,3 +848,30 @@ or the user's **Firebase ID token** as `Authorization: Bearer <idToken>` (with
 ```sh
 deno test -A --unstable-raw-imports
 ```
+
+## Releasing
+
+Every push to `main` publishes to JSR via `.github/workflows/publish.yml`
+(reusable — it derives scope/package from `deno.json`'s `name`; drop it plus
+`scripts/check-jsr-deps.ts` into any JSR repo with a `JSR_TOKEN` secret):
+
+- A **preflight** emulates JSR's server-side dependency validation locally
+  (`jsr:` subpath exports across all versions matching each range) plus a
+  `deno publish --dry-run`, so bad packages fail in seconds instead of after a
+  ~10-minute server round trip.
+- If `deno.json`'s version is **not yet on JSR**, it publishes as-is — set the
+  version yourself to cut a specific release. Otherwise the next version is
+  derived from the latest published one: **patch** by default, **minor** when
+  the push contains a `feat:` commit, **major** on `!:` / `BREAKING CHANGE` —
+  and the bump is committed back to `main`.
+- The publish step polls the JSR API instead of trusting the CLI: `deno
+  publish` neither exits after a successful publish nor reports a failed
+  server-side task. Server-side processing alone has taken **~22 minutes** for
+  this package, so a silent "Publishing ..." for a long while is normal.
+- **Do not cancel a publish run that looks hung.** JSR's backend does not
+  release the package transaction lock when the client disconnects, so the
+  next publish attempt hangs too
+  ([jsr-io/jsr#1448](https://github.com/jsr-io/jsr/issues/1448)). Let the
+  20-minute window expire — a task failure surfaces its real error within
+  ~20 seconds; only a stuck-in-processing task waits the window out. Stuck
+  tasks can be requeued from the package's publishing-tasks page on jsr.io.
