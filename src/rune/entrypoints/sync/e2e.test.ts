@@ -120,6 +120,59 @@ Deno.test("sync scaffolds beside the spec, moves the spec in, and re-syncs in pl
   }
 });
 
+Deno.test("sync collects written paths and is physically quiet on a no-change re-run", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(join(root, "specs"), { recursive: true });
+    const runePath = join(root, "specs", "orders.rune");
+    await Deno.writeTextFile(runePath, SPEC);
+
+    // First sync: the collector records every write + BOTH sides of the spec move.
+    const written: string[] = [];
+    assertEquals(await runSync([runePath, "--root", root], written), 0);
+    assert(written.length > 0, "first sync must record its writes");
+    assert(
+      written.includes(runePath),
+      "spec move source must be recorded",
+    );
+    assert(
+      written.includes(join(root, "src/orders/orders.rune")),
+      "spec move target must be recorded",
+    );
+    assert(
+      written.includes(join(root, "deno.json")),
+      "deno.json write must be recorded",
+    );
+
+    // Second sync with NO changes: byte-identical content is skipped everywhere,
+    // so nothing is written and the collector stays empty (rune dev's quiet loop).
+    const again: string[] = [];
+    const before = await mtimes(root);
+    assertEquals(
+      await runSync([join(root, "src/orders/orders.rune"), "--root", root], again),
+      0,
+    );
+    assertEquals(again, [], "no-change re-sync must write nothing");
+    assertEquals(await mtimes(root), before, "no mtime may change on a no-change re-sync");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+// Every file's mtime under root, as a stable fingerprint of "nothing was touched".
+async function mtimes(root: string): Promise<string> {
+  const out: string[] = [];
+  async function walk(dir: string): Promise<void> {
+    for await (const e of Deno.readDir(dir)) {
+      const p = join(dir, e.name);
+      if (e.isDirectory) await walk(p);
+      else out.push(`${p}:${(await Deno.stat(p)).mtime?.getTime()}`);
+    }
+  }
+  await walk(root);
+  return out.sort().join("\n");
+}
+
 async function exists(path: string): Promise<boolean> {
   try {
     await Deno.stat(path);

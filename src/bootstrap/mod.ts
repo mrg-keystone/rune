@@ -1,5 +1,5 @@
 import { dirname, fromFileUrl, join, resolve } from "#std/path";
-import { rules, runPipeline, parseArgs, printHeader, printResults, printJson, runManifest, runSync, runCheck, runValidate, runUpdate } from "@rune/mod-root.ts";
+import { rules, runPipeline, parseArgs, printHeader, printResults, printJson, runManifest, runSync, runCheck, runDev, runValidate, runUpdate } from "@rune/mod-root.ts";
 import { getIgnoredPaths } from "@rune/domain/data/project/mod.ts";
 import { suggestForResults } from "@rune/domain/data/llm/openai.ts";
 import { canonicalPaths as SHAPE } from "@rune/domain/business/artifact/canonical-paths.ts";
@@ -29,6 +29,7 @@ if (["-h", "--help", "help"].includes(Deno.args[0] ?? "") || Deno.args.length ==
 USAGE
   rune sync <file.rune>      generate/update a module from its spec
   rune check <file.rune>     check a spec for errors (no codegen)
+  rune dev [path]            live loop: save spec → check → sync → app restart → page reload
   rune lint [dir]            lint a project against the architecture (default: .)
   rune manifest <file.rune>  one-shot generate (no prune)
   rune validate <art.json>   validate a keywords.json artifact
@@ -111,6 +112,11 @@ if (Deno.args[0] === "sync") {
 
 if (Deno.args[0] === "check") {
   const code = await runCheck(Deno.args.slice(1));
+  Deno.exit(code);
+}
+
+if (Deno.args[0] === "dev") {
+  const code = await runDev(Deno.args.slice(1));
   Deno.exit(code);
 }
 

@@ -3,6 +3,7 @@ export { parseArgs, printHeader, printResults, printJson } from "./entrypoints/c
 export { runManifest } from "./entrypoints/manifest/mod.ts";
 export { runSync } from "./entrypoints/sync/mod.ts";
 export { runCheck } from "./entrypoints/check/mod.ts";
+export { runDev } from "./entrypoints/dev/mod.ts";
 export { runValidate } from "./entrypoints/validate/mod.ts";
 export { runUpdate } from "./entrypoints/update/mod.ts";
 export type { RuleDefinition } from "@core/dto/types.ts";

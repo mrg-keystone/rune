@@ -194,6 +194,160 @@ Deno.test("planManifest — [ENT]s on one surface become one keep controller", (
   assertStringIncludes(mod.content, 'endpointModule("Checkout", [HttpController])');
 });
 
+Deno.test("planManifest — [ENT:flow] branches: flows, the OR-join, and [ENT:optional]", () => {
+  const rune = `[MOD] checkout
+
+[ENT] http.start(StartDto): TicketDto
+[ENT:card] http.payCard(PayDto): PaymentDto
+[ENT:cash] http.payCash(PayDto): PaymentDto
+[ENT] http.fulfill(FulfillDto): DoneDto
+[ENT:optional] http.survey(SurveyDto): DoneDto
+
+[DTO] StartDto: item
+    what to buy
+[DTO] TicketDto: ticketId
+    the started checkout
+[DTO] PayDto: ticketId
+    the checkout to pay
+[DTO] PaymentDto: paymentId
+    a settled payment
+[DTO] FulfillDto: paymentId
+    the payment to fulfill
+[DTO] DoneDto: done
+    completion
+[DTO] SurveyDto: rating
+    feedback
+
+[TYP] item: string
+    x
+[TYP] ticketId: string
+    x
+[TYP] paymentId: string
+    x
+[TYP] done: boolean
+    x
+[TYP] rating: number
+    x`;
+  const plan = planManifest("specs/checkout.rune", rune, new Set());
+  const mod = plan.toCreate.find((f) => f.path === "src/checkout/entrypoints/http/mod.ts");
+  if (!mod) throw new Error("no entrypoint mod.ts generated");
+
+  // The branch steps carry their flow; both bind the shared upstream ticket.
+  assertStringIncludes(
+    mod.content,
+    'dependsOn: ["start"], bind: {"ticketId":"start.ticketId"}, flows: "card"',
+  );
+  assertStringIncludes(
+    mod.content,
+    'dependsOn: ["start"], bind: {"ticketId":"start.ticketId"}, flows: "cash"',
+  );
+  // The join: producers in different flows are alternatives — depend on all, bind as an array.
+  assertStringIncludes(
+    mod.content,
+    'dependsOn: ["payCard","payCash"], bind: {"paymentId":["payCard.paymentId","payCash.paymentId"]}',
+  );
+  // [ENT:optional] marks the step attempted-but-not-required.
+  assertStringIncludes(mod.content, "optional: true");
+});
+
+Deno.test("planManifest — [TYP:ext] turns an unproduced field into a $external-input bind", () => {
+  const rune = `[MOD] billing
+
+[ENT] http.join(JoinDto): MembershipDto
+
+[DTO] JoinDto: tenantId, plan
+    a membership request
+[DTO] MembershipDto: membershipId
+    the created membership
+
+[TYP:ext] tenantId: string
+    minted by the tenants module
+[TYP] plan: string
+    x
+[TYP] membershipId: string
+    x`;
+  const plan = planManifest("specs/billing.rune", rune, new Set());
+  const mod = plan.toCreate.find((f) => f.path === "src/billing/entrypoints/http/mod.ts");
+  if (!mod) throw new Error("no entrypoint mod.ts generated");
+
+  // tenantId has no producer and is [TYP:ext] ⇒ a $tenantId external-input bind, no dependsOn.
+  assertStringIncludes(mod.content, 'bind: {"tenantId":"$tenantId"}');
+  // plan is also unproduced but NOT ext ⇒ stays unbound (a plain editor field).
+  assertEquals(mod.content.includes('"plan":'), false);
+  assertEquals(mod.content.includes("dependsOn"), false);
+});
+
+Deno.test("planManifest — [TYP:ext] seeds the generated e2e with a typed placeholder", () => {
+  const rune = `[MOD] checkout
+
+[ENT] http.join(JoinDto): MembershipDto
+
+[DTO] JoinDto: memberId
+    a membership request
+[DTO] MembershipDto: membershipId
+    the created membership
+
+[TYP:ext] memberId: string
+    minted elsewhere
+[TYP] membershipId: string
+    x`;
+  const plan = planManifest("specs/checkout.rune", rune, new Set());
+  const e2e = plan.toCreate.find((f) => f.path === "src/checkout/entrypoints/http/e2e.test.ts");
+  if (!e2e) throw new Error("no entrypoint e2e.test.ts generated");
+
+  // The $memberId external input gets a string placeholder seed in isolation.
+  assertStringIncludes(e2e.content, 'overrides: { seeds: { memberId: "memberId-stub" } }');
+});
+
+Deno.test("planManifest — number-typed [TYP:ext] seeds a numeric placeholder", () => {
+  const rune = `[MOD] billing
+
+[ENT] http.charge(ChargeDto): ReceiptDto
+
+[DTO] ChargeDto: amount, memberId
+    a charge request
+[DTO] ReceiptDto: receiptId
+    the receipt
+
+[TYP:ext] amount: number
+    set by the caller
+[TYP:ext] memberId: string
+    minted elsewhere
+[TYP] receiptId: string
+    x`;
+  const plan = planManifest("specs/billing.rune", rune, new Set());
+  const e2e = plan.toCreate.find((f) => f.path === "src/billing/entrypoints/http/e2e.test.ts");
+  if (!e2e) throw new Error("no entrypoint e2e.test.ts generated");
+
+  // Seeds are sorted by name; number TYPs get a numeric placeholder, strings a stub.
+  assertStringIncludes(
+    e2e.content,
+    'overrides: { seeds: { amount: 7, memberId: "memberId-stub" } }',
+  );
+});
+
+Deno.test("planManifest — no [TYP:ext] inputs ⇒ generated e2e has no overrides", () => {
+  const rune = `[MOD] recording
+
+[ENT] http.create(InDto): OutDto
+
+[DTO] InDto: providerName
+    in
+[DTO] OutDto: id
+    out
+
+[TYP] providerName: string
+    x
+[TYP] id: string
+    x`;
+  const plan = planManifest("specs/recording.rune", rune, new Set());
+  const e2e = plan.toCreate.find((f) => f.path === "src/recording/entrypoints/http/e2e.test.ts");
+  if (!e2e) throw new Error("no entrypoint e2e.test.ts generated");
+
+  assertEquals(e2e.content.includes("overrides:"), false);
+  assertStringIncludes(e2e.content, "exerciseEndpoints({ api });");
+});
+
 Deno.test("planManifest — :core DTO routes to src/core/dto/", () => {
   const rune = `[MOD] recording
 

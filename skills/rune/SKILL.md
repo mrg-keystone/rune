@@ -1,11 +1,11 @@
 ---
 name: rune
 description: >-
-  Author .rune specs and generate code with the rune toolchain (the project at
-  ~/Documents/programming/rune). Use this whenever you're working with .rune
-  files, writing or editing a rune spec, running `rune sync`/`rune manifest` to
-  scaffold a module, debugging why a rune won't parse or lint, or working inside
-  the rune repo / a project generated from it. Trigger even if the user just says
+  Author .rune specs and generate code with the rune toolchain (the installed
+  `rune` CLI). Use this whenever you're working with .rune files, writing or
+  editing a rune spec, running `rune sync`/`rune manifest` to scaffold a
+  module, debugging why a rune won't parse or lint, or working inside the rune
+  repo / a project generated from it. Trigger even if the user just says
   "write a spec for X", "add a feature to this module", "regenerate", or shows a
   file ending in .rune — rune has non-obvious rules (DTO suffixes, scope, strict
   indentation) that are easy to get wrong without this skill.
@@ -28,6 +28,7 @@ with `deno run -A src/bootstrap/mod.ts <cmd>`):
 rune check <file.rune>     # IS THIS RUNE GOOD? validate the spec — no codegen. exit 0 = clean, 2 = errors
 rune sync  <file.rune>     # generate/update the module from the spec (also writes the project's deno.json)
 rune lint  [dir]           # lint the generated project against the architecture (default: .) — "All clear" = ok
+rune dev   [path]          # live loop: watch the project — save spec → check → sync → app restart → page reload
 rune manifest <file.rune>  # one-shot generate (no prune)
 rune fmt   <file.rune>     # format a spec
 rune validate <art.json>   # validate a keywords.json artifact
@@ -174,7 +175,54 @@ pay(body: PayDto) { /* … */ }
 
 This metadata orders the emulator's bullets and auto-chains `create`'s `id` into
 `pay`'s `orderId` (and drives the headless runner). Treat it as part of the contract,
-like the REQ inventory.
+like the REQ inventory. **You rarely write it by hand**: `rune sync` derives
+order/dependsOn/bind from the DTO field graph (same-named output→input fields chain
+automatically) when it generates the entrypoint.
+
+### Branching, external inputs, optional steps
+
+Not every module is a straight chain. Three spec constructs cover the rest — all
+derived into the `@Endpoint` metadata by `rune sync`:
+
+- **Flows (XOR branches)** — `[ENT:card] http.payCard(PayDto): PaymentDto` puts the
+  endpoint in the named flow; untagged endpoints belong to every flow. The emulator
+  gets a flow selector (walks one branch at a time; dependencies on endpoints outside
+  the active flow don't gate), and `exerciseEndpoints({ flow: "card" })` does the
+  same headlessly. When endpoints in *different* flows produce the same field, the
+  consumer is generated as the **OR-join**: `dependsOn` all of them,
+  `bind: { paymentId: ["payCard.paymentId", "payCash.paymentId"] }` — first
+  resolvable wins.
+- **External inputs** — `[TYP:ext] memberId: string` marks a value minted outside
+  the module. An unproduced input field of that type generates
+  `bind: { memberId: "$memberId" }`: the emulator lists it under **Module inputs**
+  (shared across all docs pages; its value may reference another module's capture,
+  e.g. `{{members:create.memberId}}`), and the runner takes it from
+  `overrides.seeds.memberId`.
+- **Optional steps** — `[ENT:optional] http.survey(SurveyDto): ThanksDto` is
+  attempted but not required: its failure doesn't stop the emulator's run-all and
+  lands in `report.optionalFailed`, not `report.failed`.
+
+**The stub lifecycle (ghost stubs).** Until a `[TYP:ext]` input's real producer
+exists, `rune sync` generates `bootstrap/stubs.ts` — one trivial GET endpoint per
+unfulfilled input (marked `stub: true`, badged in the emulator, mounted at
+`/docs/stubs`) that mints a placeholder value. The generated `bootstrap/modules.ts`
+excludes it when `DENO_ENV=production`, and the stub **evaporates** on the next sync
+once any module in the project produces the field (the file is deleted entirely when
+every input is fulfilled). Never edit or reference it — it's generated-owned.
+
+**The snap-together composition story.** Declare the value you need as `[TYP:ext]`
+and develop against the ghost: the stub mints it, your module runs end-to-end.
+Compose the app (sync the module that really produces the field into the same
+project) and it **auto-wires**: the consumer's Module-inputs row flips to a dim
+`auto: <module>:<endpoint>` note and fills itself from that producer's captured
+output (typing a value still overrides), the headless runner falls back from
+`overrides.seeds` to the producer's capture, and the stub evaporates. No glue code,
+no config — the shared field name *is* the contract.
+
+In the emulator, request bodies hold `{{step.field}}` references resolved at send
+time (so hand edits are never overwritten); `{{name}}` reads a shared environment
+variable, `{{$name}}` a declared module input, and `{{module:step.field}}` another
+module's captured output.
 
 ## The rules that bite (from constraints.md)
 
@@ -275,7 +323,15 @@ as an ordered, bulleted checklist. Click **Emulate process** down the list (or *
 in order**) and read each response; a green checkmark on every step means the rune's
 logic actually works, not just type-checks. Each success captures its output and
 pre-fills the next dependent step (`bind`). Standard Swagger UI is at
-`/docs/<module>/swagger`, the raw spec at `/docs/<module>/json`.
+`/docs/<module>/swagger`, the raw spec at `/docs/<module>/json`. **`/docs/_map`**
+shows the whole composed app as one live process graph — module lanes, bind edges
+(dashed for cross-module `$input` contracts), status dots that recolor as you run
+steps anywhere; click a node to land on its emulator step.
+
+For the edit loop, prefer **`rune dev`** over re-running serve by hand: it watches
+the project, re-checks/re-syncs the spec on save, restarts the app, and the open
+docs pages reload themselves (spec errors appear in the page banner while the last
+good server keeps serving; emulator session state survives the restart).
 
 For CI / unattended runs, call the same thing in code:
 

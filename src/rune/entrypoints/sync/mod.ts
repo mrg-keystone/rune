@@ -5,6 +5,11 @@ import {
   type ManifestOptions,
 } from "@rune/domain/business/rune-manifest/mod.ts";
 import { loadArtifact } from "@rune/domain/business/artifact/mod.ts";
+import { isProjectSpec } from "@rune/domain/business/rune-bindings/mod.ts";
+import {
+  planStubs,
+  renderStubsModule,
+} from "@rune/domain/business/rune-stubs/mod.ts";
 import { resolveRoot } from "@rune/entrypoints/spec-root.ts";
 
 const RED = "\x1b[31m";
@@ -80,7 +85,11 @@ function errMessage(e: unknown): string {
 
 // Reconcile a .rune spec with the project tree: scaffold new code, prune orphans
 // the spec no longer declares, and preserve everything already filled in.
-export async function runSync(args: string[]): Promise<number> {
+//
+// `written` (optional) collects the ABSOLUTE path of every file this run actually
+// wrote, deleted, or moved (both sides of the spec move) — byte-identical skips
+// are NOT recorded. `rune dev` uses it to ignore the FS events sync itself causes.
+export async function runSync(args: string[], written?: string[]): Promise<number> {
   const parsed = parseSyncArgs(args);
   if (!parsed) {
     console.error(
@@ -136,13 +145,14 @@ export async function runSync(args: string[]): Promise<number> {
     pruned.push(...deletable);
   } else {
     for (const file of plan.toCreate) {
-      if (await write(root, file.path, file.content, ioErrors)) {
+      if (await write(root, file.path, file.content, ioErrors, written)) {
         created.push(file.path);
       }
     }
-    // Spec-owned signatures: rewritten every run, even if they exist.
+    // Spec-owned signatures: rewritten every run — but a byte-identical write is
+    // skipped (and not reported), so a no-change re-sync touches nothing.
     for (const file of plan.toRegenerate) {
-      if (await write(root, file.path, file.content, ioErrors)) {
+      if (await write(root, file.path, file.content, ioErrors, written)) {
         regenerated.push(file.path);
       }
     }
@@ -152,28 +162,26 @@ export async function runSync(args: string[]): Promise<number> {
         const info = await Deno.lstat(abs);
         await Deno.remove(abs, { recursive: info.isDirectory });
         pruned.push(target);
+        written?.push(abs);
       } catch (e) {
         ioErrors.push(`${target}: ${errMessage(e)}`);
       }
     }
     // Make the synced project compile out of the box: ensure deno.json carries
     // the import aliases the generated code uses (@/, #zod, #std/*).
-    const mapNote = await ensureImportMap(root, ioErrors);
+    const mapNote = await ensureImportMap(root, ioErrors, written);
     if (mapNote) console.log(`\n  ${CYAN}${mapNote}${RESET}`);
-
-    // Keep the app bootstrap in step with the module set: bootstrap/modules.ts
-    // (the registry) is regenerated as runes come and go; bootstrap/mod.ts is
-    // created once.
-    const bootNotes = await ensureBootstrap(root, ioErrors);
-    for (const n of bootNotes) console.log(`\n  ${CYAN}${n}${RESET}`);
 
     // Move the spec into its module so it lives beside the code it generates
     // (src/<module>/<spec>.rune). Idempotent: a no-op once it's already there.
+    // Happens BEFORE ensureBootstrap so the just-synced spec is at its project
+    // path when ghost-stub planning collects the project's specs.
     const specTarget = join(root, "src", plan.module, basename(absRune));
     if (resolve(specTarget) !== absRune) {
       try {
         await Deno.mkdir(dirname(specTarget), { recursive: true });
         await Deno.rename(absRune, specTarget);
+        written?.push(absRune, resolve(specTarget));
         console.log(
           `\n  ${CYAN}moved spec → ${relative(root, specTarget)}${RESET}`,
         );
@@ -181,6 +189,12 @@ export async function runSync(args: string[]): Promise<number> {
         ioErrors.push(`move spec: ${errMessage(e)}`);
       }
     }
+
+    // Keep the app bootstrap in step with the module set: bootstrap/modules.ts
+    // (the registry) is regenerated as runes come and go; bootstrap/mod.ts is
+    // created once.
+    const bootNotes = await ensureBootstrap(root, ioErrors, written);
+    for (const n of bootNotes) console.log(`\n  ${CYAN}${n}${RESET}`);
   }
 
   report(
@@ -222,7 +236,11 @@ const REQUIRED_COMPILER_OPTIONS: Record<string, unknown> = {
 /** Ensure the project's deno.json carries the import map the generated code
  * needs. Non-destructive: only adds missing keys, never overwrites the user's
  * values. Creates a minimal deno.json if none exists. Returns a report note. */
-async function ensureImportMap(root: string, ioErrors: string[]): Promise<string | null> {
+async function ensureImportMap(
+  root: string,
+  ioErrors: string[],
+  written?: string[],
+): Promise<string | null> {
   const path = join(root, "deno.json");
   // deno-lint-ignore no-explicit-any
   let config: Record<string, any> = {};
@@ -258,6 +276,7 @@ async function ensureImportMap(root: string, ioErrors: string[]): Promise<string
   config.imports = imports;
   try {
     await Deno.writeTextFile(path, JSON.stringify(config, null, 2) + "\n");
+    written?.push(path);
   } catch (e) {
     ioErrors.push(`deno.json: ${errMessage(e)}`);
     return null;
@@ -338,8 +357,14 @@ async function listDirs(dir: string): Promise<string[]> {
   return out.sort();
 }
 
-/** The module registry — regenerated on every sync. */
-export function renderAppRegistry(surfaces: SurfaceModule[]): string {
+/** The module registry — regenerated on every sync. When the ghost stub module
+ * exists (bootstrap/stubs.ts), it is statically imported (dynamic `import()`
+ * deadlocks under rollup-bundled keep apps) and gated out of production inside
+ * the array. */
+export function renderAppRegistry(
+  surfaces: SurfaceModule[],
+  ghostStubs = false,
+): string {
   const L: string[] = [
     APP_REGISTRY_HEADER,
     "// Module registry: one entry per rune surface, regenerated on every sync as",
@@ -351,9 +376,19 @@ export function renderAppRegistry(surfaces: SurfaceModule[]): string {
       `import { ${s.exportName} as ${s.alias} } from "@/src/${s.module}/entrypoints/${s.surface}/mod.ts";`,
     );
   }
-  if (surfaces.length > 0) L.push("");
+  if (ghostStubs) {
+    L.push('import { stubsModule } from "@/bootstrap/stubs.ts";');
+  }
+  if (surfaces.length > 0 || ghostStubs) L.push("");
   L.push("export const modules = [");
   for (const s of surfaces) L.push(`  ${s.alias},`);
+  if (ghostStubs) {
+    L.push(
+      "  // Ghost stubs: minted stand-ins for [TYP:ext] inputs nothing produces yet.",
+      "  // Dev/test only — excluded in production; evaporates with a real producer.",
+      '  ...(Deno.env.get("DENO_ENV") === "production" ? [] : [stubsModule]),',
+    );
+  }
   L.push("];", "");
   return L.join("\n");
 }
@@ -400,6 +435,7 @@ export function renderConfig(): string {
 export async function ensureBootstrap(
   root: string,
   ioErrors: string[],
+  written?: string[],
 ): Promise<string[]> {
   const notes: string[] = [];
   const surfaces = await scanSurfaceModules(root);
@@ -417,11 +453,22 @@ export async function ensureBootstrap(
     return notes;
   }
 
-  const registry = renderAppRegistry(surfaces);
+  // Ghost stubs: reconcile bootstrap/stubs.ts with the project's unfulfilled
+  // [TYP:ext] inputs BEFORE rendering the registry, which imports it when live.
+  const ghostStubs = await ensureGhostStubs(
+    root,
+    surfaces,
+    notes,
+    ioErrors,
+    written,
+  );
+
+  const registry = renderAppRegistry(surfaces, ghostStubs);
   if (existing !== registry) {
     try {
       await Deno.mkdir(join(root, "bootstrap"), { recursive: true });
       await Deno.writeTextFile(registryPath, registry);
+      written?.push(registryPath);
       notes.push(
         `${existing === null ? "created" : "updated"} bootstrap/modules.ts (module registry: ${surfaces.length} surface module(s))`,
       );
@@ -453,12 +500,93 @@ export async function ensureBootstrap(
     try {
       await Deno.mkdir(join(root, "bootstrap"), { recursive: true });
       await Deno.writeTextFile(path, render());
+      written?.push(path);
       notes.push(note);
     } catch (e) {
       ioErrors.push(`bootstrap/${file}: ${errMessage(e)}`);
     }
   }
   return notes;
+}
+
+/** Reconcile the ghost stub module (bootstrap/stubs.ts) with the project's
+ * specs: write/refresh it while some [TYP:ext] input has no producer anywhere
+ * in the project; delete it (header-guarded) once every input is produced.
+ * Returns whether the ghost is live, so the registry can import + gate it. */
+async function ensureGhostStubs(
+  root: string,
+  surfaces: SurfaceModule[],
+  notes: string[],
+  ioErrors: string[],
+  written?: string[],
+): Promise<boolean> {
+  const path = join(root, "bootstrap", "stubs.ts");
+  const existing = await readMaybe(path);
+
+  // A REAL module named "stubs" owns the name — never generate the ghost beside it.
+  if (surfaces.some((s) => s.module === "stubs")) {
+    notes.push("module 'stubs' exists — ghost stubs disabled");
+    return false;
+  }
+
+  // Never clobber (or delete) a hand-written bootstrap/stubs.ts.
+  if (existing !== null && !existing.startsWith(APP_REGISTRY_HEADER)) {
+    notes.push(
+      "bootstrap/stubs.ts exists but was not generated by rune sync — left untouched (ghost stubs disabled)",
+    );
+    return false;
+  }
+
+  const fields = planStubs(await collectProjectSpecs(root));
+
+  // Every ext input has a real producer → the ghost evaporates.
+  if (fields.length === 0) {
+    if (existing !== null) {
+      try {
+        await Deno.remove(path);
+        written?.push(path);
+        notes.push(
+          "removed bootstrap/stubs.ts (every stub input now has a real producer)",
+        );
+      } catch (e) {
+        ioErrors.push(`bootstrap/stubs.ts: ${errMessage(e)}`);
+      }
+    }
+    return false;
+  }
+
+  const content = renderStubsModule(fields);
+  if (existing !== content) {
+    try {
+      await Deno.mkdir(join(root, "bootstrap"), { recursive: true });
+      await Deno.writeTextFile(path, content);
+      written?.push(path);
+      notes.push(
+        `${
+          existing === null ? "created" : "updated"
+        } bootstrap/stubs.ts (ghost stub module: ${fields.length} minted input(s) — emulator at /docs/stubs)`,
+      );
+    } catch (e) {
+      ioErrors.push(`bootstrap/stubs.ts: ${errMessage(e)}`);
+      return existing !== null; // an older ghost may still be importable
+    }
+  }
+  return true;
+}
+
+/** Every project spec (specs/<n>.rune, src/<m>/spec.rune, src/<m>/<m>.rune)
+ * with its text — the input to ghost-stub planning. */
+async function collectProjectSpecs(
+  root: string,
+): Promise<{ path: string; text: string }[]> {
+  const files = await collectFiles(root);
+  const specs: { path: string; text: string }[] = [];
+  for (const rel of [...files].sort()) {
+    if (!rel.endsWith(".rune") || !isProjectSpec(rel)) continue;
+    const text = await readMaybe(join(root, rel));
+    if (text !== null) specs.push({ path: rel, text });
+  }
+  return specs;
 }
 
 async function readMaybe(path: string): Promise<string | null> {
@@ -474,11 +602,16 @@ async function write(
   rel: string,
   content: string,
   ioErrors: string[],
+  written?: string[],
 ): Promise<boolean> {
   const abs = join(root, rel);
+  // Byte-identical content is skipped entirely (no write, no mtime change, no FS
+  // event) so a re-sync is physically quiet — `rune dev`'s watcher depends on it.
+  if (await readMaybe(abs) === content) return false;
   try {
     await Deno.mkdir(dirname(abs), { recursive: true });
     await Deno.writeTextFile(abs, content);
+    written?.push(abs);
     return true;
   } catch (e) {
     ioErrors.push(`${rel}: ${errMessage(e)}`);

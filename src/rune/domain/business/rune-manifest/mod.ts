@@ -177,7 +177,10 @@ export function planManifest(
   // ent's order/dependsOn/bind from the DTO field graph across all ents.
   if (ast.ents.length > 0) {
     const dtoByName = new Map(ast.dtos.map((d) => [d.name, d]));
-    const entProcess = computeEntProcess(ast.ents, dtoByName);
+    const externalTypes = new Set(
+      ast.typs.filter((t) => t.isExternal).map((t) => t.name),
+    );
+    const entProcess = computeEntProcess(ast.ents, dtoByName, externalTypes);
     const bySurface = new Map<string, EntNode[]>();
     for (const ent of ast.ents) {
       const list = bySurface.get(ent.surface) ?? [];
@@ -185,7 +188,7 @@ export function planManifest(
       bySurface.set(ent.surface, list);
     }
     for (const [surface, ents] of bySurface) {
-      addEntrypointSurface(emit, module, surface, ents, ast.reqs, entProcess, nameBinding, runePath);
+      addEntrypointSurface(emit, module, surface, ents, ast.reqs, entProcess, nameBinding, runePath, typMap);
     }
   }
   if (ast.reqs.length > 0) addModRoot(emit, module, ast.reqs, runePath);
@@ -670,7 +673,8 @@ function renderCoordinator(
 
 // The generated field names of a [DTO] (mirrors renderDto: strip `(s)`/`?`,
 // pluralize arrays) — used to match producer outputs to consumer inputs.
-function dtoFieldNames(dto: DtoNode): string[] {
+// Exported for rune-stubs, which mirrors the same producer/consumer matching.
+export function dtoFieldNames(dto: DtoNode): string[] {
   return dto.properties.map((raw) => {
     const array = /\(s\)/.test(raw);
     const base = raw.replace(/\(s\)/g, "").replace(/\?/g, "").trim();
@@ -681,35 +685,68 @@ function dtoFieldNames(dto: DtoNode): string[] {
 interface EntProcess {
   order: number;
   dependsOn: string[];
-  bind: Record<string, string>;
+  bind: Record<string, string | string[]>;
+  flows: string[];
+  optional: boolean;
+}
+
+// The [ENT] bracket modifier names the endpoint's process flow (a branch through the module's
+// process, e.g. `[ENT:card]`); `optional` is reserved for steps the emulator/runner attempt but
+// don't require.
+function entFlow(ent: EntNode): string | null {
+  if (!ent.modifier || ent.modifier === "optional") return null;
+  return ent.modifier;
 }
 
 // Compute each [ENT]'s process metadata from the DTO field graph: an ent depends
 // on the earliest-declared ent whose OUTPUT DTO produces a field this ent's INPUT
 // DTO consumes; `bind` wires that field across. `order` is declaration order.
+// Two refinements on top of earliest-producer-wins:
+// - producers spread across DIFFERENT flows are branch alternatives — the consumer depends on
+//   all of them and binds them as alternatives (first to have run wins at request time);
+// - a field nobody produces whose [TYP] is marked `ext` becomes a `$field` external-input
+//   bind (the emulator's shared variables / the runner's seeds supply it).
 function computeEntProcess(
   ents: EntNode[],
   dtoByName: Map<string, DtoNode>,
+  externalTypes: Set<string> = new Set(),
 ): Map<EntNode, EntProcess> {
   const out = new Map<EntNode, EntProcess>();
   ents.forEach((ent, i) => {
     const inDto = dtoByName.get(ent.input);
     const inFields = inDto ? dtoFieldNames(inDto) : [];
     const dependsOn = new Set<string>();
-    const bind: Record<string, string> = {};
+    const bind: Record<string, string | string[]> = {};
     for (const field of inFields) {
-      // ents is in declaration order, so find() yields the earliest producer.
-      const producer = ents.find((p) => {
+      // ents is in declaration order, so the first hit is the earliest producer.
+      const producers = ents.filter((p) => {
         if (p === ent) return false;
         const outDto = dtoByName.get(p.output);
         return outDto ? dtoFieldNames(outDto).includes(field) : false;
       });
-      if (producer) {
+      if (producers.length === 0) {
+        if (externalTypes.has(field)) bind[field] = `$${field}`;
+        continue;
+      }
+      const flows = new Set(producers.map(entFlow).filter((f) => f !== null));
+      if (producers.length > 1 && flows.size > 1) {
+        // Branch alternatives: whichever branch ran feeds the join.
+        for (const p of producers) dependsOn.add(p.action);
+        bind[field] = producers.map((p) => `${p.action}.${field}`);
+      } else {
+        const producer = producers[0];
         dependsOn.add(producer.action);
         bind[field] = `${producer.action}.${field}`;
       }
     }
-    out.set(ent, { order: i + 1, dependsOn: [...dependsOn], bind });
+    const flow = entFlow(ent);
+    out.set(ent, {
+      order: i + 1,
+      dependsOn: [...dependsOn],
+      bind,
+      flows: flow ? [flow] : [],
+      optional: ent.modifier === "optional",
+    });
   });
   return out;
 }
@@ -774,6 +811,12 @@ function renderEntrypointController(
     ];
     if (p.dependsOn.length) opts.push(`dependsOn: ${JSON.stringify(p.dependsOn)}`);
     if (Object.keys(p.bind).length) opts.push(`bind: ${JSON.stringify(p.bind)}`);
+    if (p.flows.length) {
+      opts.push(
+        `flows: ${JSON.stringify(p.flows.length === 1 ? p.flows[0] : p.flows)}`,
+      );
+    }
+    if (p.optional) opts.push("optional: true");
     L.push(`  @Endpoint({ ${opts.join(", ")} })`);
     L.push(`  ${ent.action}(body: ${ent.input}): Promise<${ent.output}> {`);
     const alias = entCoord.get(ent);
@@ -796,8 +839,40 @@ function renderEntrypointController(
   return L.join("\n");
 }
 
-function renderEntrypointE2e(module: string, surface: string, runePath: string): string {
+function renderEntrypointE2e(
+  module: string,
+  surface: string,
+  runePath: string,
+  ents: EntNode[],
+  process: Map<EntNode, EntProcess>,
+  typMap: Map<string, string>,
+): string {
   const moduleConst = `${camel(surface)}Module`;
+  // Collect the surface's $external inputs (bind values like "$memberId") so the
+  // generated test seeds them with typed placeholders — green in isolation, no glue.
+  const seedNames = new Set<string>();
+  for (const ent of ents) {
+    const p = process.get(ent);
+    if (!p) continue;
+    for (const value of Object.values(p.bind)) {
+      for (const v of Array.isArray(value) ? value : [value]) {
+        if (v.startsWith("$")) seedNames.add(v.slice(1));
+      }
+    }
+  }
+  const placeholder = (name: string): string => {
+    const t = typMap.get(name);
+    if (t === "number" || t === "integer") return "7";
+    if (t === "boolean") return "true";
+    return JSON.stringify(`${name}-stub`);
+  };
+  const seedEntries = [...seedNames]
+    .sort()
+    .map((n) => `${n}: ${placeholder(n)}`)
+    .join(", ");
+  const exerciseCall = seedEntries
+    ? `      const report = await exerciseEndpoints({ api, overrides: { seeds: { ${seedEntries} } } });`
+    : "      const report = await exerciseEndpoints({ api });";
   return [
     `// Generated by rune manifest from ${runePath}.`,
     "// Edit the body. Re-running manifest will not overwrite this file.",
@@ -814,7 +889,7 @@ function renderEntrypointE2e(module: string, surface: string, runePath: string):
     "  fn: async () => {",
     `    const api = await bootstrapServer(${JSON.stringify(module)}, ${moduleConst}, { swagger: true });`,
     "    try {",
-    "      const report = await exerciseEndpoints({ api });",
+    exerciseCall,
     "      assertEquals(report.failed.map((r) => r.id), []);",
     "    } finally {",
     "      await api.stop();",
@@ -834,6 +909,7 @@ function addEntrypointSurface(
   process: Map<EntNode, EntProcess>,
   nameBinding: Binding,
   runePath: string,
+  typMap: Map<string, string>,
 ): void {
   const dir = `src/${module}/entrypoints/${applyCase(surface, "kebab")}`;
   emit(
@@ -841,7 +917,11 @@ function addEntrypointSurface(
     `${dir}/mod.ts`,
     renderEntrypointController(module, surface, ents, reqs, process, nameBinding, runePath),
   );
-  emit("entrypoint-e2e", `${dir}/e2e.test.ts`, renderEntrypointE2e(module, surface, runePath));
+  emit(
+    "entrypoint-e2e",
+    `${dir}/e2e.test.ts`,
+    renderEntrypointE2e(module, surface, runePath, ents, process, typMap),
+  );
 }
 
 function addModRoot(

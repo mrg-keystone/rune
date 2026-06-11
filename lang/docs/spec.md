@@ -375,6 +375,83 @@ By default, every `[REQ]`, `[DTO]`, `[TYP]`, and untagged business step belongs 
 - The body of an `[ENT]` references the `[REQ]` it dispatches to
 - The surface name (`http`, `cli`, `queue`, etc.) becomes the entrypoint folder name
 
+### Process flows (branches)
+
+The module's endpoints form a *process* (the emulator walks them in order, chaining
+outputs into inputs — metadata derived from the DTO field graph). A bracket modifier
+names the **flow** an endpoint belongs to, expressing a branch:
+
+```
+[ENT] http.start(StartDto): TicketDto
+[ENT:card] http.payCard(PayDto): PaymentDto
+[ENT:cash] http.payCash(PayDto): PaymentDto
+[ENT] http.fulfill(FulfillDto): DoneDto
+[ENT:optional] http.survey(SurveyDto): ThanksDto
+```
+
+- `[ENT:card]` / `[ENT:cash]` — the endpoint exists only in that named flow. Untagged
+  endpoints are part of every flow. The emulator shows a flow selector and walks one
+  branch at a time; `exerciseEndpoints({ flow })` does the same headlessly.
+- When the same field is produced by endpoints in **different** flows (here
+  `paymentId`), the consumer (`fulfill`) is generated depending on all of them with
+  the alternatives bound first-resolvable-wins — the join after the branch.
+- `[ENT:optional]` (reserved) — the step is attempted but not required: its failure
+  doesn't stop the emulator's run-all or fail the harness report.
+
+### External inputs
+
+`[TYP:ext]` marks a value as produced **outside this module** (another module's
+endpoint, a human). An input field of that type which no endpoint in the module
+produces is generated as a `$name` external-input bind — the emulator lists it under
+"module inputs" (set once, shared across docs pages; it can reference another
+module's capture, e.g. `{{members:create.memberId}}`), and the headless runner takes
+it from `overrides.seeds`:
+
+```
+[TYP:ext] memberId: string
+    minted by the members module
+```
+
+#### Ghost stubs (the stub lifecycle)
+
+An external input is a promise that *someone else* produces the value. Until that
+producer exists, `rune sync` keeps the project runnable by generating
+`bootstrap/stubs.ts` — a **ghost stub module** with one trivial GET endpoint per
+unfulfilled `[TYP:ext]` input (`mint-<name>`, marked `stub: true`), each minting a
+placeholder value of the declared primitive. It mounts like any module (emulator at
+`/docs/stubs`, badged `stub`), so dependent modules run end-to-end before their real
+producers are built — the consumer's `$name` input auto-resolves from the stub's
+capture.
+
+- **Production exclusion** — the generated `bootstrap/modules.ts` registry skips the
+  stub module when `DENO_ENV=production`; stubs can never ship.
+- **Evaporation** — the moment a synced module's endpoint outputs the field (a real
+  producer anywhere in the project), the input is fulfilled and the next `rune sync`
+  removes the stub endpoint — and deletes `bootstrap/stubs.ts` entirely once every
+  input has a real producer. Business code never references the file, so nothing
+  breaks when it goes.
+- The file is generated-owned (header-guarded): a hand-written `bootstrap/stubs.ts`
+  or a real module named `stubs` disables ghost stubs instead of being overwritten.
+
+### `rune dev` (the live loop)
+
+`rune dev [path]` runs the spec→emulator loop unattended: it boots the project's app
+(`deno run -A bootstrap/mod.ts`) under `KEEP_DEV=<status file>` and watches `src/`,
+`specs/`, `bootstrap/`, and `deno.json` (never the bare root; sync's own writes are
+muted so the loop can't feed on itself). On save:
+
+- **spec changed** → `rune check` first. Errors are published to the status file
+  **only** — keep's `/docs/_dev` serves them and the open emulator pages show them in
+  a red banner while the **last good server keeps serving**. A clean check runs
+  `rune sync` and restarts the app.
+- **source changed** → restart only (no sync).
+
+Each restart mints a new `bootId`; the emulator/map pages poll `/docs/_dev` and
+reload themselves when it changes. Emulator session state (statuses, captures,
+edited bodies, module inputs) lives in `localStorage`, so it **survives every
+restart and reload** — fix a spec, save, and re-run the failed step where you left
+off.
+
 ## Keyword Tags
 
 All keyword tags are exactly 3 letters inside brackets (`[XXX]`). This ensures content after the tag always starts at column 7, maintaining visual alignment.

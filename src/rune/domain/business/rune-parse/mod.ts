@@ -27,6 +27,12 @@ export interface EntNode {
   action: string;
   input: string;
   output: string;
+  /**
+   * The bracket modifier, e.g. `[ENT:card]` → "card". Codegen reads it as the endpoint's
+   * process flow (a named branch); the reserved modifier `optional` marks a step the
+   * emulator/runner attempt but don't require. Null for plain `[ENT]`.
+   */
+  modifier: string | null;
   line: number;
 }
 
@@ -97,6 +103,12 @@ export interface TypNode {
   typeName: string;
   description: string;
   isCore: boolean;
+  /**
+   * `[TYP:ext]` — the value is produced OUTSIDE this module (another module's endpoint, a
+   * human). Entrypoint codegen turns unproduced input fields of this type into `$name`
+   * external-input binds instead of leaving them unwired.
+   */
+  isExternal: boolean;
   line: number;
 }
 
@@ -215,6 +227,7 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
           action: sig.verb,
           input: sig.input,
           output: sig.output,
+          modifier: entTag.modifier,
           line: i,
         });
       }
@@ -255,13 +268,21 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
     const typTag = rec.match(trimmed, "typ");
     if (typTag) {
       const isCore = typTag.modifier === "core";
+      const isExternal = typTag.modifier === "ext";
       const colon = typTag.rest.indexOf(":");
       if (colon === -1) {
         ast.errors.push({ line: i, message: "[TYP] missing type" });
       } else {
         const name = typTag.rest.slice(0, colon).trim();
         const typeName = typTag.rest.slice(colon + 1).trim();
-        const node: TypNode = { name, typeName, description: "", isCore, line: i };
+        const node: TypNode = {
+          name,
+          typeName,
+          description: "",
+          isCore,
+          isExternal,
+          line: i,
+        };
         ast.typs.push(node);
         descTarget = node;
       }
