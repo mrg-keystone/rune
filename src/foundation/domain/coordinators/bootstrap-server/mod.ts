@@ -7,7 +7,7 @@ import { log } from "@foundation/domain/business/logger/mod.ts";
 import { DatadogTransport } from "@foundation/domain/data/datadog/mod.ts";
 import { PostmarkAlerter } from "@foundation/domain/data/postmark/mod.ts";
 import { createRequestLoggingMiddleware } from "@foundation/domain/business/request-logger/mod.ts";
-import { GLOBAL_GUARD } from "#danet/core";
+import { GLOBAL_GUARD, type HttpContext } from "#danet/core";
 import { createCredentialGuard } from "@foundation/domain/business/token-auth/mod.ts";
 import { createMintUi } from "@foundation/domain/business/mint-ui/mod.ts";
 import { appModule } from "@foundation/domain/business/endpoint-decorator/mod.ts";
@@ -49,6 +49,11 @@ function warnOnce(message: string) {
 // Dev-mode boot identity (`rune dev`): minted once per process so the emulator pages' reload
 // poller can tell "the same app answered" from "a NEW process is serving" after a restart.
 const bootId = crypto.randomUUID();
+
+// danet's global exception-filter container is process-wide and append-only;
+// guard so repeated bootstrapServer() calls (test suites, in-process reboots)
+// register the stateless RuneAssertError→422 filter exactly once.
+let runeAssertFilterRegistered = false;
 
 /**
  * Builds the logging transports from the environment:
@@ -307,6 +312,41 @@ export class BootstrapServer {
 
     // Initialize eagerly so the in-process `backend` client is usable without listen().
     await adapter.init(rootModule);
+
+    // Rune assert failures (thrown at validated seams by code importing
+    // @mrg-keystone/keep/assert) map to HTTP 422. Detection is duck-typed on
+    // name + failures — NOT instanceof — so it works even when the consumer
+    // loaded its own copy of the assert module. Returning undefined falls
+    // through to danet's defaults: auth HttpExceptions keep their status and
+    // plain errors stay 500. danet's global-filter container is PROCESS-wide
+    // and never drained by stop(), so register exactly once per process —
+    // the filter is stateless, one registration serves every app.
+    if (!runeAssertFilterRegistered) {
+      runeAssertFilterRegistered = true;
+      adapter.app.useGlobalExceptionFilter({
+        catch(err: unknown, ctx: HttpContext) {
+          const e = err as {
+            name?: unknown;
+            target?: unknown;
+            context?: unknown;
+            failures?: unknown;
+          };
+          if (e?.name === "RuneAssertError" && Array.isArray(e.failures)) {
+            return ctx.json(
+              {
+                name: "RuneAssertError",
+                message: (err as Error).message,
+                target: e.target,
+                context: e.context ?? null,
+                failures: e.failures,
+              },
+              422,
+            );
+          }
+          return undefined;
+        },
+      });
+    }
 
     // Register the credential auth as Danet's global guard — it governs every controller route
     // and honors `@Public()`. A pre-built instance is bound to the GLOBAL_GUARD token.

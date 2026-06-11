@@ -2,3 +2,5 @@
 .playwright-mcp/
 node_modules/
 e2e/cake/deno.lock
+# session handoff scratch — "do not commit" per its own header
+context.md

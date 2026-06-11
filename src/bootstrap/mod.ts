@@ -59,6 +59,11 @@ export {
   verifyToken,
   withBasePath,
 } from "@foundation/mod-root.ts";
+// Rune assert runtime (also exported as the "./assert" subpath): seam
+// validation for rune-generated code. bootstrapServer maps a thrown
+// RuneAssertError to HTTP 422.
+export { assert, RuneAssertError } from "../assert/mod.ts";
+export type { Assert, AssertFailure } from "../assert/mod.ts";
 export type {
   CredentialGuardConfig,
   DanetGuard,

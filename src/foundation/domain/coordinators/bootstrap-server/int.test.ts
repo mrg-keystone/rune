@@ -309,6 +309,93 @@ Deno.test("dev channel: /docs/_dev absent (404) without KEEP_DEV; pages carry no
   assertEquals((await page.text()).includes('fetch("_dev")'), false);
 });
 
+// Handlers for the RuneAssertError → 422 filter tests. The error is built by
+// hand (Object.assign, no import of the assert module) because the filter
+// must detect it duck-typed — exactly what a consumer's own copy throws.
+@Controller("rune")
+class RuneController {
+  @Public()
+  @Get("invalid")
+  invalid() {
+    throw Object.assign(new Error("Validation failed for XDto: a: m"), {
+      name: "RuneAssertError",
+      target: "XDto",
+      context: "x.create input",
+      failures: [{ path: "a", constraint: "isString", message: "m" }],
+    });
+  }
+
+  @Public()
+  @Get("boom")
+  boom() {
+    throw new Error("boom");
+  }
+}
+
+@Module({ controllers: [RuneController] })
+class RuneModule {}
+
+Deno.test("RuneAssertError from a handler maps to 422 with the failure detail", async () => {
+  const port = portCounter++;
+  const server = await bootstrapServer("test-app", RuneModule, {
+    port,
+    swagger: false,
+  });
+  await server.listen();
+
+  const res = await fetch(`http://localhost:${port}/rune/invalid`);
+  const body = await res.json();
+
+  assertEquals(res.status, 422);
+  assertEquals(body.name, "RuneAssertError");
+  assertEquals(body.target, "XDto");
+  assertEquals(body.context, "x.create input");
+  assertEquals(body.failures, [
+    { path: "a", constraint: "isString", message: "m" },
+  ]);
+  await server.stop();
+});
+
+Deno.test("422 filter control: a plain Error still maps to danet's 500", async () => {
+  const port = portCounter++;
+  const server = await bootstrapServer("test-app", RuneModule, {
+    port,
+    swagger: false,
+  });
+  await server.listen();
+
+  const res = await fetch(`http://localhost:${port}/rune/boom`);
+  await res.text();
+
+  assertEquals(res.status, 500);
+  await server.stop();
+});
+
+Deno.test("422 filter control: the auth 401 path is untouched", async () => {
+  Deno.env.set("MANUAL_KEY", "filter-control-key");
+  try {
+    const port = portCounter++;
+    const server = await bootstrapServer("test-app", GuardModule, {
+      port,
+      swagger: false,
+    });
+    const remote = {
+      remoteAddr: { transport: "tcp", hostname: "203.0.113.5", port: 1 },
+    };
+
+    // Network caller without a credential: still 401, not intercepted.
+    const res = await server.handler(
+      new Request("http://app/secret"),
+      // deno-lint-ignore no-explicit-any
+      remote as any,
+    );
+    assertEquals(res.status, 401);
+    await res.body?.cancel();
+  } finally {
+    Deno.env.delete("MANUAL_KEY");
+  }
+});
+
 @Controller("alpha")
 class AlphaController {
   @Public()

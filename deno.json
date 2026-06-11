@@ -4,12 +4,15 @@
   "description": "Opinionated Deno backend framework: DI bootstrap, token/Firebase auth & identity, auto Swagger docs, in-process API client, and Fresh frontend embedding. Built on @danet/core.",
   "license": "MIT",
   "exports": {
-    ".": "./src/bootstrap/mod.ts"
+    ".": "./src/bootstrap/mod.ts",
+    "./assert": "./src/assert/mod.ts"
   },
   "publish": {
     "exclude": [
       "**/*.test.ts",
       "**/test.ts",
+      "**/switch-probe.ts",
+      "context.md",
       "**/*.png",
       "e2e/",
       "examples/",
@@ -35,6 +38,8 @@
   "imports": {
     "#reflect-metadata": "npm:reflect-metadata@0.1.13",
     "reflect-metadata": "npm:reflect-metadata@0.1.13",
+    "class-validator": "npm:class-validator@^0.14",
+    "class-transformer": "npm:class-transformer@^0.5",
     "@mrg-keystone/keep": "./src/bootstrap/mod.ts",
     "@danet/core": "jsr:@danet/core@2",
     "#openapi3-ts": "npm:openapi3-ts@4.5.0",
