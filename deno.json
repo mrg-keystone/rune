@@ -1,6 +1,6 @@
 {
   "name": "@mrg-keystone/keep",
-  "version": "1.19.3",
+  "version": "1.20.0",
   "description": "Opinionated Deno backend framework: DI bootstrap, token/Firebase auth & identity, auto Swagger docs, in-process API client, and Fresh frontend embedding. Built on @danet/core.",
   "license": "MIT",
   "exports": {
