@@ -13,7 +13,7 @@ a committed end-to-end acceptance.
   `bind` map (`{ thisInputField: "otherEndpointId.outputField" }`).
 - `business/document-builder/` — attaches that metadata to each OpenAPI operation as the
   **`x-keep-process`** vendor extension, so the UI and the runner read one source of truth.
-- `business/emulator-ui/` — the per-module **process emulator** served at `/docs/<module>`: an
+- `business/emulator-ui/` — the per-module **cake** served at `/docs/<module>`: an
   ordered checklist with per-endpoint "Emulate" buttons, progressive unlock, output→input autofill,
   and checkmarks, plus "Run all in order". Standard Swagger UI moves to `/docs/<module>/swagger`;
   the raw spec stays at `/docs/<module>/json`.
@@ -33,16 +33,16 @@ asserts the spec shape + `x-keep-process` chain, drives the chain green in-proce
 (each step: unlocked, next still locked, body autofilled from the prior capture, checkmark on run).
 
 **Regression guard:** `business/emulator-ui/browser.test.ts` (gated `KEEP_BROWSER=1`) drives the
-emulator UI in chromium independently of the cake fixture.
+cake UI in chromium independently of the cake fixture.
 
 ## How to test / verify
 
 ```sh
 deno task test          # full unit/integration suite — 199 passed, 2 ignored (gated browser/smoke)
 deno task test:e2e      # cake acceptance, in-process (no browser) — 14 passed, 2 ignored
-deno task cake          # provisions chromium (idempotent) then runs the 6-step emulator drive HEADED
+deno task cake          # provisions chromium (idempotent) then runs the 6-step cake drive HEADED
 KEEP_BROWSER=1 deno task test:e2e   # cake acceptance incl. the headless browser stage
-deno task test:browser  # emulator browser regression (KEEP_BROWSER=1)
+deno task test:browser  # cake browser regression (KEEP_BROWSER=1)
 deno task test:smoke    # exercise-harness Playwright HTTP smoke (KEEP_PLAYWRIGHT_SMOKE=1)
 ```
 

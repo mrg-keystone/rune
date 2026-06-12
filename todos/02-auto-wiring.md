@@ -6,7 +6,7 @@ No prerequisites. Later tasks (03–06) build on this one — its shapes are loa
 ## Goal
 
 Today a `bind: { memberId: "$memberId" }` external input resolves ONLY from explicitly set
-values (the emulator's shared `globals.vars`; the runner's `overrides.seeds`). Make composition
+values (the cake's shared `globals.vars`; the runner's `overrides.seeds`). Make composition
 fulfill the contract automatically: when ANY module in the app has an endpoint whose output
 carries a same-named field, the `$input` resolves from that producer's capture — explicit values
 still win. Also add a `stub: true` endpoint marker (task 03 generates stub modules that need
@@ -46,7 +46,7 @@ where `docs` holds ALL modules' entries and the per-module routes are registered
    (default `{}`) into the inlined payload: `JSON.stringify({ title, endpoints, cycles, producers })`.
    Update the call site to pass the slice.
 
-## Part C — emulator client fallback + affordances
+## Part C — cake client fallback + affordances
 
 In `src/foundation/domain/business/emulator-ui/client.ts` (REMINDER: the JS lives inside
 `String.raw` strings — never type a backtick or `${` in there):
@@ -103,7 +103,7 @@ deno task check:jsr                  # publish dry-run green
 ## Definition of done
 
 - [ ] `stub` flows decorator → x-keep-process → SpecEndpoint, default false, exact-shape test updated
-- [ ] Emulator `$` resolution: explicit value → producer capture fallback; `auto:` shown in Module inputs
+- [ ] Cake `$` resolution: explicit value → producer capture fallback; `auto:` shown in Module inputs
 - [ ] Runner `$` resolution: seeds → store scan; synthetic edges order producers first
 - [ ] New harness + browser + unit tests green; every command in Verification green
 - [ ] `emulatorShellHtml` third param is a single `opts` object with a reserved `dev` field

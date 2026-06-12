@@ -4,7 +4,7 @@ You are working across one or both of these local repos:
 
 - **keep** — `/Users/raphaelcastro/Documents/programming/keep`. A Deno backend framework
   (`@mrg-keystone/keep` on JSR, built on `@danet/core`): DI bootstrap, auth, auto Swagger docs,
-  an in-process API client, and a per-module **process emulator** UI. Main branch: `main`.
+  an in-process API client, and a per-module **cake** UI. Main branch: `main`.
 - **rune** — `/Users/raphaelcastro/Documents/programming/rune`. A DSL toolchain: you write a
   small `.rune` spec; `rune sync` generates a typed Deno/TS module whose HTTP entrypoints are
   keep controllers. Branch: `develop`. Run the CLI from the repo as
@@ -15,7 +15,7 @@ You are working across one or both of these local repos:
 
 `rune sync` generates entrypoint controllers that use keep's `@Endpoint` decorator. The
 decorator stamps **process metadata** onto each endpoint, which travels in the module's OpenAPI
-doc as the `x-keep-process` vendor extension. Both keep's emulator UI and its headless runner
+doc as the `x-keep-process` vendor extension. Both keep's cake UI and its headless runner
 consume it. The metadata (defined in keep `src/foundation/domain/business/endpoint-decorator/mod.ts`,
 type `ProcessMetadata`; spec-side view in `src/foundation/domain/business/endpoint-spec/mod.ts`,
 type `SpecEndpoint`):
@@ -24,7 +24,7 @@ type `SpecEndpoint`):
 - `dependsOn: string[]` — endpoint ids (handler method names) that must succeed first.
 - `bind: Record<string, string | string[]>` — request autofill wiring. Three value forms:
   - `"otherEndpointId.outputField"` — fill from a captured response;
-  - `"$name"` — an **external input** nothing in the module produces (emulator shows it under a
+  - `"$name"` — an **external input** nothing in the module produces (cake shows it under a
     "Module inputs" card; the headless runner reads `overrides.seeds[name]`);
   - an array — alternatives, first-resolvable-wins (the join after a branch).
 - `flows: string[]` — named branches. Untagged endpoints belong to every flow; within an active
@@ -39,19 +39,19 @@ OR-bind arrays).
 ## keep — what you need to know
 
 - Run things from the repo root. Tasks: `deno task test` (unit suite), `deno task test:browser`
-  (headless-chromium emulator tests; needs `deno run -A npm:playwright install chromium chromium-headless-shell`
+  (headless-chromium cake tests; needs `deno run -A npm:playwright install chromium chromium-headless-shell`
   once), `KEEP_BROWSER=1 deno task test:e2e` (the cake + checkout fixtures, browser stages
   included), `deno task test:e2e:checkout`, `deno task check:jsr` (publish dry-run).
   Quality bars: `deno fmt --check src/`, `deno lint <touched dirs>`.
-- **The emulator UI** lives in `src/foundation/domain/business/emulator-ui/`:
+- **The cake UI** lives in `src/foundation/domain/business/emulator-ui/`:
   - `mod.ts` assembles a self-contained HTML page per module (`emulatorShellHtml(title, doc)`),
     inlining a JSON payload as `window.__KEEP_EMULATOR__` (with `<` escaped to `<`).
   - `client.ts` exports the CSS and client JS as **`String.raw` template strings**. HARD RULE:
     no backtick and no `${` may appear inside those strings — they would terminate/interpolate
     the literal. Client code uses string concatenation, ES5-flavored, `var`/`function`.
-  - Client state: per-page session in `localStorage["keep:emulator:" + pagePath]` (statuses,
+  - Client state: per-page session in `localStorage["keep:cake:" + pagePath]` (statuses,
     captured outputs, edited bodies, expanded set); a **shared scope** in
-    `localStorage["keep:emulator:globals"]` (`{v:1, vars:{...}, captured:{"module:endpointId": {...}}}`)
+    `localStorage["keep:cake:globals"]` (`{v:1, vars:{...}, captured:{"module:endpointId": {...}}}`)
     written on every successful run and read cross-page; a `storage` event listener live-updates
     other tabs. Reference resolution in bodies: `{{step.field}}` (page captures), `{{name}}`
     (shared vars), `{{$name}}` (declared module input), `{{module:step.field}}` (another
@@ -62,7 +62,7 @@ OR-bind arrays).
     `#inputs input[data-gvar]`, `#vars`, `li.offflow` (hidden by flow filter).
 - **Route registration** happens in `src/foundation/domain/coordinators/bootstrap-server/mod.ts`
   (`BootstrapServer.create`): a loop over `docs` (ALL modules' OpenAPI docs are in scope there)
-  registers `/docs/<module>` (emulator), `/docs/<module>/swagger`, `/docs/<module>/json`, plus
+  registers `/docs/<module>` (cake), `/docs/<module>/swagger`, `/docs/<module>/json`, plus
   `/docs` (index) — via `adapter.registerRoute(method, path, handler)`. Module doc paths come
   from the danet module class name lowercased without the `Module` suffix.
 - **The headless runner** `exerciseEndpoints` lives in

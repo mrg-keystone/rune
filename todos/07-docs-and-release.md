@@ -12,7 +12,7 @@ repos fully green, and record the release sequencing. Nothing ships undocumented
 
 1. **keep `README.md`** — extend the existing sections (don't restructure):
    - the `@Endpoint` options paragraph: `stub`;
-   - the process-emulator section: the `auto:` snap-together affordance and the stub badge;
+   - the cake section: the `auto:` snap-together affordance and the stub badge;
    - a short `/docs/_map` paragraph (what it shows, that it's live, the deep links);
    - a dev-loop note: `KEEP_DEV=<status file>` env → `/docs/_dev` endpoint + page auto-reload
      (and that `rune dev` drives it);
@@ -26,7 +26,7 @@ repos fully green, and record the release sequencing. Nothing ships undocumented
    - "Branching, external inputs, optional steps" section: add the stub lifecycle and the
      snap-together composition story (declare `[TYP:ext]` → develop against the ghost →
      compose → auto-wires; stub evaporates);
-   - the verify-via-emulator section: mention `/docs/_map` and `rune dev`.
+   - the verify-via-cake section: mention `/docs/_map` and `rune dev`.
    Then copy it over the installed one:
    `cp skills/rune/SKILL.md ~/.claude/skills/rune/SKILL.md` and `diff -q` to confirm sync.
 4. **rune CLI help** — ensure `deno run -A src/bootstrap/mod.ts --help` (or the no-arg usage

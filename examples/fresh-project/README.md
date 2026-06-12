@@ -14,7 +14,7 @@ network hop). Works in `deno task dev` and the production build.
 | `@Public()` route open on the network                        | `backend.ts` → `HealthController`                    |
 | Token via `Authorization` header **or** `?token=`            | Keep guard                                           |
 | Browser: seed token from `?token=`, auto-inject, drop on 401 | `client.ts` + `routes/probe.tsx`                     |
-| Swagger docs + emulator embedded under the mount             | `/api/docs` (shells public, spec token-gated)        |
+| Swagger docs + cake embedded under the mount             | `/api/docs` (shells public, spec token-gated)        |
 
 ## Run it
 

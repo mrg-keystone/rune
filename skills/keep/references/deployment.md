@@ -110,7 +110,7 @@ falls back to console and raises a throttled Postmark alert
 
 ## Testing and releasing the keep repo itself
 
-- Unit tests: `deno task test`. Browser (emulator/map) tests:
+- Unit tests: `deno task test`. Browser (cake/map) tests:
   `deno task test:browser` (needs chromium:
   `deno run -A npm:playwright install chromium chromium-headless-shell`).
   E2E fixtures: `KEEP_BROWSER=1 deno task test:e2e`. Publish dry-run:

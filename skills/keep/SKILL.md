@@ -3,11 +3,11 @@ name: keep
 description: >-
   Build Deno backend APIs with @mrg-keystone/keep (the danet-based framework:
   bootstrapServer, @Endpoint process chains, auto Swagger, the per-module
-  process emulator at /docs, token/Firebase auth, in-process backend client,
+  cake at /docs, token/Firebase auth, in-process backend client,
   Fresh embedding). Use this whenever code imports @mrg-keystone/keep, calls
   bootstrapServer or exerciseEndpoints, decorates with @Endpoint /
   @EndpointController, works inside the keep repo or a rune-generated project,
-  or the user asks about keep's emulator, /docs pages, /docs/_map, token
+  or the user asks about keep's cake, /docs pages, /docs/_map, token
   minting, @Public/@Roles, or embedding an API under Fresh. Trigger even for
   "add an endpoint", "wire these two modules together", or auth/401 debugging
   in any keep-based app — keep's process metadata, trust model, and mounting
@@ -18,7 +18,7 @@ description: >-
 
 keep (`@mrg-keystone/keep` on JSR) is an opinionated Deno backend framework on
 top of `@danet/core`. One call — `bootstrapServer` — gives you: routed
-controllers, per-module Swagger docs, an interactive **process emulator** per
+controllers, per-module Swagger docs, an interactive **cake** per
 module, a live **system map**, deny-by-default token auth with localhost and
 in-process trust, request-scoped structured logging (Datadog), and an
 in-process HTTP client. It is the runtime that `rune`-generated projects
@@ -32,14 +32,14 @@ target, but it works standalone.
   in-process calls (tests, SSR); mount `handler` to serve without binding.
 - **Endpoints declare their process.** `@Endpoint({ order, dependsOn, bind,
   flows, optional, stub })` metadata rides into the module's OpenAPI doc
-  (`x-keep-process`) and drives the emulator, the map, and the headless
+  (`x-keep-process`) and drives the cake, the map, and the headless
   runner. The metadata IS the contract — write it deliberately.
 - **Auth is deny-by-default for network callers**; in-process (`backend`) and
   localhost callers are trusted. Everything else needs a signed token
   (`MANUAL_KEY`) or a Firebase ID token (`FIREBASE_PROJECT_ID`).
 - **Composition is by field name.** A `bind: { memberId: "$memberId" }`
   external input auto-wires to ANY composed module whose endpoint outputs a
-  `memberId` field — emulator and runner both snap together with zero glue.
+  `memberId` field — cake and runner both snap together with zero glue.
 
 ## Quick start — a process module
 
@@ -115,7 +115,7 @@ To compose several modules into one app, pass an array:
 - `bind: { field: ... }` — request autofill. Three value forms:
   - `"otherEndpointId.outputField"` — fill from a captured response;
   - `"$name"` — an **external input** nothing in this module produces. The
-    emulator shows it under a "Module inputs" card; the headless runner reads
+    cake shows it under a "Module inputs" card; the headless runner reads
     `overrides.seeds[name]`; a composed producer of a same-named field
     satisfies it automatically (seed/typed value always wins).
   - `["payCard.paymentId", "payCash.paymentId"]` — alternatives, first
@@ -126,27 +126,27 @@ To compose several modules into one app, pass an array:
 - `optional: true` — attempted but never blocks a run (failures land in
   `report.optionalFailed`, not `report.failed`).
 - `stub: true` — a generated stand-in minting placeholder values (what rune's
-  ghost-stub module emits); badged in the emulator, treated as a producer by
+  ghost-stub module emits); badged in the cake, treated as a producer by
   the auto-wiring, not part of the real process.
 
-## Verify the work — emulator first, then headless
+## Verify the work — cake first, then headless
 
 After wiring endpoints, **prove the chain runs, don't just type-check**:
 
-1. Serve the app and open **`/docs/<module>`** — the process emulator. "Run
+1. Serve the app and open **`/docs/<module>`** — the cake. "Run
    all in order" walks the chain, stops at the first failure with the exact
    step and reason; every green step captures outputs that pre-fill
    dependents. Session state survives reloads.
 2. **`/docs/_map`** shows the whole composed app as one live graph — module
    lanes, solid bind edges, dashed `$input` contracts, status dots that
    recolor as you run steps in any tab. Click a node to deep-link into its
-   emulator step.
+   cake step.
 3. In tests/CI, run the same walk headlessly:
 
 ```ts
 import { exerciseEndpoints } from "@mrg-keystone/keep";
 const report = await exerciseEndpoints({ api }); // in-process, no token
-// { passed, failed, optionalFailed, iterations, order, cycles }
+// { passed, failed, optionalFailed, iterations, order, cycles, unresolvedInputs }
 await exerciseEndpoints({
   api,
   flow: "card",
@@ -158,6 +158,12 @@ await exerciseEndpoints({
 first captured response owning a same-named field (from any composed module)
 — the runner adds a synthetic edge so producers run before consumers. A
 composed app with real or stub producers needs **no seeds at all**.
+
+4. Against a *running* server, **`POST /docs/_run`** (localhost-only, like
+   `/_mint`) runs the same walk over HTTP and returns the JSON report — for an
+   agent / CI / the map UI to verify a live app. `{ dryRun: true }` returns just
+   `order` / `cycles` / `unresolvedInputs` (a pre-flight naming cycles and
+   unsatisfied `$inputs`) without firing a request.
 
 For the edit loop, run the server under **`KEEP_DEV=<status-file>`** (or let
 `rune dev` drive it): `/docs/_dev` serves a bootId, the docs pages poll it
@@ -213,9 +219,9 @@ model, token shape, docs gating, and browser token flow live there.
 ## References (read on demand)
 
 - `references/process.md` — full `@Endpoint`/`EndpointController` options,
-  emulator features ({{refs}}, variables, flows, cross-module captures), the
+  cake features ({{refs}}, variables, flows, cross-module captures), the
   system map, dev mode, and every `exerciseEndpoints` option. Read when
-  authoring process chains, debugging the emulator, or wiring CI runs.
+  authoring process chains, debugging the cake, or wiring CI runs.
 - `references/auth.md` — the complete trust model, token shape and minting,
   `@Public`/`@Roles` semantics, docs access flow, browser/frontend token
   pattern, `signToken`/`verifyToken`/`createFirebaseVerifier`. Read before

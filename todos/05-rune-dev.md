@@ -1,4 +1,4 @@
-# Task 05 — `rune dev`: the live spec→emulator loop
+# Task 05 — `rune dev`: the live spec→cake loop
 
 Repos: **keep first, then rune**. Read `00-context.md` first.
 **Prerequisite: task 02 complete** (the `emulatorShellHtml` `opts` param with the reserved `dev`
@@ -7,7 +7,7 @@ field must exist).
 ## Goal
 
 One command — `rune dev [path]` — gives a live loop: save the `.rune` spec → re-check → re-sync →
-app restarts → the open emulator page reloads itself with session state intact (state already
+app restarts → the open cake page reloads itself with session state intact (state already
 survives reloads by design). Spec errors appear in the page banner while the last good server
 keeps serving. Saving non-generated source restarts without a sync.
 
@@ -35,7 +35,7 @@ keeps serving. Saving non-generated source restarts without a sync.
    `const bootId = crypto.randomUUID()` once per process; register
    `GET /docs/_dev` → JSON `{ bootId, ...status }` where `status` is a per-request
    `Deno.readTextFile(devStatusPath)` + `JSON.parse`, and ANY failure (missing file, partial
-   write) degrades to `{ bootId }` alone; pass `dev: true` into every emulator page's opts.
+   write) degrades to `{ bootId }` alone; pass `dev: true` into every cake page's opts.
 4. keep tests: an int test (pattern: `bootstrap-server/int.test.ts`) — boot with
    `KEEP_DEV=/tmp/<rand>.json`, GET `/docs/_dev` → has `bootId`; write a status file with
    errors → response includes them; corrupt file → `{ bootId }` only. Plus
@@ -88,7 +88,7 @@ remapped to the local checkout and coordinator bodies filled):
    or curl `http://localhost:<port>/docs/<module>` and `/docs/_dev` (has bootId).
 2. Append a new `[ENT]` (+ its DTOs/TYPs) to the spec, save → within ~3 s `/docs/_dev` serves a
    NEW bootId; the page (via Playwright or curl of the page HTML) shows the new step; previously
-   set emulator variables survive (localStorage is untouched by reloads).
+   set cake variables survive (localStorage is untouched by reloads).
 3. Break the spec (bad indentation), save → `/docs/_dev` serves `ok:false` with the `rune check`
    error text; the OLD server still answers; the page banner shows the errors.
 4. Fix the spec → recovers, new bootId.

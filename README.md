@@ -591,11 +591,11 @@ Generates OpenAPI 3.0 specification objects from module metadata.
 
 Dependency injection container builders for configuring injectable services.
 
-## Process endpoints, the emulator, and the exercise harness
+## Process endpoints, the cake, and the exercise harness
 
 A module's endpoints can declare their **process order** and **data
 dependencies** right on the handler, so keep can (1) serve them, (2) document
-them in Swagger, (3) render an interactive **process emulator** per module, and
+them in Swagger, (3) render an interactive **cake** per module, and
 (4) drive them headlessly. This is the surface the
 [`rune`](https://github.com/mrg-keystone/rune) workflow generates into.
 
@@ -672,32 +672,32 @@ into each module's OpenAPI doc as an **`x-keep-process`** vendor extension.
 
 - `"otherEndpointId.outputField"` — fill this field from a captured response;
 - `"$name"` — an **external input** nothing in this module produces (an id
-  minted by another module, a tenant key): the emulator lists it under
+  minted by another module, a tenant key): the cake lists it under
   **Module inputs** and the runner takes it from `overrides.seeds[name]`;
 - `["payCard.paymentId", "payCash.paymentId"]` — **alternatives**, first
   resolvable wins (the join after a branch).
 
 `flows: "card"` puts the endpoint in a named branch — untagged endpoints belong
-to every flow; the emulator gets a flow selector and dependencies on endpoints
+to every flow; the cake gets a flow selector and dependencies on endpoints
 outside the active flow don't gate (so a join can depend on every alternative).
 `optional: true` marks a step that's attempted but never blocks the walk.
 `stub: true` marks a **generated stand-in** endpoint that mints placeholder
-values — not part of the real process. The emulator badges it with a `stub`
+values — not part of the real process. The cake badges it with a `stub`
 chip, and the contract auto-wiring treats it as a producer like any other (this
 is what [`rune`](https://github.com/mrg-keystone/rune)'s ghost-stub module
 generates for external inputs nothing produces yet).
 
-### The process emulator (per module)
+### The cake (per module)
 
 With Swagger on (default), each module gets three docs pages:
 
 | Path                     | What                                                                 |
 | ------------------------ | -------------------------------------------------------------------- |
-| `/docs/<module>`         | the **process emulator** — a Postman-style guided walk of the chain |
+| `/docs/<module>`         | the **cake** — a Postman-style guided walk of the chain |
 | `/docs/<module>/swagger` | the standard Swagger UI (deep inspection)                            |
 | `/docs/<module>/json`    | the raw OpenAPI spec (token-gated; see [Docs access](#docs-access))  |
 
-The emulator lists endpoints in `order`/`dependsOn` order. Each step's request
+The cake lists endpoints in `order`/`dependsOn` order. Each step's request
 body is generated from the DTO schema, with bound fields holding
 **`{{step.field}}` references** that resolve against captured responses when
 the request is sent — so your hand edits are never overwritten, and any value
@@ -738,9 +738,9 @@ by dependency depth. Solid edges are intra-module binds (`"step.field"`
 autofill); **dashed edges** are `"$input"` contracts satisfied by a producer
 in another module; a `$name` nothing produces shows as an amber input badge on
 its consumer. Flows tint their edges, and optional/stub endpoints carry chips.
-The map is **live**: each node's status dot recolors from the emulator
+The map is **live**: each node's status dot recolors from the cake
 sessions in `localStorage` — run a step on any docs page (any tab) and the map
-updates. Clicking a node **deep-links** into that module's emulator with the
+updates. Clicking a node **deep-links** into that module's cake with the
 step expanded (`/docs/<module>#<endpointId>`). (Underscore-prefixed so a
 module named "map" can still own `/docs/map`.)
 
@@ -748,7 +748,7 @@ module named "map" can still own `/docs/map`.)
 
 Set **`KEEP_DEV=<status-file path>`** and `bootstrapServer` serves a
 **`/docs/_dev`** JSON endpoint (the status file's contents plus the process's
-`bootId`) and injects a small poller into every emulator/map page. The pages
+`bootId`) and injects a small poller into every cake/map page. The pages
 poll `_dev` while visible and **auto-reload when the `bootId` changes** (a new
 process is serving); status-file `errors` render in the page banner, and a
 "server restarting…" notice appears while the server is unreachable. Session

@@ -28,7 +28,7 @@ Sequential. Each item ends with its verification step. keep ships before rune wi
   - [ ] `src/rune/entrypoints/sync/mod.ts` `ensureBootstrap`: gather specs via `collectFiles` + `isProjectSpec`, write/refresh `bootstrap/stubs.ts` when unfulfilled inputs exist, header-guarded delete when none remain; skip + note when a real `src/stubs` module exists.
   - [ ] `renderAppRegistry`: when stubs exist, emit the static import + `...(Deno.env.get("DENO_ENV") === "production" ? [] : [stubsModule])`.
   - [ ] Tests: `rune-stubs/test.ts` (unfulfilled / fulfilled / multi-module), sync integration (stub created → a later spec produces the field → stub evaporates; registry gate emitted; real-stubs-module skip).
-  - [ ] **Verify**: fresh `/tmp` project from the checkout spec → `bootstrap/stubs.ts` exists; boot, `/docs/stubs` renders as a normal emulator page; run the mint step → the consumer module's `$memberId` auto-resolves (via item 2's fallback); add a members spec producing `memberId` → re-sync → stubs.ts gone; `DENO_ENV=production` boot serves no `/docs/stubs`.
+  - [ ] **Verify**: fresh `/tmp` project from the checkout spec → `bootstrap/stubs.ts` exists; boot, `/docs/stubs` renders as a normal cake page; run the mint step → the consumer module's `$memberId` auto-resolves (via item 2's fallback); add a members spec producing `memberId` → re-sync → stubs.ts gone; `DENO_ENV=production` boot serves no `/docs/stubs`.
 
 - [ ] **4. Lifecycle acceptance fixture** (keep e2e — the committed proof)
   - [ ] Add a members module beside checkout (hand-written, mirroring rune output: `create` outputs `memberId`) in `e2e/checkout`.
@@ -46,10 +46,10 @@ Sequential. Each item ends with its verification step. keep ships before rune wi
 
 - [ ] **6. System map at `/docs/_map`** (keep)
   - [ ] New `src/foundation/domain/business/map-ui/` (mod.ts + client.ts string assets, emulator-ui conventions): nodes = endpoints in module lanes (verb/path/flows/optional/stub), edges = binds + dashed `$input → producer` edges (from item 2's index) + OR-bind multi-edges; columns = topo rank from `processOrder` over the flattened endpoints (computed server-side); SVG, flow color legend.
-  - [ ] Emulator deep-links: `/docs/<module>#<endpointId>` expands + scrolls to the step on load; map nodes link there.
-  - [ ] Live state: map client reads each module's session key (`keep:emulator:/docs/<module>`) + globals, recolors on `storage` events.
-  - [ ] `bootstrap-server`: register `GET /docs/_map`; link it from the docs index (`index-page-builder`) and the emulator headers.
-  - [ ] Tests: unit (map HTML carries nodes/edges payload), browser (renders N nodes; clicking a node lands on the emulator with the step expanded; a dot recolors after running that step on its module page).
+  - [ ] Cake deep-links: `/docs/<module>#<endpointId>` expands + scrolls to the step on load; map nodes link there.
+  - [ ] Live state: map client reads each module's session key (`keep:cake:/docs/<module>`) + globals, recolors on `storage` events.
+  - [ ] `bootstrap-server`: register `GET /docs/_map`; link it from the docs index (`index-page-builder`) and the cake headers.
+  - [ ] Tests: unit (map HTML carries nodes/edges payload), browser (renders N nodes; clicking a node lands on the cake with the step expanded; a dot recolors after running that step on its module page).
   - [ ] **Verify**: boot the composed e2e fixture, open `/docs/_map`, screenshot; click through to a step; run it; watch the map dot turn green; full keep suites stay green.
 
 - [ ] **7. Docs, skill, and the cross-repo verification sweep**

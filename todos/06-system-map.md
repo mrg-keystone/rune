@@ -9,7 +9,7 @@ verification target — if it exists, use it; otherwise compose two modules ad h
 One page showing the WHOLE app as a process graph: every module's endpoints as nodes in module
 lanes, bind edges inside modules, dashed `$input → producer` edges across them, flows as colored
 paths, optional/stub badges — with **live run state** (dots recolor as steps run in any tab) and
-click-through into the emulator at the exact step. Mounted at `/docs/_map` (underscore: a module
+click-through into the cake at the exact step. Mounted at `/docs/_map` (underscore: a module
 named "map" would own `/docs/map`).
 
 ## Files
@@ -37,8 +37,8 @@ named "map" would own `/docs/map`).
 2. **Client render** (`map-ui/client.ts`): SVG — lane backgrounds with module names (each lane
    title links to `/docs/<module>`), nodes as rounded rects (status dot + METHOD + path tail +
    chips for flows/optional/stub), edges as bezier paths (flows tinted with the same palette
-   family the emulator uses; `$` edges dashed). A small legend. No external libraries.
-3. **Live state**: read each module's session key `localStorage["keep:emulator:/docs/<module>"]`
+   family the cake uses; `$` edges dashed). A small legend. No external libraries.
+3. **Live state**: read each module's session key `localStorage["keep:cake:/docs/<module>"]`
    (statuses by endpoint id) + the shared globals; color dots green/red/idle accordingly;
    `window.addEventListener("storage", ...)` re-reads and recolors. NOTE the map page's own path
    is `/docs/_map` — it reads OTHER pages' keys, so compute them from each node's `docsPath`,
@@ -50,7 +50,7 @@ named "map" would own `/docs/map`).
 5. **Mounting** (bootstrap-server, inside the `if (swagger)` block): register
    `GET /docs/_map` serving `mapShellHtml(appName, docs)` (wrapped in `injectDocsScript` like
    the other pages). Add a "system map" link to the docs index (extend `index-page-builder`'s
-   build input — keep its existing API shape backward compatible) and to the emulator page
+   build input — keep its existing API shape backward compatible) and to the cake page
    header nav (next to the Swagger UI link).
 6. **Tests**:
    - `map-ui/test.ts`: payload embeds the expected nodes and both edge kinds for a two-module
@@ -58,7 +58,7 @@ named "map" would own `/docs/map`).
      in the payload (copy the existing escaping test pattern).
    - Browser test (`emulator-ui/browser.test.ts` or a new `map-ui/browser.test.ts`, gated on
      `KEEP_BROWSER=1`): compose two modules; `/docs/_map` renders the right node count
-     (`svg [data-node]` selectors); click a node → lands on the emulator with that step
+     (`svg [data-node]` selectors); click a node → lands on the cake with that step
      expanded (`li.open[data-id=...]`); run the step there, navigate back to the map → its dot
      is green (storage-driven).
 
@@ -79,7 +79,7 @@ and a green dot after running a step.
 ## Definition of done
 
 - [ ] `/docs/_map` renders all modules' endpoints in lanes with solid bind edges and dashed `$` edges
-- [ ] Live recolor via storage events; node click deep-links to the expanded emulator step
-- [ ] Linked from the docs index and emulator headers; `_`-prefixed path (no module collision)
+- [ ] Live recolor via storage events; node click deep-links to the expanded cake step
+- [ ] Linked from the docs index and cake headers; `_`-prefixed path (no module collision)
 - [ ] New unit + browser tests green; all Verification commands green; screenshot captured
 - [ ] No commits

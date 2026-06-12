@@ -129,7 +129,7 @@ gated. The pages use a query-param → `localStorage` flow:
 
 1. Open any docs page with `?token=<signed token>` — an inline script stores
    it and strips it from the URL.
-2. Swagger UI / the emulator fetch the spec with
+2. Swagger UI / the cake fetch the spec with
    `Authorization: Bearer <stored token>` — persists across same-origin
    navigation.
 3. A 401 wipes the stored token and asks for a fresh `?token=…` link.

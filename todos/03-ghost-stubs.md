@@ -10,7 +10,7 @@ must show the option.
 
 When a project's specs declare `[TYP:ext]` inputs that NO module in the project produces,
 `rune sync` generates `bootstrap/stubs.ts` — a keep module with one trivial GET endpoint per
-unfulfilled input that mints placeholder values. It mounts like any module (emulator at
+unfulfilled input that mints placeholder values. It mounts like any module (cake at
 `/docs/stubs`), is excluded in production, and **evaporates automatically** when a later-synced
 module produces the field. Business code never references it.
 
@@ -71,7 +71,7 @@ Fresh project under `/tmp`:
    `/Users/raphaelcastro/Documents/programming/keep/src/bootstrap/mod.ts` (the published JSR
    version may not have task 02 yet). Fill the four coordinator bodies (copy from
    keep `e2e/checkout/src/checkout/domain/coordinators/*/mod.ts`).
-4. Boot (`MANUAL_KEY=k deno run -A bootstrap/mod.ts`): `/docs/stubs` serves an emulator page;
+4. Boot (`MANUAL_KEY=k deno run -A bootstrap/mod.ts`): `/docs/stubs` serves an cake page;
    run `mint-member-id` (curl is fine: `curl -X GET http://localhost:<port>/stubs/mint-member-id`);
    via a browser context confirm checkout's Module-inputs card shows the `auto:` affordance after
    the mint step runs in the same browser profile (or, headless alternative: run
