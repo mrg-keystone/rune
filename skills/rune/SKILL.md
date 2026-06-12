@@ -27,7 +27,7 @@ with `deno run -A src/bootstrap/mod.ts <cmd>`):
 ```text
 rune check <file.rune>     # IS THIS RUNE GOOD? validate the spec — no codegen. exit 0 = clean, 2 = errors
 rune sync  <file.rune>     # generate/update the module from the spec (also writes the project's deno.json)
-rune lint  [dir]           # lint the generated project against the architecture (default: .) — "All clear" = ok
+rune lint  [dir] [--strict]# lint the generated project against the architecture (default: .) — "All clear" = ok; --strict = CI profile (fails on un-enriched heal-rules)
 rune dev   [path]          # live loop: watch the project — save spec → check → sync → app restart → page reload
 rune manifest <file.rune>  # one-shot generate (no prune)
 rune fmt   <file.rune>     # format a spec
@@ -257,6 +257,32 @@ rules survive. `timeout`/`unauthorized` are left to keep's generic tier. The
 dir obeys `KEEP_FIXTURES_DIR` (default `fixtures/`, beside `cake.json`). Edit
 the *content* of each rule freely; let sync own the *set* of slugs.
 
+**Enrichment is your job — a module is NOT done while `todo: true` entries
+remain.** Every scaffolded entry (both the `TODO` notes AND the heuristic
+`run-step` pre-fills) carries `todo: true`, meaning "rune guessed — a human/LLM
+must confirm." So after **every** `rune sync`, open `fixtures/heal-rules.json`
+and enrich each `todo: true` entry: replace the placeholder with a real
+suggestion, write a concrete `why`, then delete the `todo` flag. `rune sync`
+prints the pending slugs by name on every run while any remain, and
+`rune lint --strict` (the CI profile; also `RUNE_LINT_STRICT=1`) fails on them —
+a plain `rune lint` stays quiet so a fresh scaffold doesn't block iteration.
+
+A good entry answers: *what state makes this slug fire, and what's the cheapest
+path out?* Pick a `kind`, in this order of preference:
+
+1. `run-step` — a concrete (`target`) or regex (`match`) endpoint that repairs
+   the state. **Never point at a destructive endpoint.**
+2. `pick` / `set-input` — a value that already exists in captures (`pick` offers
+   options from a `fromPlural` array field; `set-input` sets a known value).
+3. `retry` — transient causes only; put the reason in `why`.
+4. `note` — pure guidance (e.g. "set `WRITES_ARMED=1` and restart"); add
+   `retryAfter: true` when a retry makes sense once the human acts.
+
+The `why` is shown to the user **verbatim** under the suggestion — write it as
+the one-line explanation of the fix, not a restatement of the slug. The full
+schema (every `kind` and its fields) lives in the **keep skill's** rules-file
+reference.
+
 In the cake, request bodies hold `{{step.field}}` references resolved at send
 time (so hand edits are never overwritten); `{{name}}` reads a shared environment
 variable, `{{$name}}` a declared module input, and `{{module:step.field}}` another
@@ -416,6 +442,11 @@ This is one repeating cycle — **write → check → generate → fill in → v
    `mod.ts` is create-once, changing a spec's methods does NOT auto-update an
    existing `mod.ts` — reconcile by hand, or delete the file and re-sync for a fresh
    stub.
+   - **heal-rules** → if sync emitted/updated `fixtures/heal-rules.json`, enrich
+     every `todo: true` entry it named (see **Heal-rules** above) — concrete
+     suggestion + real `why`, then drop the flag. This is dev work like filling a
+     stub; the module is not done while TODO entries remain (sync re-prints them
+     each run; `rune lint --strict` fails on them).
 4. **Verify with `deno check` — run it FROM the generated project.** `cd` in first
    (or pass `--config <project>/deno.json`); running from the rune repo makes its
    `@/` map shadow the project's, producing spurious `TS2307` errors.

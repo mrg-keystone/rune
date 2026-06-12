@@ -5,6 +5,7 @@ import {
   planHealRules,
   readHealRules,
   renderHealRules,
+  todoSlugs,
 } from "./mod.ts";
 
 // A module with two endpoints. `table.write` dispatches via [REQ] table.write and
@@ -202,6 +203,27 @@ Deno.test("renderHealRules — stable JSON with trailing newline", () => {
   const text = renderHealRules({ v: 1, slugs: { "a-b": [{ kind: "retry" }] } });
   assertEquals(text.endsWith("\n"), true);
   assertEquals(JSON.parse(text).v, 1);
+});
+
+Deno.test("todoSlugs — only slugs with a todo:true suggestion, sorted", () => {
+  const rules: HealRules = {
+    v: 1,
+    slugs: {
+      "zeta-fault": [{ kind: "note", todo: true }],
+      "enriched": [{ kind: "run-step", match: "/x/i", why: "real" }],
+      "alpha-fault": [{ kind: "run-step", match: "/y/i", todo: true }],
+      "mixed": [{ kind: "run-step", why: "real" }, { kind: "note", todo: true }],
+    },
+  };
+  assertEquals(todoSlugs(rules), ["alpha-fault", "mixed", "zeta-fault"]);
+});
+
+Deno.test("todoSlugs — empty when every entry is enriched", () => {
+  const rules: HealRules = {
+    v: 1,
+    slugs: { "a-b": [{ kind: "retry", why: "transient" }] },
+  };
+  assertEquals(todoSlugs(rules), []);
 });
 
 Deno.test("planHealRules — [PLY] case faults are collected", () => {

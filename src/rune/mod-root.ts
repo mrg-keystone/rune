@@ -35,6 +35,7 @@ import {
   runeFaultCoverage,
   runeExtraFiles,
   runeSignatureParity,
+  runeHealTodo,
 } from "./domain/business/rules/poly-mod.ts";
 
 export const rules: RuleDefinition[] = [
@@ -62,4 +63,5 @@ export const rules: RuleDefinition[] = [
   { name: "rune-fault-coverage", description: "Every fault declared in a rune must have a Deno.test case in the relevant test file", check: runeFaultCoverage.check, systemPrompt: runeFaultCoverage.SYSTEM_PROMPT, buildPrompt: runeFaultCoverage.buildPrompt },
   { name: "rune-extra-files", description: "Folders/files in rune-managed slots without a backing rune element are flagged as orphans", check: runeExtraFiles.check, systemPrompt: runeExtraFiles.SYSTEM_PROMPT, buildPrompt: runeExtraFiles.buildPrompt },
   { name: "rune-signature-parity", description: "Coordinator and entrypoint files must reference the input/output DTOs declared by the rune", check: runeSignatureParity.check, systemPrompt: runeSignatureParity.SYSTEM_PROMPT, buildPrompt: runeSignatureParity.buildPrompt },
+  { name: "rune-heal-todo", description: "Generated fixtures/heal-rules.json entries must be enriched (todo:true removed) — strict-gated", check: runeHealTodo.check, systemPrompt: runeHealTodo.SYSTEM_PROMPT, buildPrompt: runeHealTodo.buildPrompt },
 ];

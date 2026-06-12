@@ -292,3 +292,15 @@ export function readHealRules(parsed: unknown): HealRules | null {
 export function renderHealRules(rules: HealRules): string {
   return JSON.stringify(rules, null, 2) + "\n";
 }
+
+/** The slugs whose suggestions are still un-enriched scaffolds — any suggestion
+ * carrying `todo: true` (sorted, deduped). The shared definition of "needs
+ * enrichment" used by the sync nudge and the `rune-heal-todo` lint rule. */
+export function todoSlugs(rules: HealRules): string[] {
+  return Object.entries(rules.slugs)
+    .filter(([, sugg]) =>
+      Array.isArray(sugg) && sugg.some((s) => s && s.todo === true)
+    )
+    .map(([slug]) => slug)
+    .sort();
+}

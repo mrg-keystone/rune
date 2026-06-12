@@ -35,6 +35,7 @@ export const RULE_TYPE_MAP: Record<string, string> = {
   "rune-signature-parity": "signature-parity",
   "rune-fault-coverage": "fault-coverage",
   "rune-extra-files": "orphan-files",
+  "rune-heal-todo": "heal-todo",
   // `structure` splits into forbidden-dirs + loose-files; the presence rules
   // (rune-*-presence, rune-poly-cases, rune-dto-shape, rune-typ-shape) are
   // subsumed by codegen, and fixture-promotion has no artifact entry — all stay

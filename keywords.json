@@ -670,6 +670,15 @@
       "enabled": true,
       "params": {},
       "message": "file sits in a rune-managed slot but no rune element declares it (orphan)"
+    },
+    {
+      "id": "heal-todo",
+      "type": "heal-todo",
+      "target": "generated",
+      "severity": "warning",
+      "enabled": true,
+      "params": {},
+      "message": "heal-rules entry still carries todo: true — enrich it (strict-gated: errors under rune lint --strict)"
     }
   ],
   "modifiers": [

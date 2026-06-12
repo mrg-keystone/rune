@@ -22,3 +22,4 @@ export * as runeTypShape from "./implementations/rune-typ-shape/mod.ts";
 export * as runeFaultCoverage from "./implementations/rune-fault-coverage/mod.ts";
 export * as runeExtraFiles from "./implementations/rune-extra-files/mod.ts";
 export * as runeSignatureParity from "./implementations/rune-signature-parity/mod.ts";
+export * as runeHealTodo from "./implementations/rune-heal-todo/mod.ts";

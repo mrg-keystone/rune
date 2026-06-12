@@ -16,6 +16,7 @@ import {
   planHealRules,
   readHealRules,
   renderHealRules,
+  todoSlugs,
 } from "@rune/domain/business/rune-heal/mod.ts";
 import { resolveRoot } from "@rune/entrypoints/spec-root.ts";
 
@@ -688,11 +689,18 @@ export async function ensureHealRules(
   const staleNote = stale.length > 0
     ? `${dir}/heal-rules.json: ${stale.length} slug(s) no longer declared by any endpoint (kept — prune by hand): ${stale.join(", ")}`
     : null;
+  // The enrichment nudge is emitted on EVERY sync while un-enriched (todo:true)
+  // entries remain — not just the sync that created them. CLI output lands in an
+  // LLM's context window; a file on disk does not, so this is what makes "always
+  // write the heal prompts" actually happen. A later session inherits the debt
+  // and must keep seeing it.
+  const enrichNote = healEnrichmentNote(dir, todoSlugs(result));
 
   // No new slugs (and no creation) → leave the file as-is, preserving any human
-  // formatting; only surface stale slugs.
+  // formatting; still surface stale slugs and the standing enrichment nudge.
   if (!changed) {
     if (staleNote) notes.push(staleNote);
+    if (enrichNote) notes.push(enrichNote);
     return notes;
   }
 
@@ -707,10 +715,25 @@ export async function ensureHealRules(
         : `updated ${dir}/heal-rules.json (added ${added.length} new slug(s): ${added.join(", ")})`,
     );
     if (staleNote) notes.push(staleNote);
+    if (enrichNote) notes.push(enrichNote);
   } catch (e) {
     ioErrors.push(`${dir}/heal-rules.json: ${errMessage(e)}`);
   }
   return notes;
+}
+
+/** The imperative follow-up that names every un-enriched heal-rules slug, so an
+ * LLM/human session sees enrichment is its job. Null when nothing is pending. */
+function healEnrichmentNote(dir: string, pending: string[]): string | null {
+  if (pending.length === 0) return null;
+  return [
+    `heal-rules: ${pending.length} slug(s) need enrichment before this module is done:`,
+    `    ${pending.join(", ")}`,
+    `    → edit ${dir}/heal-rules.json: replace each TODO suggestion with real`,
+    `      actions (run-step/set-input/pick/retry/note + a concrete \`why\`), then`,
+    `      remove \`todo: true\`. Schema: the keep skill's rules-file reference.`,
+    `    A module is NOT done while todo:true entries remain.`,
+  ].join("\n");
 }
 
 /** Every project spec (specs/<n>.rune, src/<m>/spec.rune, src/<m>/<m>.rune)

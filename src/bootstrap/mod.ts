@@ -30,7 +30,9 @@ USAGE
   rune sync <file.rune>      generate/update a module from its spec
   rune check <file.rune>     check a spec for errors (no codegen)
   rune dev [path]            live loop: save spec → check → sync → app restart → page reload
-  rune lint [dir]            lint a project against the architecture (default: .)
+  rune lint [dir] [--strict] lint a project against the architecture (default: .);
+                            --strict promotes strict-gated rules (e.g. un-enriched
+                            heal-rules) to failing violations — the CI profile
   rune manifest <file.rune>  one-shot generate (no prune)
   rune validate <art.json>   validate a keywords.json artifact
   rune lsp                   start the language server (editor integration)
@@ -145,6 +147,11 @@ if (Deno.args[0] !== "lint") {
 }
 
 const { dir, module: moduleName, suggest, json } = parseArgs(Deno.args.slice(1));
+
+// `--strict` promotes strict-gated rules (e.g. rune-heal-todo) into failing
+// violations — the CI profile. Surfaced to the rules via RUNE_LINT_STRICT so the
+// check() bodies stay flag-free; an env already set by the caller is honored too.
+if (Deno.args.includes("--strict")) Deno.env.set("RUNE_LINT_STRICT", "1");
 
 const startDir = resolve(dir);
 

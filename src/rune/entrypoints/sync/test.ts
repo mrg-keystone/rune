@@ -354,6 +354,9 @@ Deno.test("ensureHealRules — scaffolds fixtures/heal-rules.json from endpoint 
     await addSpec(root, "tables", TABLES_SPEC);
     const notes = await ensureHealRules(root, []);
     assertEquals(notes.some((n) => n.includes("created fixtures/heal-rules.json")), true);
+    // The enrichment nudge names every un-enriched (todo) slug — including the
+    // run-step pre-fill, which is a heuristic guess flagged for verification.
+    assertEquals(notes.some((n) => n.includes("need enrichment") && n.includes("quota-exceeded") && n.includes("not-enabled")), true);
     const rules = JSON.parse(
       await Deno.readTextFile(join(root, "fixtures", "heal-rules.json")),
     );
@@ -365,6 +368,30 @@ Deno.test("ensureHealRules — scaffolds fixtures/heal-rules.json from endpoint 
     assertEquals(rules.slugs["not-enabled"][0].match, "/enable/i");
     // `quota-exceeded` has no signal → a TODO note.
     assertEquals(rules.slugs["quota-exceeded"][0].kind, "note");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("ensureHealRules — enrichment nudge persists on a no-op re-sync while todos remain", async () => {
+  const root = await tempProject();
+  try {
+    await addSpec(root, "tables", TABLES_SPEC);
+    await ensureHealRules(root, []); // create
+    // Second sync, nothing changed — the file is not rewritten, but the standing
+    // nudge must still fire (a later session inherits the debt).
+    const notes = await ensureHealRules(root, []);
+    assertEquals(notes.some((n) => n.includes("created") || n.includes("updated")), false);
+    assertEquals(notes.some((n) => n.includes("need enrichment") && n.includes("quota-exceeded")), true);
+
+    // Enrich BOTH entries (drop todo) → the nudge stops.
+    const path = join(root, "fixtures", "heal-rules.json");
+    const r = JSON.parse(await Deno.readTextFile(path));
+    r.slugs["quota-exceeded"] = [{ kind: "note", label: "raise the quota", why: "the table's write quota is exhausted" }];
+    r.slugs["not-enabled"] = [{ kind: "run-step", match: "/enable/i", why: "the table must be enabled first" }];
+    await Deno.writeTextFile(path, JSON.stringify(r, null, 2) + "\n");
+    const after = await ensureHealRules(root, []);
+    assertEquals(after.some((n) => n.includes("need enrichment")), false);
   } finally {
     await Deno.remove(root, { recursive: true });
   }
