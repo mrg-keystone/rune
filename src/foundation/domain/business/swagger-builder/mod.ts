@@ -87,9 +87,9 @@ export class SwaggerBuilder {
     const docs$ = specs.map((s) => this.documentBuilder.createDocument(s));
     const swaggerDocs = await Promise.all(docs$);
     // class-validator @IsOptional is as authoritative as @Optional() — see
-    // optionalPropsByClassName above.
+    // optionalPropsByClassName above. (Entries are {doc, path} wrappers.)
     const optionals = optionalPropsByClassName();
-    swaggerDocs.forEach((doc) => honorOptionalProps(doc, optionals));
+    swaggerDocs.forEach((entry) => honorOptionalProps(entry.doc, optionals));
     // Index from the CRAWLED modules, not server.moduleNames — the server only
     // registers the root module, so an imported module would get a /docs/<name>
     // page but no card on the index.
