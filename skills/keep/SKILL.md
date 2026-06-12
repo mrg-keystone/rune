@@ -7,8 +7,9 @@ description: >-
   Fresh embedding). Use this whenever code imports @mrg-keystone/keep, calls
   bootstrapServer or exerciseEndpoints, decorates with @Endpoint /
   @EndpointController, works inside the keep repo or a rune-generated project,
-  or the user asks about keep's cake, /docs pages, /docs/_map, token
-  minting, @Public/@Roles, or embedding an API under Fresh. Trigger even for
+  or the user asks about keep's cake, /docs pages, /docs/_map, the heal
+  panel / "Ask Claude" (/docs/_heal), token minting, @Public/@Roles, or
+  embedding an API under Fresh. Trigger even for
   "add an endpoint", "wire these two modules together", or auth/401 debugging
   in any keep-based app — keep's process metadata, trust model, and mounting
   rules are non-obvious and easy to get wrong without this skill.
@@ -18,7 +19,7 @@ description: >-
 
 keep (`@mrg-keystone/keep` on JSR) is an opinionated Deno backend framework on
 top of `@danet/core`. One call — `bootstrapServer` — gives you: routed
-controllers, per-module Swagger docs, an interactive **cake** per
+controllers, per-module Swagger docs, a self-healing interactive **cake** per
 module, a live **system map**, deny-by-default token auth with localhost and
 in-process trust, request-scoped structured logging (Datadog), and an
 in-process HTTP client. It is the runtime that `rune`-generated projects
@@ -136,7 +137,14 @@ After wiring endpoints, **prove the chain runs, don't just type-check**:
 1. Serve the app and open **`/docs/<module>`** — the cake. "Run
    all in order" walks the chain, stops at the first failure with the exact
    step and reason; every green step captures outputs that pre-fill
-   dependents. Session state survives reloads.
+   dependents. Session state survives reloads. With `flows` declared the
+   default walk is **main** — untagged steps only — so destructive branches
+   (teardown) never run unless their flow is selected; per-step **skip**
+   toggles and **run from here** control partial re-runs. A failed step
+   grows a yellow **⚠ heal** panel of one-click rule-based fixes (run the
+   producer, set an input from a capture, retry with reason); its **Ask
+   Claude** button sends the failure to `POST /docs/_heal` for a structured
+   diagnosis when `PRIVATE_CLAUDE_URL` is set.
 2. **`/docs/_map`** shows the whole composed app as one live graph — module
    lanes, solid bind edges, dashed `$input` contracts, status dots that
    recolor as you run steps in any tab. Click a node to deep-link into its
@@ -200,6 +208,8 @@ model, token shape, docs gating, and browser token flow live there.
 | `DD_API_KEY` | ship structured logs to Datadog (else console only) |
 | `POSTMARK_SERVER_TOKEN` / `POSTMARK_FROM` / `POSTMARK_TO` | log-failure alert emails |
 | `KEEP_DEV` | path to a dev status file → `/docs/_dev` + page auto-reload |
+| `PRIVATE_CLAUDE_URL` | private-claude service for the cake's "Ask Claude" healer (`POST /docs/_heal`) |
+| `PRIVATE_CLAUDE_TOKEN` | bearer token for that service (optional) |
 
 ## Pitfalls
 
@@ -219,7 +229,8 @@ model, token shape, docs gating, and browser token flow live there.
 ## References (read on demand)
 
 - `references/process.md` — full `@Endpoint`/`EndpointController` options,
-  cake features ({{refs}}, variables, flows, cross-module captures), the
+  cake features ({{refs}}, variables, flows, skips/run-from-here,
+  cross-module captures), the self-healing panel and `/docs/_heal`, the
   system map, dev mode, and every `exerciseEndpoints` option. Read when
   authoring process chains, debugging the cake, or wiring CI runs.
 - `references/auth.md` — the complete trust model, token shape and minting,

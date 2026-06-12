@@ -79,8 +79,19 @@ Cake behavior worth knowing when debugging:
   `storage` listener live-updates other open tabs.
 - **Run all in order** walks the active flow and stops at the first failure
   with a banner naming the step and reason; fix and re-run to resume.
-- A module with `flows` gets a **flow selector**; off-flow steps are hidden
-  and don't gate.
+  **Skipped** steps are excluded from the walk entirely — each step has a
+  `skip` toggle, and a skipped step's state stays exactly where you parked
+  it (the row renders dimmed). **Run from here** (in a step's Request panel)
+  clears that step and every later step in the walk, then runs from it.
+- A module with `flows` gets a **flow selector** that defaults to **main** —
+  the untagged-only walk — so destructive branches (a teardown flow) never
+  run unless explicitly selected; "All" runs everything, named flows run
+  that branch plus untagged steps. Off-flow steps are hidden and don't gate.
+  (The headless runner is unchanged: an unset `flow` option still means
+  every endpoint.)
+- A failed step whose failure the heal rules can name gets a yellow **⚠**
+  dot instead of red and a **heal** panel of one-click fixes — see
+  "Self-healing" below.
 - Declared `$inputs` appear in the **Module inputs** card. Unset inputs show
   amber; a composed producer flips the row to a dim
   **`auto: <module>:<endpoint>`** note — satisfied from that producer's
@@ -90,6 +101,55 @@ Cake behavior worth knowing when debugging:
 - Dependency cycles are reported in a banner instead of leaving steps locked.
 - Each step shows the concrete request it will send, the response, and a
   paste-ready curl. **Reset session** clears the page's state.
+
+## Self-healing — the heal panel and `POST /docs/_heal`
+
+When a step fails, a **⚠ heal** panel opens under it. It works in two tiers,
+by design: deterministic rules first (instant, offline, free), Claude for the
+long tail the rules can't name.
+
+**Tier 1 — the rules engine (client-side).** Every *structured* failure shape
+becomes one-click fixes with Apply buttons:
+
+| Failure shape | Offered fixes |
+| --- | --- |
+| unresolved `{{ref}}` / `{{$input}}` | run the step that outputs the field; set the input from an existing capture (any module's session); a plural capture (`tableNames`) feeds an element picker for the singular input (`tableName`); otherwise jump to the Module-inputs box |
+| 422 assert failure (body names path + constraint) | remove an optional body key; "did you mean X?" for keys the DTO doesn't have; a required-but-unsatisfiable field reuses the missing-ref fixes |
+| spec fault slug (`not-tracked`, `not-in-catalog`, `not-found`, `not-text`, `not-armed`, `lease-held`, `timeout`, `unauthorized`, `rate-limited`, `kv-error`, …) | run the prerequisite step that repairs the state (an enable/discover/sync step), pick a value that actually exists from captures, or retry-with-reason ("another tick holds the lease — it expires in seconds") |
+| anything else | run the declared dependencies that aren't green |
+
+Armed/destructive actions are never proposed as a run — `not-armed` names the
+env var that arms writes (restart required) and offers only a retry.
+
+**Tier 2 — Ask Claude.** The panel's button POSTs the failure bundle —
+endpoint metadata, resolved request, response, missing refs, module inputs,
+step statuses, captures (pruned/truncated), and the rule fixes already
+offered — to **`POST /docs/_heal`**. The server forwards bundle + the **whole
+composed process graph** (every module) to `PRIVATE_CLAUDE_URL/v1/prompt`
+(the private-claude service; `PRIVATE_CLAUDE_TOKEN` adds a bearer header)
+with a JSON schema, so the verdict comes back structured:
+
+```json
+{
+  "diagnosis": "plain-language root cause, <120 words",
+  "suggestions": [
+    { "kind": "set-input", "target": "qbId", "value": "12", "why": "…" }
+  ]
+}
+```
+
+`kind` is one of `set-input` / `run-step-first` / `edit-body`
+(machine-applicable — rendered with Apply buttons) or `switch-flow` /
+`set-env` / `explain` (advice). Claude is prompted to find root causes the
+rules can't — cross-module causality (a teardown step wiped state a later
+module reads), real implementation bugs — and never to propose destructive
+steps as runnable.
+
+Trust posture mirrors `/_mint` and `/docs/_run`: **localhost-only** (403
+otherwise), `503` until `PRIVATE_CLAUDE_URL` is configured on the server,
+`502` wraps upstream errors. The upstream call can take minutes (180 s
+timeout) and spends the operator's Claude plan — another reason rules run
+first.
 
 ## The system map — `/docs/_map`
 
