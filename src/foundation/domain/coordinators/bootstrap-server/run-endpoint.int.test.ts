@@ -52,9 +52,16 @@ class ProducerController {
 
 @EndpointController("consumer")
 class ConsumerController {
-  @Endpoint({ input: UseDto, output: UsedDto, order: 1, bind: { token: "$token" } })
+  @Endpoint({
+    input: UseDto,
+    output: UsedDto,
+    order: 1,
+    bind: { token: "$token" },
+  })
   use(body: UseDto): UsedDto {
-    if (!body?.token) throw new Error("missing token — $input was not satisfied");
+    if (!body?.token) {
+      throw new Error("missing token — $input was not satisfied");
+    }
     return { usedId: "u-" + body.token };
   }
 }
@@ -85,7 +92,10 @@ const CycleModule = endpointModule("Cycle", [CycleController]);
 
 // ── acceptance ───────────────────────────────────────────────────────────────
 Deno.test("POST /docs/_run - localhost walks the composed process, ok:true", async () => {
-  const server = await bootstrapServer("run-app", [ProducerModule, ConsumerModule]);
+  const server = await bootstrapServer("run-app", [
+    ProducerModule,
+    ConsumerModule,
+  ]);
   try {
     const res = await server.handler(runReq({}), conn(loopback));
     assertEquals(res.status, 200);
@@ -107,7 +117,10 @@ Deno.test("POST /docs/_run - localhost walks the composed process, ok:true", asy
 });
 
 Deno.test("POST /docs/_run - non-localhost and missing conn info are denied (403)", async () => {
-  const server = await bootstrapServer("run-app", [ProducerModule, ConsumerModule]);
+  const server = await bootstrapServer("run-app", [
+    ProducerModule,
+    ConsumerModule,
+  ]);
   try {
     assertEquals((await server.handler(runReq({}), conn(offhost))).status, 403);
     // In-process dispatch carries no conn info ⇒ fail closed.

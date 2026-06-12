@@ -22,12 +22,18 @@ export const mapCss: string = String.raw`
   *{box-sizing:border-box}
   body{font-family:system-ui,sans-serif;margin:0;background:#0b0d12;color:#e6e9ef}
 
+  button{font:inherit;border:1px solid #2c3142;background:#161a23;color:#e6e9ef;border-radius:6px;padding:.4rem .7rem;cursor:pointer}
+  button:hover:not(:disabled){border-color:#3d4459}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.primary{background:#1d2c44;border-color:#33547e}
+
   header{padding:.85rem 1.25rem;border-bottom:1px solid #232734;display:flex;align-items:center;gap:1rem;flex-wrap:wrap;position:sticky;top:0;background:#0b0d12;z-index:10}
   header h1{font-size:1.05rem;margin:0;display:flex;align-items:baseline;gap:.5rem}
   .h-sub{color:#6b7394;font-weight:400;font-size:.85rem}
   header nav{display:flex;gap:.9rem;margin-top:.15rem}
   header nav a{color:#7aa2f7;text-decoration:none;font-size:.78rem}
   header nav a:hover{text-decoration:underline}
+  .bar{margin-left:auto;display:flex;gap:.5rem;align-items:center}
 
   #banner{margin:.8rem 1.25rem 0;padding:.6rem .9rem;border-radius:8px;font-size:.85rem;border:1px solid}
   #banner.err{background:#2a1215;border-color:#6e2a2f;color:#ffb4ad}
@@ -57,6 +63,8 @@ export const mapCss: string = String.raw`
   circle.dot{fill:#12151d;stroke:#2c3142}
   circle.dot.ok{fill:#7ee787;stroke:#2b5e3c}
   circle.dot.fail{fill:#ff7b72;stroke:#6e2a2f}
+  circle.dot.run{fill:#7aa2f7;stroke:#33547e;animation:kpulse .9s ease-in-out infinite}
+  @keyframes kpulse{0%,100%{opacity:.45}50%{opacity:1}}
   text.nmethod{font:700 10px ui-monospace,monospace}
   text.nmethod.GET{fill:#7ee787}
   text.nmethod.POST{fill:#7aa2f7}
@@ -190,9 +198,21 @@ export const mapClientJs: string = String.raw`
     }).join("");
   }
 
+  // ── banner ─────────────────────────────────────────────────────────────────
+  var bannerEl = document.getElementById("banner");
+  function banner(kind, html) {
+    if (!bannerEl) return;
+    if (!kind) { bannerEl.hidden = true; return; }
+    bannerEl.className = kind;
+    bannerEl.innerHTML = html;
+    bannerEl.hidden = false;
+  }
+
   // ── live run state ─────────────────────────────────────────────────────────
-  // Each emulator page persists its session under "keep:emulator:" + its own page path; the
-  // map reads OTHER pages' keys, computed from each node's docsPath plus the mount prefix.
+  // ONE source of truth: the per-module cake sessions in localStorage. The map only ever reads
+  // them; its own "Run all" (below) WRITES the headless report back into those sessions, so the
+  // map, every cake tab, and a later page load all agree on the same colors and captures.
+  var running = false;
   function statusFor(n) {
     try {
       var raw = localStorage.getItem("keep:emulator:" + prefix + n.docsPath);
@@ -207,7 +227,7 @@ export const mapClientJs: string = String.raw`
     DATA.nodes.forEach(function (n) {
       var g = nodeEls[n.key];
       if (!g) return;
-      var st = statusFor(n);
+      var st = running ? "run" : statusFor(n);
       g.querySelector(".dot").setAttribute("class", "dot" + (st ? " " + st : ""));
     });
   }
@@ -218,5 +238,114 @@ export const mapClientJs: string = String.raw`
     if (e.key && e.key.indexOf("keep:emulator:") !== 0) return;
     recolor();
   });
+
+  // ── Run all (the whole composed process, server-side) ──────────────────────
+  // POST the sibling /docs/_run — the localhost-only door to exerciseEndpoints — then write the
+  // report INTO each module's cake session (status, response meta, captures) plus the shared
+  // cross-module capture scope. Open cake tabs pick it up via the storage event; opening a cake
+  // later finds its steps already green with responses and captures pre-filled. 403 (not
+  // localhost) / 503 (still booting) surface their server message in the banner.
+
+  // Mirrors the cake's freshState() — keep the shapes in sync.
+  function freshSession() {
+    return { v: 1, status: {}, captured: {}, meta: {}, userVars: {}, bodies: {}, paramVals: {}, expanded: {}, skips: {}, setup: [], asserts: {}, prev: {}, savedAt: 0 };
+  }
+  function writeBack(rep) {
+    var rowsByModule = {};
+    function add(st) {
+      return function (row) {
+        if (!row || !row.module || !row.id) return;
+        (rowsByModule[row.module] = rowsByModule[row.module] || []).push({ row: row, st: st });
+      };
+    }
+    (rep.passed || []).forEach(add("ok"));
+    (rep.failed || []).forEach(add("fail"));
+    (rep.optionalFailed || []).forEach(add("fail"));
+
+    var globalsKey = "keep:emulator:globals";
+    var globals = null;
+    try { globals = JSON.parse(localStorage.getItem(globalsKey)); } catch (e) { globals = null; }
+    if (!globals || globals.v !== 1) globals = { v: 1, vars: {}, captured: {}, persist: {} };
+    if (!globals.captured) globals.captured = {};
+
+    Object.keys(rowsByModule).forEach(function (module) {
+      var key = "keep:emulator:" + prefix + "/docs/" + module;
+      var session = null;
+      try {
+        var parsed = JSON.parse(localStorage.getItem(key));
+        if (parsed && parsed.v === 1) session = parsed;
+      } catch (e) { /* corrupted session is replaced */ }
+      if (!session) session = freshSession();
+      ["status", "captured", "meta"].forEach(function (k) { if (!session[k]) session[k] = {}; });
+      rowsByModule[module].forEach(function (en) {
+        var row = en.row;
+        session.status[row.id] = en.st;
+        session.meta[row.id] = { http: row.status || 0, ms: row.ms || 0, body: row.body };
+        if (en.st === "ok" && row.body !== null && typeof row.body === "object") {
+          session.captured[row.id] = row.body;
+          globals.captured[module + ":" + row.id] = row.body;
+        }
+      });
+      session.savedAt = Date.now();
+      try { localStorage.setItem(key, JSON.stringify(session)); } catch (e) { /* storage full */ }
+    });
+    try { localStorage.setItem(globalsKey, JSON.stringify(globals)); } catch (e) { /* best effort */ }
+  }
+
+  var runallBtn = document.getElementById("runall");
+  if (runallBtn) {
+    runallBtn.addEventListener("click", function () {
+      if (running) return;
+      running = true;
+      runallBtn.disabled = true;
+      runallBtn.textContent = "Running…";
+      banner("info", "Running every module's process in order…");
+      recolor();
+      fetch(prefix + "/docs/_run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }).then(function (res) {
+        return res.json().then(
+          function (v) { return { res: res, v: v }; },
+          function () { return { res: res, v: {} }; },
+        );
+      }).then(function (r) {
+        running = false;
+        runallBtn.disabled = false;
+        runallBtn.textContent = "Run all";
+        if (!r.res.ok) {
+          recolor();
+          banner("err", r.v && r.v.error ? esc(r.v.error) : "Run failed (HTTP " + r.res.status + ").");
+          return;
+        }
+        var rep = r.v;
+        writeBack(rep);
+        recolor();
+        var nfail = (rep.failed || []).length;
+        var nopt = (rep.optionalFailed || []).length;
+        var ncyc = (rep.cycles || []).length;
+        if (ncyc) {
+          banner("err", "Dependency cycle — " + rep.cycles.map(function (c) {
+            return esc(c.join(" → "));
+          }).join("; ") + ".");
+        } else if (nfail) {
+          banner("err", nfail + " step" + (nfail === 1 ? "" : "s") + " failed: " +
+            (rep.failed || []).map(function (row) {
+              return esc((row.module ? row.module + ":" : "") + row.id);
+            }).join(", ") + "." + (nopt ? " " + nopt + " optional also failed." : ""));
+        } else {
+          banner("ok", "All " + (rep.passed || []).length + " steps passed." +
+            (nopt ? " " + nopt + " optional failed." : ""));
+        }
+      }).catch(function (err) {
+        running = false;
+        runallBtn.disabled = false;
+        runallBtn.textContent = "Run all";
+        recolor();
+        banner("err", "Run failed — " + esc(err && err.message ? err.message : String(err)));
+      });
+    });
+  }
 })();
 `;

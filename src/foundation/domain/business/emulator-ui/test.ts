@@ -116,6 +116,51 @@ Deno.test("emulatorShellHtml - embeds the composed producers index in the payloa
   assertStringIncludes(bare, '"producers":{}');
 });
 
+Deno.test("emulatorShellHtml - per-route copy button + collapsed run-all follow", () => {
+  const html = emulatorShellHtml("Users", doc);
+  // Each step's request address bar carries a button that copies that route's full URL.
+  assertStringIncludes(html, "copy-route");
+  assertStringIncludes(html, "copy route");
+  // Run-all keeps boxes collapsed and scrolls the active/stopped step into view rather than
+  // auto-expanding it (the follow-without-expand helper).
+  assertStringIncludes(html, "ensureRowVisible");
+});
+
+Deno.test("emulatorShellHtml - module setup card, persist checkboxes, and fixtures wiring", () => {
+  const html = emulatorShellHtml("Users", doc);
+  // The Module setup rail card with its Save fixtures + Run setup controls.
+  assertStringIncludes(html, 'id="setup-card"');
+  assertStringIncludes(html, "Module setup");
+  assertStringIncludes(html, 'id="save-fixtures"');
+  assertStringIncludes(html, 'id="run-setup"');
+  // Each step can be snapshotted into setup from its Request panel.
+  assertStringIncludes(html, "add-setup");
+  assertStringIncludes(html, "+ setup");
+  // Environment variables get a persist checkbox, and the client writes/reads the artifact.
+  assertStringIncludes(html, "data-persist");
+  assertStringIncludes(html, "/docs/_fixtures");
+  assertStringIncludes(html, "fixtures/cake.json");
+});
+
+Deno.test("emulatorShellHtml - expectations, scenarios, diff, and project heal rules wiring", () => {
+  const html = emulatorShellHtml("Users", doc);
+  // Per-step expectations: status pin + body checks, evaluated on every send.
+  assertStringIncludes(html, "a-status");
+  assertStringIncludes(html, "+ check");
+  assertStringIncludes(html, "assert-results");
+  // Scenarios rail card + save form; loaded from /docs/_scenarios.
+  assertStringIncludes(html, 'id="scenarios-card"');
+  assertStringIncludes(html, 'id="save-scenario"');
+  assertStringIncludes(html, "/docs/_scenarios");
+  // Response diff vs the previous run.
+  assertStringIncludes(html, "changed vs previous run");
+  // Project heal rules are fetched from the localhost-only door.
+  assertStringIncludes(html, "/docs/_heal-rules");
+  // The QuickBooks-era hardcoded slugs must be gone from the shipped client.
+  assert(!html.includes("not-in-catalog"));
+  assert(!html.includes("eligibleTextFids"));
+});
+
 Deno.test("emulatorShellHtml - dev reload script injected only when opts.dev", () => {
   // The poller hits the sibling `_dev` endpoint — its fetch is the script's signature.
   const dev = emulatorShellHtml("Users", doc, { dev: true });

@@ -80,6 +80,10 @@ export interface EndpointResult {
   status?: number;
   attempts: number;
   error?: string;
+  /** Milliseconds spent in the last attempt's call. */
+  ms?: number;
+  /** Parsed response body of the last attempt (ok or not) — lets callers show/replay outcomes. */
+  body?: unknown;
 }
 
 export interface ExerciseReport {
@@ -368,7 +372,9 @@ export async function exerciseEndpoints(
       if (cur === consumer) return true;
       if (seen.has(cur)) continue;
       seen.add(cur);
-      for (const dep of (byId.get(cur)?.dependsOn ?? []).flat()) stack.push(dep);
+      for (const dep of (byId.get(cur)?.dependsOn ?? []).flat()) {
+        stack.push(dep);
+      }
     }
     return false;
   };
@@ -448,11 +454,14 @@ export async function exerciseEndpoints(
         const path = resolvePath(ep.path, values);
         const result = results.get(id)!;
         result.attempts++;
+        const t0 = performance.now();
         const call = await limiter.run(() =>
           transport(ep.method, path, values)
         );
+        result.ms = Math.round(performance.now() - t0);
         result.status = call.status;
         result.error = call.error;
+        result.body = call.body;
         if (call.status >= 200 && call.status < 300) {
           result.ok = true;
           if (call.body && typeof call.body === "object") {

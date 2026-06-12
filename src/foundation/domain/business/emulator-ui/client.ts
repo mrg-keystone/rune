@@ -94,9 +94,10 @@ export const emulatorCss: string = String.raw`
   @media (max-width:900px){.cols{grid-template-columns:1fr}}
   .panel-head{font-size:.7rem;color:#6b7394;text-transform:uppercase;letter-spacing:.05em;margin:.75rem 0 .4rem;display:flex;align-items:center;gap:.5rem;min-height:1.4rem}
   .panel-head .mini{margin-left:auto}
-  .addr{font-family:ui-monospace,monospace;font-size:.8rem;display:flex;gap:.5rem;align-items:baseline;background:#0e1117;border:1px solid #1b1f29;border-radius:6px;padding:.42rem .6rem;white-space:nowrap;overflow:hidden}
+  .addr{font-family:ui-monospace,monospace;font-size:.8rem;display:flex;gap:.5rem;align-items:center;background:#0e1117;border:1px solid #1b1f29;border-radius:6px;padding:.42rem .6rem;white-space:nowrap;overflow:hidden}
   .addr-verb{font-weight:700;font-size:.66rem;letter-spacing:.03em;flex:none}
-  .addr-url{overflow:hidden;text-overflow:ellipsis}
+  .addr-url{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .addr .copy-route{flex:none;margin-left:.25rem}
   .addr-origin{color:#4d5468}
   .addr-path{color:#e6e9ef}
   .tabs{display:flex;align-items:center;margin:.45rem 0 0;border-bottom:1px solid #1b1f29}
@@ -164,7 +165,51 @@ export const emulatorCss: string = String.raw`
   @keyframes kflash{0%{background:#2b5e3c66}100%{background:transparent}}
   .var-row input,.var-row select{flex:1;min-width:0;font-size:.74rem;font-family:ui-monospace,monospace;padding:.12rem .35rem}
   .var-row select{background:#0e1117;color:#e6e9ef;border:1px solid #2c3142;border-radius:5px}
+  .var-row .persist{flex:none;display:inline-flex;align-items:center;gap:.2rem;font-size:.66rem;color:#6b7394;font-family:system-ui,sans-serif;cursor:pointer;white-space:nowrap}
+  .var-row .persist input{flex:none;width:auto;min-width:0;margin:0;cursor:pointer}
   #vars .empty{font-size:.74rem;color:#4d5468;font-style:italic}
+
+  #setup .empty{font-size:.74rem;color:#4d5468;font-style:italic}
+  .setup-row{display:flex;align-items:center;gap:.4rem;padding:.16rem 0;font-size:.76rem;font-family:ui-monospace,monospace;flex-wrap:wrap}
+  .setup-row.missing{opacity:.5}
+  .setup-num{color:#6b7394;width:1rem;text-align:right;flex:none}
+  .setup-name{color:#7aa2f7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+  .setup-actions{display:flex;gap:.2rem;flex:none}
+  .setup-body{width:100%;color:#6b7394;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:1.4rem}
+  #run-setup{margin-top:.5rem}
+
+  #scenarios .empty{font-size:.74rem;color:#4d5468;font-style:italic}
+  .scen-row{display:flex;align-items:center;gap:.4rem;padding:.16rem 0;font-size:.76rem;font-family:ui-monospace,monospace}
+  .scen-name{color:#7aa2f7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+  .scen-actions{display:flex;gap:.2rem;flex:none}
+  #save-scenario{display:flex;gap:.35rem;margin-top:.5rem}
+  #save-scenario input{flex:1;min-width:0;font-size:.74rem;font-family:ui-monospace,monospace}
+  #save-scenario button{padding:.15rem .55rem}
+
+  .expects{margin-top:.55rem;border:1px dashed #1b1f29;border-radius:6px;padding:.4rem .55rem}
+  .expects-head{font-size:.7rem;color:#6b7394;text-transform:uppercase;letter-spacing:.05em;display:flex;align-items:center;gap:.5rem}
+  .expects-head .mini{margin-left:auto}
+  .a-status-label{display:inline-flex;align-items:center;gap:.3rem;text-transform:none;letter-spacing:0;font-family:ui-monospace,monospace}
+  .a-status{width:5.5rem;font-size:.72rem;font-family:ui-monospace,monospace;padding:.1rem .35rem}
+  .a-row{display:flex;align-items:center;gap:.35rem;margin-top:.35rem;font-size:.74rem;font-family:ui-monospace,monospace}
+  .a-row input{font-size:.74rem;font-family:ui-monospace,monospace;padding:.12rem .35rem}
+  .a-path{flex:1;min-width:0}
+  .a-val{flex:1;min-width:0}
+  .a-row select{background:#0e1117;color:#e6e9ef;border:1px solid #2c3142;border-radius:5px;font-size:.72rem;font-family:ui-monospace,monospace}
+  .a-verdict{font-size:.76rem;font-family:ui-monospace,monospace;padding:.12rem 0}
+  .a-verdict.pass{color:#7ee787}
+  .a-verdict.fail{color:#ff7b72}
+  .a-verdict .a-got{color:#9aa5ce}
+  .assert-results:empty{display:none}
+
+  .diff{margin-top:.45rem}
+  .diff:empty{display:none}
+  .diff-head{font-size:.7rem;color:#e3b341;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.2rem}
+  .diff-row{font-size:.74rem;font-family:ui-monospace,monospace;padding:.08rem 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .diff-path{color:#7aa2f7}
+  .diff-from{color:#ff7b72}
+  .diff-to{color:#7ee787}
+  .diff-same{font-size:.72rem;color:#4d5468;font-style:italic}
   .input-auto{font-size:.68rem;color:#6b7394;font-family:ui-monospace,monospace;margin:-.05rem 0 .3rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #addvar{display:flex;gap:.35rem;margin-top:.5rem}
   #addvar input{flex:1;min-width:0;font-size:.74rem;font-family:ui-monospace,monospace}
@@ -210,7 +255,7 @@ export const emulatorClientJs: string = String.raw`
   var restoredAt = null;
 
   function freshState() {
-    return { v: 1, status: {}, captured: {}, meta: {}, userVars: {}, bodies: {}, paramVals: {}, expanded: {}, skips: {}, savedAt: 0 };
+    return { v: 1, status: {}, captured: {}, meta: {}, userVars: {}, bodies: {}, paramVals: {}, expanded: {}, skips: {}, setup: [], asserts: {}, prev: {}, savedAt: 0 };
   }
   function loadState() {
     try {
@@ -218,7 +263,10 @@ export const emulatorClientJs: string = String.raw`
       if (!raw) return;
       var parsed = JSON.parse(raw);
       if (parsed && parsed.v === 1) { state = parsed; restoredAt = parsed.savedAt || null; }
-      if (!state.skips) state.skips = {};   // sessions saved before skip toggles existed
+      if (!state.skips) state.skips = {};     // sessions saved before skip toggles existed
+      if (!state.setup) state.setup = [];     // sessions saved before module setup existed
+      if (!state.asserts) state.asserts = {}; // sessions saved before expectations existed
+      if (!state.prev) state.prev = {};       // sessions saved before response diffing existed
     } catch (e) { /* corrupted state is discarded */ }
   }
 
@@ -228,13 +276,16 @@ export const emulatorClientJs: string = String.raw`
   // published on every successful run, referenced cross-module as {{cake:driveToStore.storeId}}.
   var GKEY = "keep:emulator:globals";
   var MODULE = DATA.title;
-  var globals = { v: 1, vars: {}, captured: {} };
+  // persist: which environment variables (by name) are written to fixtures/cake.json — the
+  // durable artifact. Shared across pages like the rest of the scope.
+  var globals = { v: 1, vars: {}, captured: {}, persist: {} };
   function loadGlobals() {
     try {
       var raw = localStorage.getItem(GKEY);
       if (!raw) return;
       var parsed = JSON.parse(raw);
       if (parsed && parsed.v === 1) globals = parsed;
+      if (!globals.persist) globals.persist = {};   // scope saved before persist flags existed
     } catch (e) { /* corrupted scope is discarded */ }
   }
   function saveGlobals() {
@@ -404,9 +455,11 @@ export const emulatorClientJs: string = String.raw`
     });
     return obj;
   }
-  function resolveBody(ep) {
+  // overrideText (a setup step's frozen body) replaces the live editor text when present.
+  function resolveBody(ep, overrideText) {
+    var text = overrideText !== undefined ? overrideText : bodyText(ep);
     var parsed;
-    try { parsed = JSON.parse(bodyText(ep)); }
+    try { parsed = JSON.parse(text); }
     catch (e) { return { error: "invalid JSON — " + e.message, missing: [] }; }
     var missing = [];
     return {
@@ -415,12 +468,15 @@ export const emulatorClientJs: string = String.raw`
     };
   }
 
-  function paramVal(ep, name) { return (state.paramVals[ep.id] || {})[name] || ""; }
-  function urlFor(ep, missing) {
+  // overrideParams (a setup step's frozen params) replaces the live param state when present.
+  function paramVal(ep, name, overrideParams) {
+    return ((overrideParams || state.paramVals[ep.id]) || {})[name] || "";
+  }
+  function urlFor(ep, missing, overrideParams) {
     var p = ep.path;
     var query = [];
     ep.params.forEach(function (prm) {
-      var resolved = resolveString(paramVal(ep, prm.name), missing);
+      var resolved = resolveString(paramVal(ep, prm.name, overrideParams), missing);
       if (prm.in === "path") {
         var enc = encodeURIComponent(String(resolved));
         p = p.split("{" + prm.name + "}").join(enc);
@@ -574,6 +630,79 @@ export const emulatorClientJs: string = String.raw`
     }
   }
 
+  // ── expectations (per-step asserts) ─────────────────────────────────────────
+  // A step is green only when the response also MEETS ITS PINNED EXPECTATIONS: an exact status
+  // (optional; default any 2xx) plus body checks (path op value, values may hold {{refs}}).
+  // Persisted with the session and into fixtures/cake.json — the committable contract-test layer.
+  function assertSpec(ep) {
+    var s = state.asserts[ep.id];
+    if (!s) return null;
+    var hasStatus = s.status !== undefined && s.status !== "";
+    var checks = (s.checks || []).filter(function (c) { return c.path; });
+    if (!hasStatus && !checks.length) return null;
+    return { status: hasStatus ? String(s.status) : "", checks: checks };
+  }
+  function evalAsserts(ep, http, body) {
+    var spec = assertSpec(ep);
+    if (!spec) return null;
+    var out = [];
+    if (spec.status) {
+      out.push({ desc: "status == " + spec.status, pass: String(http) === spec.status, got: String(http) });
+    }
+    spec.checks.forEach(function (c) {
+      var r = walkPath(body, String(c.path).split("."));
+      var missing = [];
+      var expected = resolveString(String(c.value === undefined ? "" : c.value), missing);
+      var expS = typeof expected === "string" ? expected : JSON.stringify(expected);
+      var gotS = r.found ? (typeof r.value === "string" ? r.value : JSON.stringify(r.value)) : undefined;
+      var pass;
+      if (c.op === "exists") pass = r.found;
+      else if (!r.found) pass = false;
+      else if (c.op === "==") pass = gotS === expS || String(r.value) === expS;
+      else if (c.op === "!=") pass = !(gotS === expS || String(r.value) === expS);
+      else if (c.op === "contains") pass = String(gotS).indexOf(expS) >= 0;
+      else pass = false;   // an unknown op fails closed — a typo must be visible, not silently green
+      out.push({
+        desc: c.path + " " + c.op + (c.op === "exists" ? "" : " " + expS),
+        pass: pass,
+        got: r.found ? gotS : "(missing)",
+      });
+    });
+    return out;
+  }
+  function firstAssertFailure(meta) {
+    if (!meta || !meta.asserts) return null;
+    for (var i = 0; i < meta.asserts.length; i++) {
+      if (!meta.asserts[i].pass) return meta.asserts[i];
+    }
+    return null;
+  }
+
+  // ── response diff (vs the previous run) ─────────────────────────────────────
+  // Changed/added/removed paths between two parsed bodies, capped in count and depth so a huge
+  // payload can't melt the page. Scalars-vs-objects and deeper-than-cap subtrees report as one
+  // "changed" entry at their path.
+  function diffJson(a, b, path, out, depth) {
+    if (out.length >= 60 || a === b) return;
+    var aObj = a !== null && typeof a === "object";
+    var bObj = b !== null && typeof b === "object";
+    if (aObj && bObj && Array.isArray(a) === Array.isArray(b) && (depth || 0) < 5) {
+      var keys = {};
+      Object.keys(a).forEach(function (k) { keys[k] = true; });
+      Object.keys(b).forEach(function (k) { keys[k] = true; });
+      Object.keys(keys).forEach(function (k) {
+        var p = path ? path + "." + k : k;
+        if (!(k in b)) out.push({ path: p, kind: "removed", from: a[k] });
+        else if (!(k in a)) out.push({ path: p, kind: "added", to: b[k] });
+        else diffJson(a[k], b[k], p, out, (depth || 0) + 1);
+      });
+      return;
+    }
+    if (JSON.stringify(a) !== JSON.stringify(b)) {
+      out.push({ path: path || "(response)", kind: "changed", from: a, to: b });
+    }
+  }
+
   // ── banner ─────────────────────────────────────────────────────────────────
   var bannerEl = document.getElementById("banner");
   function banner(kind, html) {
@@ -629,10 +758,14 @@ export const emulatorClientJs: string = String.raw`
       '<div class="detail">' +
         '<div class="cols">' +
         '<div class="req">' +
-          '<div class="panel-head">Request <span class="tab-actions"><button class="mini run-from" title="clear this and every later step, then run all from here">run from here</button></span></div>' +
+          '<div class="panel-head">Request <span class="tab-actions">' +
+            '<button class="mini add-setup" title="snapshot this request as a module setup step (runs before the process)">+ setup</button>' +
+            '<button class="mini run-from" title="clear this and every later step, then run all from here">run from here</button>' +
+          "</span></div>" +
           '<div class="addr">' +
             '<span class="addr-verb verb ' + esc(ep.method) + '">' + esc(ep.method) + "</span>" +
             '<span class="addr-url"><span class="addr-origin"></span><span class="addr-path">' + esc(ep.path) + "</span></span>" +
+            '<button class="mini copy-route" title="copy this route\'s full URL">copy route</button>' +
           "</div>" +
           (ep.params.length
             ? '<div class="params">' +
@@ -663,6 +796,15 @@ export const emulatorClientJs: string = String.raw`
           '<button class="mini copy-resp">copy</button></div>' +
           '<pre class="resp" hidden></pre>' +
           '<div class="resp-empty">Not run yet — press <b>Run</b> to fire the real request.</div>' +
+          '<div class="assert-results"></div>' +
+          '<div class="diff"></div>' +
+          '<div class="expects">' +
+            '<div class="expects-head">Expect' +
+              '<label class="a-status-label">status <input class="a-status" placeholder="any 2xx" title="exact HTTP status this step must return — empty accepts any 2xx"></label>' +
+              '<button class="mini add-check" title="pin a body expectation: the step only goes green when it holds">+ check</button>' +
+            "</div>" +
+            '<div class="a-rows"></div>' +
+          "</div>" +
           '<div class="captured-note">' +
           (feedsNote ? '<span class="feeds-label">feeds</span>' + feedsNote : "") +
           "</div>" +
@@ -692,9 +834,28 @@ export const emulatorClientJs: string = String.raw`
       e.stopPropagation();
       runAll(ep.id);
     });
+    li.querySelector(".add-setup").addEventListener("click", function (e) {
+      e.stopPropagation();
+      // Snapshot THIS step's current request (body + params) as a setup step. The body keeps any
+      // {{refs}} — they resolve when the setup step fires.
+      state.setup = state.setup || [];
+      state.setup.push({
+        id: ep.id,
+        body: hasBody(ep) ? bodyText(ep) : undefined,
+        params: Object.assign({}, state.paramVals[ep.id] || {}),
+      });
+      save();
+      renderSetup();
+      var b = e.target;
+      var old = b.textContent;
+      b.textContent = "added ✓";
+      setTimeout(function () { b.textContent = old; }, 1200);
+    });
 
     // Request tabs: one content area, three views (Body / Will send / curl). Per-tab actions
     // (reset, copy) surface only with their tab. Panes stay in the DOM so previews keep updating.
+    // Scope the per-tab show/hide to the TABS row only — the panel-head actions (run-from,
+    // + setup) live in their own .tab-actions and must stay visible regardless of the active tab.
     function activateTab(name) {
       li.querySelectorAll(".tab").forEach(function (t) {
         t.classList.toggle("active", t.dataset.tab === name);
@@ -702,7 +863,7 @@ export const emulatorClientJs: string = String.raw`
       li.querySelectorAll(".tabpane").forEach(function (p) {
         p.classList.toggle("active", p.dataset.pane === name);
       });
-      li.querySelectorAll(".tab-actions .mini").forEach(function (b) {
+      li.querySelectorAll(".tabs .tab-actions .mini").forEach(function (b) {
         b.style.display = b.dataset.for === name ? "" : "none";
       });
     }
@@ -742,11 +903,70 @@ export const emulatorClientJs: string = String.raw`
       });
     });
     li.querySelector(".copy-curl").addEventListener("click", function (e) { copyText(e.target, curlFor(ep)); });
+    li.querySelector(".copy-route").addEventListener("click", function (e) {
+      e.stopPropagation();
+      copyText(e.target, urlFor(ep, []));
+    });
     li.querySelector(".copy-resp").addEventListener("click", function (e) {
       copyText(e.target, li.querySelector(".resp").textContent);
     });
+
+    // Expectations editor: status pin + body checks. Rows rebuild only on explicit add/remove
+    // (and fixtures load), never inside updateAll — so typing in them is never interrupted.
+    var aStatus = li.querySelector(".a-status");
+    aStatus.value = (state.asserts[ep.id] && state.asserts[ep.id].status) || "";
+    aStatus.addEventListener("input", function () {
+      ensureAssert(ep).status = aStatus.value.trim();
+      save();
+    });
+    li.querySelector(".add-check").addEventListener("click", function (e) {
+      e.stopPropagation();
+      ensureAssert(ep).checks.push({ path: "", op: "==", value: "" });
+      save();
+      renderAssertEditor(ep);
+    });
     rows[ep.id] = li;
+    renderAssertEditor(ep);
     return li;
+  }
+
+  function ensureAssert(ep) {
+    if (!state.asserts[ep.id]) state.asserts[ep.id] = { status: "", checks: [] };
+    if (!state.asserts[ep.id].checks) state.asserts[ep.id].checks = [];
+    return state.asserts[ep.id];
+  }
+  function renderAssertEditor(ep) {
+    var li = rows[ep.id];
+    if (!li) return;
+    var holder = li.querySelector(".a-rows");
+    if (!holder) return;
+    var checks = (state.asserts[ep.id] && state.asserts[ep.id].checks) || [];
+    holder.innerHTML = checks.map(function (c, i) {
+      return '<div class="a-row" data-i="' + i + '">' +
+        '<input class="a-path" placeholder="path e.g. status" value="' + esc(c.path || "") + '">' +
+        '<select class="a-op">' + ["==", "!=", "contains", "exists"].map(function (op) {
+          return "<option" + (c.op === op ? " selected" : "") + ">" + op + "</option>";
+        }).join("") + "</select>" +
+        '<input class="a-val" placeholder="value or {{ref}}" value="' + esc(c.value === undefined ? "" : c.value) + '"' + (c.op === "exists" ? " disabled" : "") + ">" +
+        '<button class="mini a-del" title="remove this expectation">×</button>' +
+      "</div>";
+    }).join("");
+    holder.querySelectorAll(".a-row").forEach(function (row) {
+      var i = Number(row.dataset.i);
+      var check = ensureAssert(ep).checks[i];
+      row.querySelector(".a-path").addEventListener("input", function (e) { check.path = e.target.value.trim(); save(); });
+      row.querySelector(".a-op").addEventListener("change", function (e) {
+        check.op = e.target.value;
+        row.querySelector(".a-val").disabled = check.op === "exists";
+        save();
+      });
+      row.querySelector(".a-val").addEventListener("input", function (e) { check.value = e.target.value; save(); });
+      row.querySelector(".a-del").addEventListener("click", function () {
+        ensureAssert(ep).checks.splice(i, 1);
+        save();
+        renderAssertEditor(ep);
+      });
+    });
   }
 
   function toggleExpand(ep, force) {
@@ -760,6 +980,20 @@ export const emulatorClientJs: string = String.raw`
     }
     state.expanded[ep.id] = open;
     save();
+  }
+
+  // Keep the step the walk is on in view — collapsed — so you can follow run-all without
+  // boxes auto-expanding under you. Only scrolls when the row isn't already comfortably in
+  // the viewport below the sticky header (so already-visible steps don't jump).
+  function ensureRowVisible(ep) {
+    var li = rows[ep.id];
+    if (!li) return;
+    var header = document.querySelector("header");
+    var top = header ? header.getBoundingClientRect().bottom : 0;
+    var rect = li.getBoundingClientRect();
+    var vh = window.innerHeight || document.documentElement.clientHeight;
+    if (rect.top >= top + 8 && rect.bottom <= vh - 8) return;
+    li.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
   // ── self-healing: rules first, Claude for the long tail ────────────────────
@@ -805,17 +1039,18 @@ export const emulatorClientJs: string = String.raw`
     return opts;
   }
 
-  // a capture carrying parallel fids/fieldTypes/modes arrays → idem-eligible fids
-  function eligibleTextFids() {
-    var out = [];
+  // scalar options out of an exactly-named array field in any capture ("tableNames" → its items)
+  function pluralOptionsFrom(fieldName) {
+    var opts = [];
     allCaptureEntries().forEach(function (en) {
-      var o = en.obj;
-      if (!o || !Array.isArray(o.fids) || !Array.isArray(o.fieldTypes) || !Array.isArray(o.modes)) return;
-      o.fids.forEach(function (fid, i) {
-        if (o.fieldTypes[i] === "text" && (o.modes[i] === "" || o.modes[i] === undefined) && out.indexOf(fid) < 0) out.push(fid);
+      if (!en.obj || typeof en.obj !== "object") return;
+      var arr = en.obj[fieldName];
+      if (!Array.isArray(arr)) return;
+      arr.slice(0, 30).forEach(function (v) {
+        if ((typeof v === "string" || typeof v === "number") && opts.indexOf(v) < 0) opts.push(v);
       });
     });
-    return out;
+    return opts;
   }
 
   function depIds(ep) {
@@ -892,49 +1127,79 @@ export const emulatorClientJs: string = String.raw`
   }
 
   var SLUG_RE = /^[a-z][a-z0-9]*(-[a-z0-9]+)+$|^(timeout|unauthorized)$/;
-  function diagnoseSlug(ep, slug, out) {
-    var deps = depIds(ep).filter(function (id) { return byId[id] && state.status[id] !== "ok"; });
-    function runMatching(re, why) {
-      var hit = false;
-      EPS.forEach(function (o) {
-        if (re.test(o.id) && state.status[o.id] !== "ok") { out.push(sgRun(o.id, why)); hit = true; }
-      });
-      return hit;
+
+  // ── project heal rules (fixtures/heal-rules.json) ───────────────────────────
+  // Slug diagnosis is project vocabulary, not framework knowledge: which endpoint un-blocks
+  // "not-enabled" is this app's business. Projects declare it declaratively (rune generates a
+  // starter from spec fault slugs); keep just executes the rules. Fetched once at boot through
+  // the localhost-only /docs/_heal-rules door; absent file ⇒ generic tier only.
+  var PROJECT_HEAL = { slugs: {} };
+  function loadHealRules() {
+    fetch(appRoot + "/docs/_heal-rules", { headers: { "accept": "application/json" } })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (v) {
+        if (v && v.slugs && typeof v.slugs === "object") PROJECT_HEAL = v;
+      })
+      .catch(function () { /* remote caller or no rules file — generic tier still applies */ });
+  }
+  // "/re/flags" → RegExp; a bare string matches as a substring (escaped).
+  function ruleRegex(spec) {
+    var m = String(spec).match(/^\/(.*)\/([a-z]*)$/);
+    try {
+      return m ? new RegExp(m[1], m[2]) : new RegExp(String(spec).replace(/[^\w]/g, "\\$&"));
+    } catch (e) { return null; }
+  }
+  function applyHealRule(ep, r, out) {
+    if (!r || typeof r !== "object" || typeof r.kind !== "string") return;
+    if (r.kind === "run-step") {
+      if (r.target && byId[r.target]) {
+        if (state.status[r.target] !== "ok") out.push(sgRun(r.target, r.why));
+      } else if (r.match) {
+        var re = ruleRegex(r.match);
+        if (re) {
+          EPS.forEach(function (o) {
+            if (re.test(o.id) && o.id !== ep.id && state.status[o.id] !== "ok") out.push(sgRun(o.id, r.why));
+          });
+        }
+      }
+    } else if (r.kind === "set-input" && r.target) {
+      out.push(sgInput(r.target, r.value, r.why));
+    } else if (r.kind === "pick" && r.target && r.fromPlural) {
+      var opts = pluralOptionsFrom(r.fromPlural);
+      if (opts.length) out.push(sgPick(r.target, opts, r.why));
+    } else if (r.kind === "remove-key" && r.target) {
+      out.push({ label: "Remove \"" + r.target + "\" from the body", why: r.why, action: { kind: "remove-key", target: r.target } });
+    } else if (r.kind === "set-body-field" && r.target) {
+      out.push({ label: "Set body." + r.target + " = " + JSON.stringify(r.value), why: r.why, action: { kind: "set-body-field", target: r.target, value: r.value } });
+    } else if (r.kind === "retry") {
+      out.push({ label: "Retry " + ep.id, why: r.why, action: { kind: "retry" } });
+    } else if (r.kind === "note" && r.label) {
+      out.push({ label: r.label, why: r.why });
+      if (r.retryAfter) out.push({ label: "Retry " + ep.id, why: "after the above", action: { kind: "retry" } });
     }
-    if (slug === "not-enabled" || slug === "not-tracked" || slug === "not-in-catalog") {
-      if (slug === "not-in-catalog") runMatching(/discover/i, "the table must be in the catalog first");
-      runMatching(/enable/i, "the table must be tracked first");
-      var tables = pluralOptions("tableName");
-      if (tables.length) out.push(sgPick("tableName", tables, "pick a table that exists"));
-    } else if (slug === "not-found") {
-      runMatching(/^(run|sync)/i, "the mirror must be populated first");
-      capturesWithField("qbId").slice(0, 2).forEach(function (hit) {
-        out.push(sgInput("qbId", hit.value, "a record id that exists ({{" + hit.ref + "}})"));
-      });
-    } else if (slug === "not-text") {
-      var fids = eligibleTextFids();
-      if (fids.length) out.push(sgPick("fid", fids, "writable text fields from the refreshed schema"));
-      else out.push({ label: "Run refresh, then pick a writable text fid", why: "the chosen fid is not a writable text field" });
-    } else if (slug === "not-armed") {
-      out.push({ label: "Arm writes on the server, then retry", why: "destructive sends are disarmed by default — set the arm env var (e.g. QB_WRITES_ARMED=1 / RECONCILE_ARMED=1) and restart" });
-      out.push({ label: "Retry " + ep.id, why: "after arming", action: { kind: "retry" } });
-    } else if (slug === "lease-held") {
-      out.push({ label: "Retry " + ep.id, why: "another tick holds the single-writer lease — it expires in seconds", action: { kind: "retry" } });
-    } else if (slug === "timeout" || slug === "unauthorized" || slug === "rate-limited" || slug === "kv-error") {
+    // unknown kinds are ignored — forward compatibility with newer rule files
+  }
+  function diagnoseSlug(ep, slug, out) {
+    // Project rules own the slug when they exist; the generic tier is only the fallback.
+    var rules = (PROJECT_HEAL.slugs || {})[slug];
+    if (Array.isArray(rules) && rules.length) {
+      rules.forEach(function (r) { applyHealRule(ep, r, out); });
+      return;
+    }
+    if (slug === "timeout" || slug === "unauthorized" || slug === "rate-limited") {
       out.push({
         label: "Retry " + ep.id,
-        why: slug === "kv-error"
-          ? "the store errored — is the database / emulator up?"
-          : slug === "unauthorized"
+        why: slug === "unauthorized"
           ? "upstream rejected the credentials — check the configured tokens"
           : slug === "rate-limited"
           ? "upstream rate limit — wait a moment"
           : "upstream timed out — transient, or the upstream is down",
         action: { kind: "retry" },
       });
-    } else {
-      deps.forEach(function (id) { out.push(sgRun(id, "declared dependency not green")); });
+      return;
     }
+    depIds(ep).filter(function (id) { return byId[id] && state.status[id] !== "ok"; })
+      .forEach(function (id) { out.push(sgRun(id, "declared dependency not green")); });
   }
 
   function diagnose(ep) {
@@ -1149,12 +1414,16 @@ export const emulatorClientJs: string = String.raw`
     var ms = li.querySelector(".ms");
     var resp = li.querySelector(".resp");
     var empty = li.querySelector(".resp-empty");
+    var verdicts = li.querySelector(".assert-results");
+    var diffEl = li.querySelector(".diff");
     if (!meta) {
       pill.innerHTML = "";
       ms.textContent = "";
       resp.textContent = "";
       resp.hidden = true;
       empty.hidden = false;
+      if (verdicts) verdicts.innerHTML = "";
+      if (diffEl) diffEl.innerHTML = "";
       var healEl0 = li.querySelector(".heal");
       if (healEl0) { healEl0.hidden = true; healEl0.innerHTML = ""; }
       return;
@@ -1169,6 +1438,42 @@ export const emulatorClientJs: string = String.raw`
     }
     ms.textContent = meta.ms + " ms";
     resp.innerHTML = typeof meta.body === "string" ? esc(meta.body) : hlJson(JSON.stringify(meta.body, null, 2));
+    // Pinned-expectation verdicts from the run that produced this response.
+    if (verdicts) {
+      verdicts.innerHTML = (meta.asserts || []).map(function (a) {
+        return '<div class="a-verdict ' + (a.pass ? "pass" : "fail") + '">' +
+          (a.pass ? "✓ " : "✗ ") + esc(a.desc) +
+          (a.pass ? "" : ' <span class="a-got">got ' + esc(a.got === undefined ? "(missing)" : a.got) + "</span>") +
+        "</div>";
+      }).join("");
+    }
+    // What this run changed vs the previous one.
+    if (diffEl) {
+      var prev = state.prev[ep.id];
+      if (prev && prev.body !== undefined && meta.body !== undefined) {
+        var changes = [];
+        diffJson(prev.body, meta.body, "", changes, 0);
+        if (!changes.length) {
+          diffEl.innerHTML = '<span class="diff-same">unchanged vs previous run</span>';
+        } else {
+          var clip = function (v) {
+            var s = v === undefined ? "" : JSON.stringify(v);
+            return s.length > 60 ? s.slice(0, 60) + "…" : s;
+          };
+          diffEl.innerHTML = '<div class="diff-head">changed vs previous run (' + changes.length + ")</div>" +
+            changes.slice(0, 20).map(function (d) {
+              return '<div class="diff-row"><span class="diff-path">' + esc(d.path) + "</span> " +
+                (d.kind === "added"
+                  ? '<span class="diff-to">+ ' + esc(clip(d.to)) + "</span>"
+                  : d.kind === "removed"
+                  ? '<span class="diff-from">− ' + esc(clip(d.from)) + "</span>"
+                  : '<span class="diff-from">' + esc(clip(d.from)) + '</span> → <span class="diff-to">' + esc(clip(d.to)) + "</span>") +
+              "</div>";
+            }).join("") +
+            (changes.length > 20 ? '<div class="diff-row">…and ' + (changes.length - 20) + " more</div>" : "");
+        }
+      } else diffEl.innerHTML = "";
+    }
     renderHeal(ep);
   }
 
@@ -1200,7 +1505,8 @@ export const emulatorClientJs: string = String.raw`
     mini.className = "status-mini" + (st === "fail" ? " fail" : "");
     if (st === "run") mini.textContent = "running…";
     else if (meta && (st === "ok" || st === "fail")) {
-      mini.textContent = (meta.http ? "HTTP " + meta.http : "network error") + " · " + meta.ms + " ms";
+      mini.textContent = (meta.http ? "HTTP " + meta.http : "network error") + " · " + meta.ms + " ms" +
+        (firstAssertFailure(meta) ? " · expect ✗" : "");
     } else if (cycleMembers[ep.id] && !isReady) {
       mini.textContent = "dependency cycle: " + cycleMembers[ep.id].join(" → ") + " — fix dependsOn";
       mini.className = "status-mini fail";
@@ -1266,9 +1572,12 @@ export const emulatorClientJs: string = String.raw`
     if (userNames.length) {
       html += '<div class="vargroup"><div class="vargroup-head">environment</div>';
       userNames.forEach(function (name) {
+        var persisted = !!(globals.persist && globals.persist[name]);
         html += '<div class="var-row">' +
           '<span class="var-name" data-ref="' + esc(name) + '" title="click to copy {{' + esc(name) + '}}">' + esc(name) + "</span>" +
           '<input data-uservar="' + esc(name) + '" value="' + esc(globals.vars[name]) + '">' +
+          '<label class="persist" title="save this variable to fixtures/cake.json on Save fixtures">' +
+            '<input type="checkbox" data-persist="' + esc(name) + '"' + (persisted ? " checked" : "") + ">persist</label>" +
           '<button class="mini del-var" data-name="' + esc(name) + '">×</button>' +
         "</div>";
       });
@@ -1295,9 +1604,18 @@ export const emulatorClientJs: string = String.raw`
     varsEl.querySelectorAll(".del-var").forEach(function (el) {
       el.addEventListener("click", function () {
         delete globals.vars[el.dataset.name];
+        delete (globals.persist || {})[el.dataset.name];
         el.blur();   // the focus guard would otherwise skip the rebuild and leave the row visible
         saveGlobals();
         updateAll();
+      });
+    });
+    varsEl.querySelectorAll("input[data-persist]").forEach(function (cb) {
+      cb.addEventListener("change", function () {
+        if (!globals.persist) globals.persist = {};
+        if (cb.checked) globals.persist[cb.dataset.persist] = true;
+        else delete globals.persist[cb.dataset.persist];
+        saveGlobals();   // a checkbox toggle can't fight a text edit, so no rebuild needed
       });
     });
   }
@@ -1427,6 +1745,247 @@ export const emulatorClientJs: string = String.raw`
       });
     });
   }
+  // ── module setup panel ──────────────────────────────────────────────────────
+  var setupEl = document.getElementById("setup");
+  function renderSetup() {
+    var steps = state.setup || [];
+    var runBtn = document.getElementById("run-setup");
+    if (runBtn) runBtn.disabled = runningAll || steps.length === 0;
+    var saveBtn = document.getElementById("save-fixtures");
+    if (saveBtn) saveBtn.disabled = runningAll;
+    if (!setupEl) return;
+    if (!steps.length) {
+      setupEl.innerHTML = '<div class="empty">No setup steps yet. Open a step and press <b>+ setup</b> in its Request panel to snapshot it here.</div>';
+      return;
+    }
+    setupEl.innerHTML = steps.map(function (s, i) {
+      var ep = byId[s.id];
+      var missing = !ep;
+      var preview = (s.body || "").replace(/\s+/g, " ").trim().slice(0, 80);
+      return '<div class="setup-row' + (missing ? " missing" : "") + '" data-i="' + i + '">' +
+        '<span class="setup-num">' + (i + 1) + "</span>" +
+        '<span class="setup-name" title="' + esc(s.id) + (missing ? " — no longer in this module" : "") + '">' + esc(setupLabel(s)) + "</span>" +
+        '<span class="setup-actions">' +
+          '<button class="mini su-up"' + (i === 0 ? " disabled" : "") + ' title="move earlier">▲</button>' +
+          '<button class="mini su-down"' + (i === steps.length - 1 ? " disabled" : "") + ' title="move later">▼</button>' +
+          '<button class="mini su-run"' + (missing || runningAll ? " disabled" : "") + ' title="run this setup step now">run</button>' +
+          '<button class="mini su-del" title="remove from setup">×</button>' +
+        "</span>" +
+        (preview ? '<span class="setup-body" title="' + esc(s.body || "") + '">' + esc(preview) + "</span>" : "") +
+      "</div>";
+    }).join("");
+    setupEl.querySelectorAll(".setup-row").forEach(function (row) {
+      var i = Number(row.dataset.i);
+      var up = row.querySelector(".su-up");
+      var down = row.querySelector(".su-down");
+      var run = row.querySelector(".su-run");
+      var del = row.querySelector(".su-del");
+      if (up) up.addEventListener("click", function () { swapSetup(i, i - 1); });
+      if (down) down.addEventListener("click", function () { swapSetup(i, i + 1); });
+      if (del) del.addEventListener("click", function () { state.setup.splice(i, 1); save(); renderSetup(); });
+      if (run) run.addEventListener("click", function () { runOneSetup(i); });
+    });
+  }
+  function swapSetup(a, b) {
+    var s = state.setup;
+    if (!s || b < 0 || b >= s.length) return;
+    var tmp = s[a]; s[a] = s[b]; s[b] = tmp;
+    save();
+    renderSetup();
+  }
+  function runOneSetup(i) {
+    var s = (state.setup || [])[i];
+    if (!s) return;
+    var ep = byId[s.id];
+    if (!ep || runningAll) return;
+    runningAll = true;
+    banner(null);
+    updateAll();
+    send(ep, true, { body: s.body, params: s.params }).then(function (r) {
+      runningAll = false;
+      updateAll();
+      if (r.ok) { banner("ok", "Setup step ran — " + esc(setupLabel(s)) + "."); return; }
+      var meta = state.meta[ep.id];
+      var why = r.blocked ? r.blocked : (meta && meta.http ? "HTTP " + meta.http : "network error");
+      banner("err", "Setup step failed — " + esc(setupLabel(s)) + " — " + esc(why) + ".");
+    });
+  }
+
+  // ── fixtures artifact (fixtures/cake.json) ──────────────────────────────────
+  // The durable counterpart to localStorage: setup steps (this module's slice) plus the
+  // environment variables marked persist, written through the localhost-only /docs/_fixtures door.
+  function persistedVars() {
+    var out = {};
+    Object.keys(globals.persist || {}).forEach(function (name) {
+      if (globals.persist[name] && hasOwn(globals.vars, name)) out[name] = globals.vars[name];
+    });
+    return out;
+  }
+  // Only non-empty expectation specs travel into the artifact.
+  function assertsForSave() {
+    var out = {};
+    EPS.forEach(function (ep) {
+      var spec = assertSpec(ep);
+      if (spec) out[ep.id] = { status: spec.status || undefined, checks: spec.checks };
+    });
+    return out;
+  }
+  function saveFixtures() {
+    if (runningAll) return;
+    var vars = persistedVars();
+    var asserts = assertsForSave();
+    var patch = { module: MODULE, setup: state.setup || [], asserts: asserts, variables: vars };
+    var saveBtn = document.getElementById("save-fixtures");
+    if (saveBtn) saveBtn.disabled = true;
+    fetch(appRoot + "/docs/_fixtures", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    }).then(function (res) {
+      return res.json().then(function (v) { return { res: res, v: v }; }, function () { return { res: res, v: {} }; });
+    }).then(function (r) {
+      if (saveBtn) saveBtn.disabled = runningAll;
+      if (!r.res.ok) {
+        banner("err", "Save failed — " + esc(r.v && r.v.error ? r.v.error : "HTTP " + r.res.status) + ".");
+        return;
+      }
+      banner("ok", "Saved fixtures/cake.json — " + patch.setup.length + " setup step(s), " + Object.keys(asserts).length + " expectation(s), " + Object.keys(vars).length + " variable(s).");
+    }).catch(function (err) {
+      if (saveBtn) saveBtn.disabled = runningAll;
+      banner("err", "Save failed — " + esc(err && err.message ? err.message : String(err)) + ".");
+    });
+  }
+  // On load, the saved artifact is the baseline: its persisted variables and this module's setup
+  // override the local session for the keys it carries (the saved config wins).
+  function applyFixtures(fx) {
+    if (!fx || typeof fx !== "object") return;
+    if (fx.variables && typeof fx.variables === "object") {
+      if (!globals.persist) globals.persist = {};
+      Object.keys(fx.variables).forEach(function (name) {
+        globals.vars[name] = fx.variables[name];
+        globals.persist[name] = true;
+      });
+      saveGlobals();
+    }
+    var mod = fx.modules && fx.modules[MODULE];
+    if (mod && Array.isArray(mod.setup)) {
+      state.setup = mod.setup;
+      save();
+    }
+    if (mod && mod.asserts && typeof mod.asserts === "object") {
+      Object.keys(mod.asserts).forEach(function (id) {
+        if (!byId[id]) return;
+        state.asserts[id] = {
+          status: mod.asserts[id].status || "",
+          checks: (mod.asserts[id].checks || []).slice(),
+        };
+        renderAssertEditor(byId[id]);
+        var st = rows[id] && rows[id].querySelector(".a-status");
+        if (st) st.value = state.asserts[id].status || "";
+      });
+      save();
+    }
+    updateAll();
+  }
+  function loadFixtures() {
+    fetch(appRoot + "/docs/_fixtures", { headers: { "accept": "application/json" } })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (fx) { if (fx) applyFixtures(fx); })
+      .catch(function () { /* fixtures unavailable (remote caller, or server lacks write perms) */ });
+  }
+
+  // ── scenarios (fixtures/scenarios/<name>.json) ──────────────────────────────
+  // A scenario freezes THE WHOLE WALK — flow, every step's body text and params, skips — under a
+  // name. Loading applies it over the page (editor state is overwritten); running is load + Run
+  // all. CI replays one headlessly: POST /docs/_run {"scenario":"<name>"}.
+  var SCENARIOS = [];
+  var scenariosEl = document.getElementById("scenarios");
+  function renderScenarios() {
+    if (!scenariosEl) return;
+    var mine = SCENARIOS.filter(function (s) { return s.module === MODULE; });
+    if (!mine.length) {
+      scenariosEl.innerHTML = '<div class="empty">None yet — set up a walk, then save it under a name.</div>';
+      return;
+    }
+    scenariosEl.innerHTML = mine.map(function (s, i) {
+      return '<div class="scen-row" data-i="' + i + '">' +
+        '<span class="scen-name" title="' + esc(s.name) + (s.flow ? " · flow: " + esc(s.flow) : "") + '">' + esc(s.name) + "</span>" +
+        '<span class="scen-actions">' +
+          '<button class="mini scen-load" title="apply this scenario\'s bodies, params and flow to the page">load</button>' +
+          '<button class="mini scen-run" title="load, then Run all">run</button>' +
+        "</span>" +
+      "</div>";
+    }).join("");
+    scenariosEl.querySelectorAll(".scen-row").forEach(function (row) {
+      var s = mine[Number(row.dataset.i)];
+      row.querySelector(".scen-load").addEventListener("click", function () {
+        applyScenario(s);
+        banner("info", "Scenario \"" + esc(s.name) + "\" loaded — bodies, params and flow applied.");
+      });
+      row.querySelector(".scen-run").addEventListener("click", function () {
+        applyScenario(s);
+        runAll();
+      });
+    });
+  }
+  function applyScenario(s) {
+    state.flow = s.flow || "";
+    (s.steps || []).forEach(function (st) {
+      var ep = byId[st.id];
+      if (!ep) return;   // the scenario predates a spec change — apply what still exists
+      if (st.body !== undefined) {
+        state.bodies[st.id] = st.body;
+        var ta = rows[st.id].querySelector("textarea");
+        if (ta) { ta.value = st.body; autosize(ta); }
+      }
+      if (st.params) {
+        state.paramVals[st.id] = Object.assign({}, st.params);
+        rows[st.id].querySelectorAll(".params input").forEach(function (inp) {
+          inp.value = st.params[inp.dataset.param] || "";
+        });
+      }
+      if (st.skip) state.skips[st.id] = true;
+      else delete state.skips[st.id];
+    });
+    save();
+    updateAll();
+  }
+  function loadScenarios() {
+    fetch(appRoot + "/docs/_scenarios", { headers: { "accept": "application/json" } })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (v) {
+        if (v && Array.isArray(v.scenarios)) { SCENARIOS = v.scenarios; renderScenarios(); }
+      })
+      .catch(function () { /* unavailable (remote caller) — the card just stays empty */ });
+  }
+  function saveScenario(name) {
+    var steps = EPS.map(function (ep) {
+      var st = { id: ep.id };
+      if (hasBody(ep)) st.body = bodyText(ep);
+      var pv = state.paramVals[ep.id];
+      if (pv && Object.keys(pv).length) st.params = Object.assign({}, pv);
+      if (state.skips[ep.id]) st.skip = true;
+      return st;
+    });
+    var payload = { v: 1, name: name, module: MODULE, flow: activeFlow() || undefined, steps: steps };
+    fetch(appRoot + "/docs/_scenarios", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    }).then(function (res) {
+      return res.json().then(function (v) { return { res: res, v: v }; }, function () { return { res: res, v: {} }; });
+    }).then(function (r) {
+      if (!r.res.ok) {
+        banner("err", "Scenario save failed — " + esc(r.v && r.v.error ? r.v.error : "HTTP " + r.res.status) + ".");
+        return;
+      }
+      banner("ok", "Scenario \"" + esc(name) + "\" saved to fixtures/scenarios/.");
+      loadScenarios();
+    }).catch(function (err) {
+      banner("err", "Scenario save failed — " + esc(err && err.message ? err.message : String(err)) + ".");
+    });
+  }
+
   function refreshRequests() {
     EPS.forEach(function (ep) { renderRequest(ep); });
   }
@@ -1434,6 +1993,7 @@ export const emulatorClientJs: string = String.raw`
     refreshRequests();
     renderVars();
     renderInputs();
+    renderSetup();
   }
   function allStepsGreen() {
     var list = activeEPS();
@@ -1456,7 +2016,9 @@ export const emulatorClientJs: string = String.raw`
   }
 
   // ── send + run-all ─────────────────────────────────────────────────────────
-  function send(ep, fromRunAll) {
+  // override (a setup step's snapshot: { body, params }) replaces the live editor body/params for
+  // this one send — so a setup call fires its frozen request, not whatever the panel shows now.
+  function send(ep, fromRunAll, override) {
     // One gate for every entry point (button, ⌘Enter, run-all): no double-fire of an in-flight
     // step, no manual pokes during a run-all walk, and locked steps explain themselves.
     if (state.status[ep.id] === "run") return Promise.resolve({ ok: false });
@@ -1471,7 +2033,9 @@ export const emulatorClientJs: string = String.raw`
     }
     var li = rows[ep.id];
     function blocked(reason) {
-      toggleExpand(ep, true);
+      // A manual run opens the box to show the problem inline; a run-all leaves boxes collapsed
+      // (the walk scrolls the stopped step into view and the banner names the reason).
+      if (!fromRunAll) toggleExpand(ep, true);
       renderRequest(ep);
       if (!fromRunAll) banner("err", "Cannot send " + esc(stepLabel(ep)) + " — " + esc(reason) + ".");
       return Promise.resolve({ blocked: reason });
@@ -1479,13 +2043,13 @@ export const emulatorClientJs: string = String.raw`
     var missing = [];
     var init = { method: ep.method, headers: {} };
     if (hasBody(ep)) {
-      var r = resolveBody(ep);
+      var r = resolveBody(ep, override && override.body);
       if (r.error) return blocked("its request body is " + r.error);
       missing = r.missing.slice();
       init.headers["content-type"] = "application/json";
       init.body = JSON.stringify(r.value);
     }
-    var url = urlFor(ep, missing);
+    var url = urlFor(ep, missing, override && override.params);
     if (missing.length) {
       var who = missing.map(function (m) { return "{{" + m + "}}"; }).join(", ");
       // record the failure shape so the heal rules can diagnose it
@@ -1505,22 +2069,26 @@ export const emulatorClientJs: string = String.raw`
       return res.text().then(function (text) {
         var parsed;
         try { parsed = JSON.parse(text); } catch (e) { parsed = text; }
-        state.meta[ep.id] = { http: res.status, ms: Math.round(performance.now() - t0), body: parsed };
-        if (res.ok) {
-          state.status[ep.id] = "ok";
-          if (parsed !== null && typeof parsed === "object") {
-            state.captured[ep.id] = parsed;
-            // Publish to the shared scope so other modules' pages can reference it as
-            // {{module:endpoint.field}}.
-            globals.captured[MODULE + ":" + ep.id] = parsed;
-            saveGlobals();
-          }
-        } else {
-          state.status[ep.id] = "fail";
+        // Keep the previous response so the diff can show what this run changed.
+        if (state.meta[ep.id] && state.meta[ep.id].body !== undefined) {
+          state.prev[ep.id] = { http: state.meta[ep.id].http, body: state.meta[ep.id].body };
         }
+        var assertResults = evalAsserts(ep, res.status, parsed);
+        var pass = res.ok && (!assertResults || assertResults.every(function (a) { return a.pass; }));
+        state.meta[ep.id] = { http: res.status, ms: Math.round(performance.now() - t0), body: parsed, asserts: assertResults || undefined };
+        if (res.ok && parsed !== null && typeof parsed === "object") {
+          // Capture on HTTP success even when an expectation failed — the data came back and is
+          // useful for diagnosing; dependents stay gated on the fail status regardless.
+          state.captured[ep.id] = parsed;
+          // Publish to the shared scope so other modules' pages can reference it as
+          // {{module:endpoint.field}}.
+          globals.captured[MODULE + ":" + ep.id] = parsed;
+          saveGlobals();
+        }
+        state.status[ep.id] = pass ? "ok" : "fail";
         save();
         updateAll();
-        return { ok: res.ok };
+        return { ok: pass };
       });
     }).catch(function (err) {
       state.meta[ep.id] = { http: 0, ms: Math.round(performance.now() - t0), body: "ERROR " + (err && err.message ? err.message : String(err)) };
@@ -1528,6 +2096,45 @@ export const emulatorClientJs: string = String.raw`
       save();
       updateAll();
       return { ok: false };
+    });
+  }
+
+  // ── module setup: pre-run calls that put the system in a known state ────────
+  function setupLabel(s) {
+    var ep = byId[s.id];
+    return ep ? ep.method + " " + ep.path : s.id;
+  }
+  // Walk the setup steps in order, each firing its frozen snapshot, stopping at the first
+  // failure. cb({ ok }) when done. Callers own the runningAll lock and the final banner.
+  function runSetupSteps(cb) {
+    var steps = (state.setup || []).slice();
+    var j = 0;
+    function next() {
+      if (j >= steps.length) return cb({ ok: true });
+      var s = steps[j++];
+      var ep = byId[s.id];
+      if (!ep) return next();   // endpoint no longer in this module — skip silently
+      ensureRowVisible(ep);
+      return send(ep, true, { body: s.body, params: s.params }).then(function (r) {
+        if (r.ok) return next();
+        var meta = state.meta[ep.id];
+        var why = r.blocked ? r.blocked : (meta && meta.http ? "HTTP " + meta.http : "network error");
+        banner("err", "Stopped in setup — " + esc(setupLabel(s)) + " — " + esc(why) + ".");
+        return cb({ ok: false });
+      });
+    }
+    next();
+  }
+  // "Run setup" on its own — establish state without walking the process.
+  function runSetupOnly() {
+    if (runningAll || !(state.setup || []).length) return;
+    runningAll = true;
+    banner(null);
+    updateAll();
+    runSetupSteps(function (sr) {
+      runningAll = false;
+      updateAll();
+      if (sr.ok) banner("ok", "Setup complete — " + state.setup.length + " step(s) ran.");
     });
   }
 
@@ -1573,10 +2180,11 @@ export const emulatorClientJs: string = String.raw`
       if (state.status[ep.id] === "ok") return step();
       if (!ready(ep)) {
         banner("err", "Stopped — " + esc(stepLabel(ep)) + " is waiting on " + esc(blockers(ep).join(", ")) + ".");
-        toggleExpand(ep, true);
-        rows[ep.id].scrollIntoView({ behavior: "smooth", block: "center" });
+        ensureRowVisible(ep);
         return done();
       }
+      // Follow the walk: bring the step about to run into view (collapsed — not expanded).
+      ensureRowVisible(ep);
       return send(ep, true).then(function (result) {
         if (result.ok || ep.optional) {
           if (!result.ok) optionalFailed.push(ep.id);
@@ -1586,20 +2194,41 @@ export const emulatorClientJs: string = String.raw`
           banner("err", "Stopped at " + esc(stepLabel(ep)) + " — " + esc(result.blocked) + ".");
         } else {
           var meta = state.meta[ep.id];
+          var af = firstAssertFailure(meta);
           banner("err", "Stopped at " + esc(stepLabel(ep)) + " — " +
-            esc(meta && meta.http ? "HTTP " + meta.http : "network error") +
+            (af
+              ? "expectation failed: " + esc(af.desc) + " (got " + esc(af.got === undefined ? "(missing)" : af.got) + ")"
+              : esc(meta && meta.http ? "HTTP " + meta.http : "network error")) +
             ". Fix it and press <b>Run all in order</b> to resume from here.");
         }
-        toggleExpand(ep, true);
-        rows[ep.id].scrollIntoView({ behavior: "smooth", block: "center" });
+        // Bring the failed step into view but leave it collapsed — open it yourself to inspect.
+        ensureRowVisible(ep);
         return done();
       });
     }
-    step();
+    // Setup first — establish system state — then walk the process. Empty setup is a no-op.
+    runSetupSteps(function (sr) {
+      if (!sr.ok) return done();   // setup stopped the run; its banner already explains why
+      step();
+    });
   }
 
   // ── header actions ─────────────────────────────────────────────────────────
   document.getElementById("runall").addEventListener("click", runAll);
+  var runSetupBtn = document.getElementById("run-setup");
+  if (runSetupBtn) runSetupBtn.addEventListener("click", runSetupOnly);
+  var saveFixturesBtn = document.getElementById("save-fixtures");
+  if (saveFixturesBtn) saveFixturesBtn.addEventListener("click", saveFixtures);
+  var scenForm = document.getElementById("save-scenario");
+  if (scenForm) {
+    scenForm.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var name = e.target.elements.scenname.value.trim();
+      if (!name) return;
+      saveScenario(name);
+      e.target.reset();
+    });
+  }
   document.getElementById("reset").addEventListener("click", function () {
     if (!confirm("Reset this module's session? Statuses, captured outputs and edited bodies will be cleared. Environment variables are shared across modules and stay.")) return;
     resetting = true;   // neither the debounced save nor the pagehide flush may resurrect the session
@@ -1693,6 +2322,11 @@ export const emulatorClientJs: string = String.raw`
       return c.join(" → ");
     }).join("; ")) + ". These steps wait on each other and can never unlock; fix their dependsOn.");
   }
+  // Pull the saved artifact (fixtures/cake.json) and apply its setup + persisted variables, the
+  // project heal rules, and the saved scenarios. Async, localhost-only; remote fetches no-op.
+  loadFixtures();
+  loadHealRules();
+  loadScenarios();
 })();
 `;
 

@@ -293,6 +293,9 @@ export function mapShellHtml(
       <a id="link-index" href="#">Docs index &#8599;</a>
     </nav>
   </div>
+  <div class="bar">
+    <button id="runall" class="primary" title="run every module's process in order on the server (localhost only) and color the map with the result">Run all</button>
+  </div>
 </header>
 <div id="banner" hidden></div>
 <div id="legend">

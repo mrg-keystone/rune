@@ -706,10 +706,41 @@ step and on success it drops a checkmark with status + timing, **captures its
 outputs into a live variables panel**, and unlocks its dependents. A
 **Run all in order** button walks the chain and stops on the first failure
 with a banner saying exactly where and why; fix the step and run again to
-resume. Each step shows the concrete request it _will send_, the response, and
-a paste-ready curl. The session (statuses, captured outputs, variables, edited
-bodies) survives reloads — **Reset session** starts fresh. Walking the list
-and eyeballing each response verifies the module's logic end-to-end.
+resume. The walk **scrolls the active step into view and leaves boxes
+collapsed** — nothing auto-expands, so the list stays easy to follow; open a
+box yourself to inspect its request or response. Each step shows the concrete
+request it _will send_, the response, a paste-ready curl, and a one-click
+**copy of the route's full URL**. Re-running a step shows a **diff against the
+previous response** (changed/added/removed paths, `old → new`) so "did my code
+change break anything" is visible at a glance. The session (statuses, captured
+outputs, variables, edited bodies) survives reloads — **Reset session** starts
+fresh. Walking the list and eyeballing each response verifies the module's
+logic end-to-end.
+
+#### Expectations — green means *right*, not just 2xx
+
+Every step has an **Expect** block under its response: pin an exact HTTP
+status and any number of body checks (`path` `==`/`!=`/`contains`/`exists`
+`value`, where the value may hold `{{refs}}` — e.g. `id == {{create.id}}`).
+With expectations pinned, a step only goes green when the response **meets
+them**: a 200 whose body is wrong turns the step red (`expect ✗`), shows each
+check's verdict with the actual value, and stops Run all with the failing
+expectation named in the banner. Expectations ride **Save fixtures** into
+`fixtures/cake.json`, so a committed artifact is a clickable contract test:
+clone the repo, open the cake, Run all — green now means the process behaves,
+not merely responds.
+
+#### Scenarios — record and replay whole walks
+
+The **Scenarios** rail card freezes the entire walk — the active flow, every
+step's body text and params (refs intact), and skips — under a name, one JSON
+file per scenario in **`fixtures/scenarios/`** (`happy-path.json`,
+`refund-flow.json`, …). **load** applies one over the page; **run** loads it
+and runs all. They're served and saved through the localhost-only
+`GET`/`POST /docs/_scenarios`, and CI can replay one headlessly:
+`POST /docs/_run {"scenario": "happy-path"}` runs the saved flow with each
+step's **literal** body fields as overrides (fields holding `{{refs}}` are left
+to the runner's own bind machinery, which the refs mirror).
 
 Beyond the chain: a module with `flows` gets a **flow selector** (walk one
 branch at a time; run-all walks the active flow); declared `$inputs` appear in
@@ -730,6 +761,39 @@ overrides the auto-wiring; clearing it back to empty returns to auto.
 Endpoints declared `stub: true` carry an amber **`stub`** chip marking them as
 generated stand-ins minting placeholder values, not part of the real process.
 
+#### Module setup & the `fixtures/cake.json` artifact
+
+`localStorage` keeps the working session, but a session is browser-local and
+disappears with the cache. The **Module setup** rail card is the durable
+counterpart. It holds **setup steps** — calls that put the system in a known
+state _before_ the process runs (seed a tenant, flip a flag, create a
+prerequisite record). Press **`+ setup`** in any step's Request panel to
+snapshot its current request (body and params, `{{refs}}` intact) into the
+card; reorder or remove them there, **Run setup** to fire them on their own, or
+just press **Run all** — setup runs first, then the process walk, stopping with
+a banner if a setup call fails.
+
+**Save fixtures** writes the whole configuration to **`fixtures/cake.json`**:
+this module's setup steps, its pinned **expectations**, plus every environment
+variable you ticked **`persist`** (a checkbox next to each variable in the
+Variables card). The file is plain JSON you can commit, so the setup and the
+contract a process needs travel with the repo. On load, the cake reads it
+back — even in a fresh browser with no `localStorage` — restoring setup,
+expectations, and persisted variables as the baseline. The read/write door is
+`POST`/`GET /docs/_fixtures`, **localhost-only** like `/_run` and `/_mint`;
+the default path is `<cwd>/fixtures/cake.json` (`KEEP_FIXTURES_DIR` overrides
+the directory).
+
+A sibling artifact, **`fixtures/heal-rules.json`**, holds the project's tier
+of the cake's heal panel: a declarative map from your API's **error slugs**
+(`"not-enabled"`, `"not-armed"`, …) to one-click fixes (`run-step`,
+`set-input`, `pick`, `retry`, `note`, …). keep ships only generic diagnosis
+(missing inputs, validation shapes, transient retries) and executes your
+rules for everything domain-specific; rune generates a starter file from the
+spec's declared fault slugs. Served read-only at `GET /docs/_heal-rules`
+(localhost-only); unknown rule kinds and extra fields are ignored, so the
+file is forward-compatible.
+
 ### The system map — `/docs/_map`
 
 `/docs/_map` renders the **whole composed app as one process graph**: every
@@ -740,9 +804,16 @@ in another module; a `$name` nothing produces shows as an amber input badge on
 its consumer. Flows tint their edges, and optional/stub endpoints carry chips.
 The map is **live**: each node's status dot recolors from the cake
 sessions in `localStorage` — run a step on any docs page (any tab) and the map
-updates. Clicking a node **deep-links** into that module's cake with the
-step expanded (`/docs/<module>#<endpointId>`). (Underscore-prefixed so a
-module named "map" can still own `/docs/map`.)
+updates. A **Run all** button runs the whole composed process server-side (the
+localhost-only `/docs/_run` walk); nodes pulse while it runs, then the report
+is **written back into each module's cake session** — statuses, response
+bodies, timings, and captures land in the same `localStorage` the cakes read,
+so there is one source of truth for run state: the colors survive a reload,
+open cake tabs update live, and opening a cake afterwards finds its steps
+already green with responses and captures pre-filled.
+Clicking a node **deep-links** into that module's cake with the step expanded
+(`/docs/<module>#<endpointId>`). (Underscore-prefixed so a module named "map"
+can still own `/docs/map`.)
 
 ### Dev mode — `KEEP_DEV` and `/docs/_dev`
 
@@ -791,6 +862,17 @@ await exerciseEndpoints({ api, flow: "card", overrides: { seeds: { memberId: "m-
   all.
 - **`rateLimit`** (`{ requestsPerSecond?, maxConcurrency? }`) and
   **`maxIterations`** (default 5).
+- **Report rows** carry `{ id, module, method, path, ok, status, attempts,
+  ms, body }` — the response body and per-call timing ride along, so a caller
+  (CI, the system map's write-back) can show or replay outcomes, not just
+  pass/fail.
+
+Against a **running** server, `POST /docs/_run` (localhost-only) is the HTTP
+door to the same walk: `{ flow?, seeds?, byEndpoint?, rateLimit?,
+maxIterations?, dryRun?, scenario? }` — `scenario: "happy-path"` replays a
+saved `fixtures/scenarios/` file (its flow + literal body fields), and
+`dryRun: true` returns just `order`/`cycles`/`unresolvedInputs` without firing
+a request.
 
 > **Playwright is an optional peer.** It's only loaded when you pass a
 > `baseUrl`; in-process runs (and everything else in keep) need no browser.

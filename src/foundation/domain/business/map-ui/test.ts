@@ -210,6 +210,18 @@ Deno.test("mapShellHtml - embeds nodes, both edge kinds, and lanes in the payloa
   assertStringIncludes(html, '"inputs":["couponId"]');
 });
 
+Deno.test("mapShellHtml - Run all button drives the localhost /docs/_run walk", () => {
+  const html = mapShellHtml("checkout", docs);
+  assertStringIncludes(html, 'id="runall"');
+  assertStringIncludes(html, ">Run all<");
+  // The button POSTs the sibling headless-run door and pulses nodes while the walk is in flight.
+  assertStringIncludes(html, '"/docs/_run"');
+  assertStringIncludes(html, "circle.dot.run");
+  // The report is written back INTO the cake sessions (one source of truth for run state).
+  assertStringIncludes(html, "function writeBack");
+  assertStringIncludes(html, "keep:emulator:globals");
+});
+
 Deno.test("mapShellHtml - dev reload script injected only when opts.dev", () => {
   const dev = mapShellHtml("checkout", docs, { dev: true });
   assertStringIncludes(dev, 'fetch("_dev")');

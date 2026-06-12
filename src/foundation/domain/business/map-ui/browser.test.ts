@@ -128,3 +128,82 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  name:
+    "system map — Run all walks the whole app server-side and greens the nodes (headless chromium)",
+  ignore: !enabled,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const port = 9616;
+    const server = await bootstrapServer("map", [MintModule, GreetModule], {
+      port,
+    });
+    await server.listen();
+    const { chromium } = await import("#playwright");
+    const browser = await chromium.launch();
+    try {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.goto(`http://localhost:${port}/docs/_map`);
+
+      // Nothing has run — no green dots, button idle.
+      assertEquals(await page.locator("svg .dot.ok").count(), 0);
+
+      // Run all → POST /docs/_run (localhost-only) walks both modules in-process; greet's
+      // $memberId auto-wires from mint's output, so both endpoints pass and both dots green.
+      await page.locator("#runall").click();
+      await page.locator("#banner.ok").waitFor({ timeout: 10000 });
+      await page.waitForFunction(
+        "document.querySelectorAll('svg .dot.ok').length === 2",
+        { timeout: 5000 },
+      );
+      assertEquals(await page.locator("svg .dot.ok").count(), 2);
+      const banner = await page.locator("#banner").textContent();
+      assert(
+        banner?.includes("passed"),
+        `expected a passed banner, got: ${banner}`,
+      );
+
+      // The report was WRITTEN BACK into the cake sessions — localStorage is the one source of
+      // truth, so the colors survive a reload (the old transient overlay would not have).
+      await page.reload();
+      await page.waitForFunction(
+        "document.querySelectorAll('svg .dot.ok').length === 2",
+        { timeout: 5000 },
+      );
+      const session = await page.evaluate<
+        { status: string; captured: boolean; sharedCapture: boolean }
+      >(`(() => {
+        const s = JSON.parse(localStorage.getItem("keep:emulator:/docs/mint"));
+        const g = JSON.parse(localStorage.getItem("keep:emulator:globals"));
+        return {
+          status: s.status.mintMember,
+          captured: s.captured.mintMember.memberId === "m-42",
+          sharedCapture: g.captured["mint:mintMember"].memberId === "m-42",
+        };
+      })()`);
+      assertEquals(session, {
+        status: "ok",
+        captured: true,
+        sharedCapture: true,
+      });
+
+      // Opening the cake finds the step already green, with the response and capture pre-filled.
+      const cake = await context.newPage();
+      await cake.goto(`http://localhost:${port}/docs/mint`);
+      await cake.locator('li[data-id="mintMember"] .dot.ok').waitFor({
+        timeout: 5000,
+      });
+      const vars = await cake.locator("#vars").textContent();
+      assert(
+        vars?.includes("mintMember.memberId") && vars?.includes("m-42"),
+        `the cake should show the run's capture: ${vars}`,
+      );
+    } finally {
+      await browser.close();
+      await server.stop();
+    }
+  },
+});

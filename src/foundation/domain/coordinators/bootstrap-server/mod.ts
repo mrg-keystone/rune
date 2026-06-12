@@ -37,6 +37,17 @@ import { SwaggerBuilder } from "@foundation/domain/business/swagger-builder/mod.
 import { emulatorShellHtml } from "@foundation/domain/business/emulator-ui/mod.ts";
 import { mapShellHtml } from "@foundation/domain/business/map-ui/mod.ts";
 import { endpointsFromDoc } from "@foundation/domain/business/endpoint-spec/mod.ts";
+import {
+  type FixturesPatch,
+  mergeFixtures,
+  normalizeScenario,
+  readFixtures,
+  readHealRules,
+  readScenarios,
+  scenarioSlug,
+  writeFixtures,
+  writeScenario,
+} from "@foundation/domain/business/fixtures-store/mod.ts";
 
 interface BootstrapOptions {
   port?: number;
@@ -344,9 +355,46 @@ export class BootstrapServer {
           } catch {
             body = {}; // empty/invalid body ⇒ exercise everything with defaults
           }
+          // scenario: "<name>" replays a saved fixtures/scenarios file headlessly: its flow plus
+          // each step's LITERAL body fields as byEndpoint overrides. Fields holding {{refs}} are
+          // dropped — the runner fills those through its own bind machinery, which the refs mirror.
+          let scenarioFlow: string | undefined;
+          let scenarioByEndpoint:
+            | Record<string, Record<string, unknown>>
+            | undefined;
+          if (typeof body.scenario === "string" && body.scenario !== "") {
+            const wanted = scenarioSlug(body.scenario);
+            const scenario = (await readScenarios()).find((s) =>
+              scenarioSlug(s.name) === wanted
+            );
+            if (!scenario) {
+              return c.json(
+                { error: `Unknown scenario "${body.scenario}".` },
+                404,
+              );
+            }
+            scenarioFlow = scenario.flow;
+            scenarioByEndpoint = {};
+            for (const step of scenario.steps) {
+              if (step.skip || !step.body) continue;
+              try {
+                const parsed = JSON.parse(step.body) as Record<string, unknown>;
+                const literals: Record<string, unknown> = {};
+                for (const [k, v] of Object.entries(parsed)) {
+                  if (typeof v === "string" && v.includes("{{")) continue;
+                  literals[k] = v;
+                }
+                if (Object.keys(literals).length) {
+                  scenarioByEndpoint[step.id] = literals;
+                }
+              } catch {
+                // unparseable frozen body — leave that step to the runner's defaults
+              }
+            }
+          }
           const opts: ExerciseOptions = {
             api: runTarget,
-            flow: typeof body.flow === "string" ? body.flow : undefined,
+            flow: typeof body.flow === "string" ? body.flow : scenarioFlow,
             rateLimit: body.rateLimit as ExerciseOptions["rateLimit"],
             maxIterations: typeof body.maxIterations === "number"
               ? body.maxIterations
@@ -354,7 +402,7 @@ export class BootstrapServer {
             dryRun: body.dryRun === true,
             overrides: {
               seeds: body.seeds as Record<string, unknown> | undefined,
-              byEndpoint: body.byEndpoint as
+              byEndpoint: (body.byEndpoint ?? scenarioByEndpoint) as
                 | Record<string, Record<string, unknown>>
                 | undefined,
             },
@@ -426,6 +474,135 @@ export class BootstrapServer {
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             return Response.json({ error: msg }, { status: 502 });
+          }
+        }) as RouteHandler,
+      );
+      // The cake's persistent config artifact (fixtures/cake.json): per-module setup steps and
+      // the variables a user marked "persist". GET restores it on cake load; POST merges a page's
+      // slice and writes it back. Localhost-only (same posture as /_run, /_heal, /_mint) — the
+      // artifact carries variable values and writes the dev machine's disk.
+      adapter.registerRoute(
+        "get",
+        "/docs/_fixtures",
+        (async (c: Context) => {
+          if (!isLocalRequest(c)) {
+            return c.json(
+              {
+                error:
+                  "Forbidden: /docs/_fixtures is available on localhost only.",
+              },
+              403,
+            );
+          }
+          return c.json(await readFixtures());
+        }) as RouteHandler,
+      );
+      adapter.registerRoute(
+        "post",
+        "/docs/_fixtures",
+        (async (c: Context) => {
+          if (!isLocalRequest(c)) {
+            return c.json(
+              {
+                error:
+                  "Forbidden: /docs/_fixtures is available on localhost only.",
+              },
+              403,
+            );
+          }
+          let patch: FixturesPatch = {};
+          try {
+            patch = (await c.req.json()) as FixturesPatch;
+          } catch {
+            patch = {}; // empty/invalid body ⇒ a no-op merge that just re-stamps the file
+          }
+          try {
+            const merged = await writeFixtures(
+              mergeFixtures(await readFixtures(), patch),
+            );
+            return c.json(merged);
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            // Most likely cause: the app was started without --allow-write.
+            return c.json(
+              { error: `Could not write fixtures/cake.json — ${msg}` },
+              500,
+            );
+          }
+        }) as RouteHandler,
+      );
+      // Project heal rules (fixtures/heal-rules.json): the declarative per-project tier of the
+      // cake's heal panel — error slug → suggestions. keep executes them; the project (usually
+      // rune, from spec fault slugs) authors them. Missing file ⇒ empty rule set, generic tier only.
+      adapter.registerRoute(
+        "get",
+        "/docs/_heal-rules",
+        (async (c: Context) => {
+          if (!isLocalRequest(c)) {
+            return c.json(
+              {
+                error:
+                  "Forbidden: /docs/_heal-rules is available on localhost only.",
+              },
+              403,
+            );
+          }
+          return c.json(await readHealRules());
+        }) as RouteHandler,
+      );
+      // Scenarios (fixtures/scenarios/<name>.json): named, committable snapshots of a module's
+      // walk (flow + per-step bodies/params). GET lists them all; POST saves one (same name
+      // overwrites). The cake offers load/run; /docs/_run accepts { scenario } for CI replay.
+      adapter.registerRoute(
+        "get",
+        "/docs/_scenarios",
+        (async (c: Context) => {
+          if (!isLocalRequest(c)) {
+            return c.json(
+              {
+                error:
+                  "Forbidden: /docs/_scenarios is available on localhost only.",
+              },
+              403,
+            );
+          }
+          return c.json({ scenarios: await readScenarios() });
+        }) as RouteHandler,
+      );
+      adapter.registerRoute(
+        "post",
+        "/docs/_scenarios",
+        (async (c: Context) => {
+          if (!isLocalRequest(c)) {
+            return c.json(
+              {
+                error:
+                  "Forbidden: /docs/_scenarios is available on localhost only.",
+              },
+              403,
+            );
+          }
+          let parsed: unknown = null;
+          try {
+            parsed = await c.req.json();
+          } catch {
+            parsed = null;
+          }
+          const scenario = normalizeScenario(parsed);
+          if (!scenario) {
+            return c.json(
+              { error: "A scenario needs at least { name, module, steps }." },
+              400,
+            );
+          }
+          try {
+            return c.json(await writeScenario(scenario));
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            return c.json(
+              { error: `Could not write the scenario file — ${msg}` },
+              500,
+            );
           }
         }) as RouteHandler,
       );

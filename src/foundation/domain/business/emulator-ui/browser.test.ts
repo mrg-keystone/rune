@@ -219,9 +219,10 @@ Deno.test({
       const page = await browser.newPage();
       await page.goto(`http://localhost:${port}/docs/pay`);
 
-      // The selector lists All + both flows; branch steps carry flow chips in the All view.
+      // The selector lists the untagged-only "main" pseudo-flow, All, and both flows (card,
+      // cash); branch steps carry flow chips in the All view.
       assertEquals(await page.locator("#flows").isVisible(), true);
-      assertEquals(await page.locator("#flows button").count(), 3);
+      assertEquals(await page.locator("#flows button").count(), 4);
 
       // Pick the card flow: the cash step disappears, 3 steps remain.
       await page.locator('#flows button[data-flow="card"]').click();
@@ -447,6 +448,387 @@ Deno.test({
     } finally {
       await browser.close();
       await server.stop();
+    }
+  },
+});
+
+// ── per-route copy + run-all follows without auto-expanding ──────────────────
+
+Deno.test({
+  name:
+    "emulator — copy-route button + run-all keeps boxes collapsed (headless chromium)",
+  ignore: !enabled,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const port = 9617;
+    const server = await bootstrapServer("emu", EmuModule, { port });
+    await server.listen();
+    const { chromium } = await import("#playwright");
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.goto(`http://localhost:${port}/docs/emu`);
+
+      // Expand step 1 to reach its request panel; its address bar carries a copy-route button
+      // that copies the full resolved URL — the button flips to "copied ✓" on success.
+      await page.locator("li").nth(0).locator(".path").click();
+      await page.locator("li").nth(0).locator(".copy-route").click();
+      // The button flips to a "copied" affordance on success.
+      await page.locator("li").nth(0).locator(".copy-route").filter({
+        hasText: "copied",
+      }).waitFor({ timeout: 3000 });
+
+      // Collapse it again, then Run all: the walk must NOT auto-expand any box.
+      await page.locator("li").nth(0).locator(".path").click();
+      await page.waitForFunction(
+        "document.querySelectorAll('li.open').length === 0",
+        { timeout: 3000 },
+      );
+      await page.locator("#runall").click();
+      await page.waitForFunction(
+        "document.querySelectorAll('li .dot.ok').length === 2",
+        { timeout: 5000 },
+      );
+      // Every step passed but stayed collapsed — you open boxes yourself.
+      assertEquals(await page.locator("li.open").count(), 0);
+    } finally {
+      await browser.close();
+      await server.stop();
+    }
+  },
+});
+
+// ── module setup + persisted variables + the fixtures/cake.json artifact ─────
+
+Deno.test({
+  name:
+    "emulator — setup steps + persist vars save to fixtures and restore in a fresh browser (headless chromium)",
+  ignore: !enabled,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const port = 9619;
+    const fixturesDir = await Deno.makeTempDir();
+    Deno.env.set("KEEP_FIXTURES_DIR", fixturesDir); // redirect writes off the repo tree
+    const server = await bootstrapServer("emu", EmuModule, { port });
+    await server.listen();
+    const { chromium } = await import("#playwright");
+    const browser = await chromium.launch();
+    try {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.goto(`http://localhost:${port}/docs/emu`);
+
+      // Add an environment variable and mark it persist.
+      await page.locator('#addvar input[name="varname"]').fill("tenantId");
+      await page.locator('#addvar input[name="varvalue"]').fill("t-42");
+      await page.locator("#addvar button").click();
+      await page.locator('#vars input[data-persist="tenantId"]').check();
+
+      // Snapshot step 1 (create) as a setup step from its Request panel.
+      await page.locator("li").nth(0).locator(".path").click();
+      await page.locator("li").nth(0).locator(".add-setup").click();
+      await page.locator("#setup .setup-row").waitFor({ timeout: 3000 });
+      assertEquals(await page.locator("#setup .setup-row").count(), 1);
+
+      // Save the artifact and confirm the success banner.
+      await page.locator("#save-fixtures").click();
+      await page.locator("#banner.ok").waitFor({ timeout: 5000 });
+      const saveBanner = await page.locator("#banner").textContent();
+      assert(
+        saveBanner?.includes("Saved fixtures/cake.json"),
+        `expected a save banner, got: ${saveBanner}`,
+      );
+
+      // The artifact on disk carries the setup step and the persisted variable.
+      const onDisk = JSON.parse(
+        await Deno.readTextFile(`${fixturesDir}/cake.json`),
+      );
+      assertEquals(onDisk.variables.tenantId, "t-42");
+      assertEquals(onDisk.modules.emu.setup.length, 1);
+      assertEquals(onDisk.modules.emu.setup[0].id, "create");
+
+      // A FRESH browser context (empty localStorage) restores both from fixtures alone.
+      const fresh = await browser.newContext();
+      const page2 = await fresh.newPage();
+      await page2.goto(`http://localhost:${port}/docs/emu`);
+      // The setup row can only have come from fixtures (this context has no localStorage).
+      await page2.locator("#setup .setup-row").waitFor({ timeout: 5000 });
+      assertEquals(await page2.locator("#setup .setup-row").count(), 1);
+      // The persisted variable is back, with its checkbox checked.
+      await page2.locator('#vars input[data-persist="tenantId"]').waitFor({
+        timeout: 5000,
+      });
+      assertEquals(
+        await page2.locator('#vars input[data-persist="tenantId"]').isChecked(),
+        true,
+      );
+      assertEquals(
+        await page2.locator('#vars input[data-uservar="tenantId"]')
+          .inputValue(),
+        "t-42",
+      );
+
+      // Run setup runs the snapshotted step → it goes green.
+      await page2.locator("#run-setup").click();
+      await page2.locator('li[data-id="create"] .dot.ok').waitFor({
+        timeout: 5000,
+      });
+    } finally {
+      await browser.close();
+      await server.stop();
+      Deno.env.delete("KEEP_FIXTURES_DIR");
+      await Deno.remove(fixturesDir, { recursive: true });
+    }
+  },
+});
+
+// ── per-step expectations: green only when the response meets them ───────────
+
+Deno.test({
+  name:
+    "emulator — expectations gate green: passing check, then failing check stops run-all (headless chromium)",
+  ignore: !enabled,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const port = 9621;
+    const server = await bootstrapServer("emu", EmuModule, { port });
+    await server.listen();
+    const { chromium } = await import("#playwright");
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.goto(`http://localhost:${port}/docs/emu`);
+
+      // Pin an expectation on step 1: body.id == thing-7 (what the endpoint always returns).
+      await page.locator("li").nth(0).locator(".path").click();
+      await page.locator("li").nth(0).locator(".add-check").click();
+      await page.locator("li").nth(0).locator(".a-path").fill("id");
+      await page.locator("li").nth(0).locator(".a-val").fill("thing-7");
+      await page.locator("li").nth(0).locator("button.emulate").click();
+      await page.locator('li[data-id="create"] .dot.ok').waitFor({
+        timeout: 5000,
+      });
+      const verdict = await page.locator("li").nth(0).locator(".assert-results")
+        .textContent();
+      assert(
+        verdict?.includes("✓ id == thing-7"),
+        `expected a passing verdict: ${verdict}`,
+      );
+
+      // Now make it impossible: HTTP stays 200 but the step must go RED and stop run-all.
+      await page.locator("li").nth(0).locator(".a-val").fill("nope");
+      await page.locator("li").nth(0).locator("button.emulate").click();
+      await page.locator(
+        'li[data-id="create"] .dot.fail, li[data-id="create"] .dot.warn',
+      ).first()
+        .waitFor({ timeout: 5000 });
+      const mini = await page.locator("li").nth(0).locator(".status-mini")
+        .textContent();
+      assert(
+        mini?.includes("expect ✗"),
+        `status-mini should flag the expectation: ${mini}`,
+      );
+      const verdict2 = await page.locator("li").nth(0).locator(
+        ".assert-results",
+      ).textContent();
+      assert(
+        verdict2?.includes("✗ id == nope") && verdict2?.includes("got"),
+        `expected a failing verdict with the got value: ${verdict2}`,
+      );
+      // Same response as the previous run — the diff says so explicitly.
+      const diffNote = await page.locator("li").nth(0).locator(".diff")
+        .textContent();
+      assert(
+        diffNote?.includes("unchanged vs previous run"),
+        `expected the unchanged note: ${diffNote}`,
+      );
+
+      // Run-all stops there and names the expectation in the banner.
+      await page.locator("#runall").click();
+      await page.locator("#banner.err").waitFor({ timeout: 5000 });
+      const bannerText = await page.locator("#banner").textContent();
+      assert(
+        bannerText?.includes("expectation failed") &&
+          bannerText?.includes("id == nope"),
+        `banner should name the failed expectation: ${bannerText}`,
+      );
+    } finally {
+      await browser.close();
+      await server.stop();
+    }
+  },
+});
+
+// ── project heal rules drive the heal panel ──────────────────────────────────
+
+class GateDto {
+  @ApiProperty()
+  ok!: boolean;
+}
+
+@EndpointController("gate")
+class GateController {
+  static enabled = false;
+  @Endpoint({ path: "enable", output: GateDto, order: 1, optional: true })
+  enable(): GateDto {
+    GateController.enabled = true;
+    return { ok: true };
+  }
+  @Endpoint({ path: "select", output: GateDto, order: 2 })
+  select(): GateDto {
+    if (!GateController.enabled) throw new Error("not-enabled");
+    return { ok: true };
+  }
+}
+const GateModule = endpointModule("Gate", [GateController]);
+
+Deno.test({
+  name:
+    "emulator — project heal rules (fixtures/heal-rules.json) map a slug to a one-click fix (headless chromium)",
+  ignore: !enabled,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const port = 9622;
+    const fixturesDir = await Deno.makeTempDir();
+    Deno.env.set("KEEP_FIXTURES_DIR", fixturesDir);
+    await Deno.writeTextFile(
+      `${fixturesDir}/heal-rules.json`,
+      JSON.stringify({
+        v: 1,
+        slugs: {
+          "not-enabled": [
+            {
+              kind: "run-step",
+              match: "/enable/i",
+              why: "the gate must be enabled first",
+              todo: true,
+            },
+          ],
+        },
+      }),
+    );
+    GateController.enabled = false;
+    const server = await bootstrapServer("gate", GateModule, { port });
+    await server.listen();
+    const { chromium } = await import("#playwright");
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.goto(`http://localhost:${port}/docs/gate`);
+
+      // Run the gated step directly — it fails with the slug, and the heal panel offers the
+      // project rule's fix (run the enable endpoint), not a hardcoded framework guess.
+      await page.locator('li[data-id="select"] button.emulate').click();
+      await page.locator('li[data-id="select"] .dot.warn').waitFor({
+        timeout: 5000,
+      });
+      await page.locator('li[data-id="select"] .path').click();
+      const heal = await page.locator('li[data-id="select"] .heal')
+        .textContent();
+      assert(
+        heal?.includes("Run enable") &&
+          heal?.includes("the gate must be enabled first"),
+        `heal panel should carry the project rule: ${heal}`,
+      );
+
+      // Apply the suggestion → enable runs → retry select → green.
+      await page.locator('li[data-id="select"] .heal .apply-sg').first()
+        .click();
+      await page.locator('li[data-id="enable"] .dot.ok').waitFor({
+        timeout: 5000,
+      });
+      await page.locator('li[data-id="select"] button.emulate').click();
+      await page.locator('li[data-id="select"] .dot.ok').waitFor({
+        timeout: 5000,
+      });
+      // The retry's response differs from the failed one — the diff names what changed.
+      const diffText = await page.locator('li[data-id="select"] .diff')
+        .textContent();
+      assert(
+        diffText?.includes("changed vs previous run"),
+        `expected a changed-response diff: ${diffText}`,
+      );
+    } finally {
+      await browser.close();
+      await server.stop();
+      Deno.env.delete("KEEP_FIXTURES_DIR");
+      await Deno.remove(fixturesDir, { recursive: true });
+    }
+  },
+});
+
+// ── scenarios: save the walk under a name, load it back, run it ──────────────
+
+Deno.test({
+  name:
+    "emulator — scenarios save/load/run round-trip through fixtures/scenarios (headless chromium)",
+  ignore: !enabled,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const port = 9623;
+    const fixturesDir = await Deno.makeTempDir();
+    Deno.env.set("KEEP_FIXTURES_DIR", fixturesDir);
+    const server = await bootstrapServer("emu", EmuModule, { port });
+    await server.listen();
+    const { chromium } = await import("#playwright");
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.goto(`http://localhost:${port}/docs/emu`);
+
+      // Customize step 1's body, then save the walk as a named scenario.
+      await page.locator("li").nth(0).locator(".path").click();
+      await page.locator("li").nth(0).locator("textarea").fill(
+        '{"name":"from-scenario"}',
+      );
+      await page.locator('#save-scenario input[name="scenname"]').fill(
+        "happy path",
+      );
+      await page.locator("#save-scenario button").click();
+      await page.locator("#banner.ok").waitFor({ timeout: 5000 });
+      const file = JSON.parse(
+        await Deno.readTextFile(`${fixturesDir}/scenarios/happy-path.json`),
+      );
+      assertEquals(file.module, "emu");
+      assert(
+        file.steps.find((s: { id: string }) => s.id === "create").body.includes(
+          "from-scenario",
+        ),
+      );
+
+      // A FRESH context (no localStorage): the scenario lists, loads its body, and runs green.
+      const fresh = await browser.newContext();
+      const page2 = await fresh.newPage();
+      await page2.goto(`http://localhost:${port}/docs/emu`);
+      await page2.locator("#scenarios .scen-row").waitFor({ timeout: 5000 });
+      await page2.locator("#scenarios .scen-load").click();
+      const body = await page2.locator("li").nth(0).locator("textarea")
+        .inputValue();
+      assert(
+        body.includes("from-scenario"),
+        `scenario body not applied: ${body}`,
+      );
+      await page2.locator("#scenarios .scen-run").click();
+      await page2.waitForFunction(
+        "document.querySelectorAll('li .dot.ok').length === 2",
+        { timeout: 8000 },
+      );
+      const resp = await page2.locator("li").nth(0).locator(".resp")
+        .textContent();
+      assert(
+        resp?.includes("from-scenario"),
+        `scenario run should use its body: ${resp}`,
+      );
+    } finally {
+      await browser.close();
+      await server.stop();
+      Deno.env.delete("KEEP_FIXTURES_DIR");
+      await Deno.remove(fixturesDir, { recursive: true });
     }
   },
 });

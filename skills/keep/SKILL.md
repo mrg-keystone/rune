@@ -141,14 +141,26 @@ After wiring endpoints, **prove the chain runs, don't just type-check**:
    default walk is **main** — untagged steps only — so destructive branches
    (teardown) never run unless their flow is selected; per-step **skip**
    toggles and **run from here** control partial re-runs. A failed step
-   grows a yellow **⚠ heal** panel of one-click rule-based fixes (run the
-   producer, set an input from a capture, retry with reason); its **Ask
-   Claude** button sends the failure to `POST /docs/_heal` for a structured
-   diagnosis when `PRIVATE_CLAUDE_URL` is set.
+   grows a yellow **⚠ heal** panel of one-click fixes — generic rules plus
+   the project's own `fixtures/heal-rules.json` slug rules (rune generates a
+   starter; keep just executes them); its **Ask Claude** button sends the
+   failure to `POST /docs/_heal` for a structured diagnosis when
+   `PRIVATE_CLAUDE_URL` is set. A **Module setup** card holds pre-run calls
+   (snapshot any step with **`+ setup`**); each step's **Expect** block pins
+   status/body expectations so green means *right*, not just 2xx; re-runs show
+   a **diff vs the previous response**. **Save fixtures** persists setup +
+   expectations + persist-ticked variables to `fixtures/cake.json`
+   (localhost-only `/docs/_fixtures`), restored on load even in a fresh
+   browser. The **Scenarios** card freezes whole walks as named
+   `fixtures/scenarios/*.json` files — load/run them from the cake, or replay
+   in CI via `POST /docs/_run {"scenario":"name"}`.
 2. **`/docs/_map`** shows the whole composed app as one live graph — module
    lanes, solid bind edges, dashed `$input` contracts, status dots that
-   recolor as you run steps in any tab. Click a node to deep-link into its
-   cake step.
+   recolor as you run steps in any tab. Its **Run all** button runs the entire
+   composed process server-side (the localhost-only `/docs/_run` walk) and
+   writes the report back into the cake sessions — one source of truth, so
+   colors survive reloads and cakes open pre-filled. Click a node to deep-link
+   into its cake step.
 3. In tests/CI, run the same walk headlessly:
 
 ```ts
@@ -208,6 +220,7 @@ model, token shape, docs gating, and browser token flow live there.
 | `DD_API_KEY` | ship structured logs to Datadog (else console only) |
 | `POSTMARK_SERVER_TOKEN` / `POSTMARK_FROM` / `POSTMARK_TO` | log-failure alert emails |
 | `KEEP_DEV` | path to a dev status file → `/docs/_dev` + page auto-reload |
+| `KEEP_FIXTURES_DIR` | directory for the cake's `cake.json` artifact (default `<cwd>/fixtures`) |
 | `PRIVATE_CLAUDE_URL` | private-claude service for the cake's "Ask Claude" healer (`POST /docs/_heal`) |
 | `PRIVATE_CLAUDE_TOKEN` | bearer token for that service (optional) |
 

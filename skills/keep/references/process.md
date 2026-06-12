@@ -78,11 +78,14 @@ Cake behavior worth knowing when debugging:
   captures are shared across all docs pages via `localStorage`, and a
   `storage` listener live-updates other open tabs.
 - **Run all in order** walks the active flow and stops at the first failure
-  with a banner naming the step and reason; fix and re-run to resume.
-  **Skipped** steps are excluded from the walk entirely — each step has a
-  `skip` toggle, and a skipped step's state stays exactly where you parked
-  it (the row renders dimmed). **Run from here** (in a step's Request panel)
-  clears that step and every later step in the walk, then runs from it.
+  with a banner naming the step and reason; fix and re-run to resume. The walk
+  **scrolls the active (and any stopped) step into view but leaves every box
+  collapsed** — nothing auto-expands, so the run is easy to follow; open a box
+  yourself to inspect it. **Skipped** steps are excluded from the walk
+  entirely — each step has a `skip` toggle, and a skipped step's state stays
+  exactly where you parked it (the row renders dimmed). **Run from here** (in a
+  step's Request panel) clears that step and every later step in the walk, then
+  runs from it.
 - A module with `flows` gets a **flow selector** that defaults to **main** —
   the untagged-only walk — so destructive branches (a teardown flow) never
   run unless explicitly selected; "All" runs everything, named flows run
@@ -99,8 +102,58 @@ Cake behavior worth knowing when debugging:
   auto.
 - `stub: true` endpoints carry an amber **`stub`** chip.
 - Dependency cycles are reported in a banner instead of leaving steps locked.
-- Each step shows the concrete request it will send, the response, and a
-  paste-ready curl. **Reset session** clears the page's state.
+- Each step shows the concrete request it will send, the response, a
+  paste-ready curl, and a **copy** button on the address bar that copies the
+  route's full resolved URL. **Reset session** clears the page's state.
+- **Expectations**: each step's Expect block pins an exact HTTP status and
+  body checks (`path` `==`/`!=`/`contains`/`exists` `value`; values may hold
+  `{{refs}}`). With expectations pinned, green means the response **meets
+  them** — a 200 with a wrong body goes red (`expect ✗`), each check's
+  verdict shows with the actual value, and run-all stops naming the failed
+  expectation. Expectations persist with the session and ride **Save
+  fixtures** into `fixtures/cake.json` — the committable contract-test layer.
+- **Response diff**: re-running a step shows changed/added/removed paths vs
+  the previous response (`old → new`, capped), or an explicit "unchanged vs
+  previous run".
+
+## Module setup + the `fixtures/cake.json` artifact
+
+The cake's working session lives in `localStorage` (per page path) — ephemeral
+and browser-local. Two surfaces make the deliberate configuration **durable**:
+
+- **Module setup** — a rail card of calls that put the system in a known state
+  **before** the process runs (seed a tenant, flip a flag, create a
+  prerequisite). Press **`+ setup`** in any step's Request panel to snapshot
+  that request (body + params, `{{refs}}` kept and resolved at send time) as a
+  setup step; reorder/remove/run them in the card. **Run all** runs the setup
+  steps first (in order, stopping with a banner on the first failure), then the
+  normal process walk; **Run setup** fires them on their own. Setup steps share
+  the run status/captures with the main steps, so a setup call's outputs feed
+  the process via the usual `{{step.field}}`/capture machinery.
+- **persist** — each environment variable in the Variables card has a
+  **`persist`** checkbox. Ticked variables are written to the artifact.
+
+**Save fixtures** writes `fixtures/cake.json`: this module's setup steps, its
+pinned **expectations**, plus every persisted variable. It's plain, prettified
+JSON meant to be committed, so a process's required setup and contract travel
+with the repo. On load the cake fetches it and applies it as the baseline —
+restoring setup + expectations + persisted variables even in a fresh browser
+with empty `localStorage` (the saved config wins for the keys it carries). The
+door is `GET`/`POST /docs/_fixtures`, **localhost-only** (same posture as
+`/docs/_run` and `/_mint`); the file defaults to `<cwd>/fixtures/cake.json`
+and `KEEP_FIXTURES_DIR` overrides the directory. The server needs
+`--allow-write`; without it, **Save fixtures** reports a 500 with the reason.
+
+**Scenarios — `fixtures/scenarios/<name>.json`.** The Scenarios rail card
+freezes the whole walk (active flow, every step's body text + params with refs
+intact, skips) under a name — one committable file per scenario. **load**
+applies one over the page (overwrites editor state); **run** is load + Run
+all. Saved/listed through the localhost-only `GET`/`POST /docs/_scenarios`
+(same-name saves overwrite — that's updating). CI replays one headlessly with
+`POST /docs/_run {"scenario":"<name>"}`: the saved flow runs with each step's
+**literal** body fields as `byEndpoint` overrides; fields holding `{{refs}}`
+are dropped so the runner's own bind machinery (which the refs mirror) fills
+them.
 
 ## Self-healing — the heal panel and `POST /docs/_heal`
 
@@ -115,11 +168,41 @@ becomes one-click fixes with Apply buttons:
 | --- | --- |
 | unresolved `{{ref}}` / `{{$input}}` | run the step that outputs the field; set the input from an existing capture (any module's session); a plural capture (`tableNames`) feeds an element picker for the singular input (`tableName`); otherwise jump to the Module-inputs box |
 | 422 assert failure (body names path + constraint) | remove an optional body key; "did you mean X?" for keys the DTO doesn't have; a required-but-unsatisfiable field reuses the missing-ref fixes |
-| spec fault slug (`not-tracked`, `not-in-catalog`, `not-found`, `not-text`, `not-armed`, `lease-held`, `timeout`, `unauthorized`, `rate-limited`, `kv-error`, …) | run the prerequisite step that repairs the state (an enable/discover/sync step), pick a value that actually exists from captures, or retry-with-reason ("another tick holds the lease — it expires in seconds") |
+| error slug with a **project rule** (below) | whatever the rule declares: run a prerequisite step, set/pick an input, edit the body, retry, or guidance |
+| `timeout` / `unauthorized` / `rate-limited` (no project rule) | retry-with-reason |
 | anything else | run the declared dependencies that aren't green |
 
-Armed/destructive actions are never proposed as a run — `not-armed` names the
-env var that arms writes (restart required) and offers only a retry.
+**Project rules — `fixtures/heal-rules.json`.** Slug diagnosis is project
+vocabulary, not framework knowledge (which endpoint un-blocks `not-enabled`
+is *this app's* business), so keep ships no domain slugs. The project
+declares them in a committed file keep loads through the localhost-only
+`GET /docs/_heal-rules`:
+
+```json
+{
+  "v": 1,
+  "slugs": {
+    "not-enabled": [
+      { "kind": "run-step", "match": "/enable/i", "why": "the table must be tracked first" },
+      { "kind": "pick", "target": "tableName", "fromPlural": "tableNames", "why": "pick a table that exists" }
+    ],
+    "not-armed": [
+      { "kind": "note", "label": "Set WRITES_ARMED=1 and restart", "retryAfter": true }
+    ]
+  }
+}
+```
+
+Rule kinds: `run-step` (`target` exact endpoint id, or `match` as
+`/regex/flags` over endpoint ids), `set-input` (`target` + `value`), `pick`
+(`target` + `fromPlural`, an exactly-named array field in any capture),
+`remove-key` / `set-body-field` (`target`, `value`), `retry`, and `note`
+(`label`, optional `retryAfter: true` adds a retry button). Every rule may
+carry `why`. Unknown kinds and extra fields (e.g. rune's `todo: true`
+scaffold marker) are ignored — forward compatible. When a slug has project
+rules, they own it; the generic tier is only the fallback. **rune generates a
+starter file** from the spec's declared fault slugs during `rune sync`
+(merge-don't-clobber: hand edits and appended rules survive re-syncs).
 
 **Tier 2 — Ask Claude.** The panel's button POSTs the failure bundle —
 endpoint metadata, resolved request, response, missing refs, module inputs,
@@ -158,7 +241,14 @@ module lanes, columns by dependency depth. Solid edges = intra-module binds;
 **dashed edges** = `$input` contracts satisfied by another module's producer;
 an unproduced `$name` renders as an amber badge on its consumer. Flow edges
 are tinted; optional/stub endpoints carry chips. The map is **live** — node
-dots recolor from cake sessions in `localStorage`, any tab. Clicking a
+dots recolor from cake sessions in `localStorage`, any tab. A **Run all**
+button runs the whole composed process server-side via the localhost-only
+`POST /docs/_run` walk; nodes pulse while it runs, then the report is
+**written back into each module's cake session** (statuses, response bodies,
+timings, captures — including the shared cross-module capture scope). The
+cake sessions stay the one source of truth: map colors survive a reload, open
+cake tabs update live via the storage event, and a cake opened afterwards has
+its steps already green with responses and captures pre-filled. Clicking a
 node deep-links to `/docs/<module>#<endpointId>` with that step expanded.
 (Underscore-prefixed so a module named "map" can still own `/docs/map`.)
 
@@ -237,10 +327,16 @@ work right now?" without importing the app. Same trust posture as `/_mint`:
 loopback socket only; in-process dispatch (no conn info) is denied; `503` until
 the in-process backend exists.
 
-- Body (all optional): `{ flow?, seeds?, byEndpoint?, rateLimit?, maxIterations?, dryRun? }`.
+- Body (all optional): `{ flow?, seeds?, byEndpoint?, rateLimit?, maxIterations?, dryRun?, scenario? }`.
 - `200` → `{ ok, passed[], failed[], optionalFailed[], order, cycles, iterations }`,
   where `ok = failed.length === 0 && cycles.length === 0` and every row carries
-  its `module` (bare op-ids collide across composed modules).
+  its `module` (bare op-ids collide across composed modules) plus the response
+  `body` and per-call `ms` — enough to show/replay outcomes, not just verdicts
+  (the map's write-back is built on this).
+- `scenario: "<name>"` replays a saved `fixtures/scenarios/` file: its flow
+  (an explicit `flow` in the body wins) and each step's literal body fields as
+  `byEndpoint` overrides (`{{ref}}`-holding fields are left to bind). Unknown
+  name → `404`.
 - `dryRun: true` → `{ order, cycles, unresolvedInputs }` with nothing executed —
   a cheap pre-flight that names dependency cycles and unsatisfied `$inputs`.
 - `seeds` ride in the request body, not the browser session (a headless caller

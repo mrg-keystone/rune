@@ -104,6 +104,32 @@ export function emulatorShellHtml(
       <div class="progress"><div class="progress-fill"></div></div>
       <div id="progress-text"></div>
     </div>
+    <div class="railcard" id="setup-card">
+      <div class="railhead">Module setup
+        <button class="mini" id="save-fixtures" title="write setup steps + persisted variables to fixtures/cake.json">Save fixtures</button>
+      </div>
+      <div id="setup"></div>
+      <button id="run-setup" class="mini" title="run all setup steps now (they also run before Run all)">Run setup</button>
+      <div class="hint">
+        Calls that put the system in a known state <b>before</b> the process runs. Add one from a
+        step's Request panel (<code>+ setup</code>); <b>Save fixtures</b> writes them — plus any
+        variable you mark <code>persist</code> — to <code>fixtures/cake.json</code>, so the config
+        persists and can be checked in.
+      </div>
+    </div>
+    <div class="railcard" id="scenarios-card">
+      <div class="railhead">Scenarios</div>
+      <div id="scenarios"></div>
+      <form id="save-scenario" autocomplete="off">
+        <input name="scenname" placeholder="name e.g. happy-path" aria-label="scenario name">
+        <button title="snapshot the whole walk (flow, bodies, params, skips) under this name">Save</button>
+      </form>
+      <div class="hint">
+        Named snapshots of this walk, stored in <code>fixtures/scenarios/</code>.
+        <b>load</b> applies one (overwrites bodies/params/flow); <b>run</b> loads then runs all.
+        CI: <code>POST /docs/_run {"scenario":"name"}</code>.
+      </div>
+    </div>
     <div class="railcard" id="inputs-card" hidden>
       <div class="railhead">Module inputs</div>
       <div id="inputs"></div>

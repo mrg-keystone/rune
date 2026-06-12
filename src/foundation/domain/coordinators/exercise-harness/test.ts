@@ -451,7 +451,10 @@ const AlphaModule = endpointModule("Alpha", [AlphaCatalog]);
 const BetaModule = endpointModule("Beta", [BetaCatalog]);
 
 Deno.test("exerciseEndpoints - same operationId across composed modules does not collide", async () => {
-  const server = await bootstrapServer("harness-app", [AlphaModule, BetaModule]);
+  const server = await bootstrapServer("harness-app", [
+    AlphaModule,
+    BetaModule,
+  ]);
   try {
     const report = await exerciseEndpoints({ api: server });
     assertEquals(report.failed.map((r) => r.id), []);

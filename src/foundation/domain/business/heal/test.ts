@@ -73,7 +73,10 @@ Deno.test("callHealer — posts the schema and parses the reply", async () => {
     }) as typeof fetch;
     const v = await callHealer({ endpoint: { id: "x" } }, [], fakeFetch);
     assertEquals(seenUrl, "https://healer.test/private-claude/v1/prompt");
-    assertEquals(seenBody.json_schema, JSON.parse(JSON.stringify(VERDICT_SCHEMA)));
+    assertEquals(
+      seenBody.json_schema,
+      JSON.parse(JSON.stringify(VERDICT_SCHEMA)),
+    );
     assert(typeof seenBody.prompt === "string");
     assertEquals(v.diagnosis, "ok");
   } finally {
