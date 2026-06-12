@@ -1,6 +1,6 @@
 name: release
 
-# Deploy model:
+# Deploy model (implemented by the org reusable gh-release workflow):
 #   - merge into `main`        -> rebuilds the rolling `latest` release (the one
 #                                 `install.sh` pulls by default). This is the deploy.
 #   - push to `develop`        -> rebuilds the rolling `develop` release (install
@@ -8,6 +8,10 @@ name: release
 #                                 "latest", so it never disturbs stable users.
 #   - push a `vX.Y.Z` tag      -> a pinned snapshot release (install with
 #                                 RUNE_VERSION=vX.Y.Z); does NOT become "latest".
+#
+# Builds stay here (cross-compile + codesign are rune-specific); the release
+# itself — tag resolution, ensure-rolling-never-delete, single-upload of all
+# assets — is mrg-keystone/actions/gh-release.
 on:
   push:
     branches: [main, develop]
@@ -22,34 +26,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Ensure the rolling release EXISTS — never delete it. Deleting-then-recreating
-  # left a ~2-min window where `latest` was absent, so installers 404'd or fell
-  # back to an old pinned tag. Here we just create it if missing; the build jobs
-  # overwrite its (fixed-name) assets in place, so `latest` is always downloadable.
-  prepare:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Ensure rolling release exists for this branch
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag=$([ "$GITHUB_REF" = "refs/heads/main" ] && echo latest || echo develop)
-          gh release view "$tag" -R "${{ github.repository }}" >/dev/null 2>&1 \
-            || gh release create "$tag" -R "${{ github.repository }}" \
-                 --title "$tag" --notes "rolling release" --latest=false
-
   build:
-    needs: [prepare]
-    # Run for main/develop deploys AND v* tags. always() so it still runs when
-    # `prepare` is skipped (tag pushes).
-    if: ${{ always() && !cancelled() && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ${{ matrix.os }}
     # Generous ceiling so a real hang fails fast instead of burning a runner.
-    # (Note: this governs EXECUTION time, not queue wait — the old Intel job was
+    # (This governs EXECUTION time, not queue wait — the old Intel job was
     # killed by GitHub's 24h *queue* limit because macos-13 runners were
-    # unavailable. The fix is below: build x86_64-darwin by CROSS-COMPILING on a
-    # plentiful macos-latest (Apple-silicon) runner, so no Intel runner is needed.)
+    # unavailable; x86_64-darwin is CROSS-COMPILED on macos-latest instead.)
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -66,24 +48,6 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-
-      - name: Resolve release tag
-        id: rel
-        shell: bash
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
-            echo "rolling=false" >> "$GITHUB_OUTPUT"
-            echo "make_latest=false" >> "$GITHUB_OUTPUT"
-          elif [[ "$GITHUB_REF" == refs/heads/develop ]]; then
-            echo "tag=develop" >> "$GITHUB_OUTPUT"
-            echo "rolling=true" >> "$GITHUB_OUTPUT"
-            echo "make_latest=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=latest" >> "$GITHUB_OUTPUT"
-            echo "rolling=true" >> "$GITHUB_OUTPUT"
-            echo "make_latest=true" >> "$GITHUB_OUTPUT"
-          fi
 
       # Build for matrix.target explicitly (instead of `deno task build`, which is
       # host-only) so we can cross-compile x86_64-apple-darwin on an arm64 runner.
@@ -113,35 +77,23 @@ jobs:
           tar -C dist -czf "rune-${{ matrix.target }}.tar.gz" rune rune-lsp rune-syntax SKILL.md
           shasum -a 256 "rune-${{ matrix.target }}.tar.gz" > "rune-${{ matrix.target }}.tar.gz.sha256"
 
-      - name: Publish
-        uses: softprops/action-gh-release@v2
+      - uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ steps.rel.outputs.tag }}
-          name: ${{ steps.rel.outputs.tag == 'latest' && 'latest (main)' || steps.rel.outputs.tag == 'develop' && 'develop (rolling)' || steps.rel.outputs.tag }}
-          # Only the rolling 'latest' (main) is the canonical install target
-          # (make_latest); 'develop' and pinned v* snapshots are NOT, so they
-          # don't hijack the default `install.sh`.
-          make_latest: ${{ steps.rel.outputs.make_latest }}
-          prerelease: false
-          files: |
-            rune-${{ matrix.target }}.tar.gz
-            rune-${{ matrix.target }}.tar.gz.sha256
-          fail_on_unmatched_files: true
+          name: release-${{ matrix.target }}
+          path: rune-${{ matrix.target }}.tar.gz*
+          retention-days: 3
 
-      # Releases are the source of truth for EVERYTHING shipped: the installer,
-      # uninstaller, and skill are standalone assets too, so install.sh and
-      # `rune update` fetch them version-matched from the release instead of a
-      # branch ref. One leg only — parallel uploads of the same asset name race.
-      - name: Publish installer + skill (shared assets)
-        if: runner.os == 'Linux'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.rel.outputs.tag }}
-          name: ${{ steps.rel.outputs.tag == 'latest' && 'latest (main)' || steps.rel.outputs.tag == 'develop' && 'develop (rolling)' || steps.rel.outputs.tag }}
-          make_latest: ${{ steps.rel.outputs.make_latest }}
-          prerelease: false
-          files: |
-            scripts/install.sh
-            scripts/uninstall.sh
-            skills/rune/SKILL.md
-          fail_on_unmatched_files: true
+  release:
+    needs: [build]
+    uses: mrg-keystone/actions/.github/workflows/gh-release.yml@main
+    permissions:
+      contents: write
+    with:
+      artifact-pattern: release-*
+      # rune's asset surface is a contract with install.sh + `rune update`
+      # (flat SKILL.md, not a skill tarball) — keep it byte-stable.
+      pack-skills: false
+      extra-assets: |
+        scripts/install.sh
+        scripts/uninstall.sh
+        skills/rune/SKILL.md
