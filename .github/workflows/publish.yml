@@ -1,163 +1,27 @@
 name: Publish to JSR
 
-# Reusable JSR publish workflow. Scope and package are derived from the
-# "name" field of deno.json — drop this file plus scripts/check-jsr-deps.ts
-# into any JSR package repo and add a JSR_TOKEN secret.
-#
-# Behavior on every push to main:
-#   - Preflight emulates JSR's server-side dependency validation locally
-#     (jsr: subpath exports across ALL versions matching each range — the
-#     class of failure deno publish --dry-run cannot catch) plus a dry-run.
-#     Bad packages fail in seconds with the real reason, not after a ~10
-#     minute server round trip.
-#   - If the version in deno.json is NOT yet on JSR, it publishes as-is
-#     (manual bumps respected — set the version yourself for a specific cut).
-#   - If it IS already on JSR (code merged without a bump), the next version
-#     is derived from the latest published one — patch by default, minor when
-#     the push contains a `feat:` commit, major on a breaking marker (`!:` or
-#     "BREAKING CHANGE") — published, and the bump is committed back to main
-#     so the repo never drifts from JSR. (GITHUB_TOKEN pushes don't re-trigger
-#     workflows, so this cannot loop.)
-#   - The publish poll reads the publishing-task API: a server-side task
-#     FAILURE surfaces its actual error immediately (the deno publish CLI
-#     never reports it — it waits forever on a failed task, which looks like
-#     the well-known publish hang). Success window is 20 minutes; server-side
-#     processing alone has been observed to take 10m48s on a mid-size package.
-#
-# deno publish flags: --allow-dirty (the auto-bump edits deno.json in the
-# work tree), --no-provenance (provenance stalls on runners and isn't needed
-# with token auth), --allow-slow-types (don't block publish on slow types).
+# Publishing is the org-wide reusable workflow (validate -> settle in-flight
+# -> next version -> bump -> registry-watched publish). All the hang/version
+# defenses live there: see mrg-keystone/actions README.
 on:
   push:
     branches:
       - main
-
-concurrency:
-  group: publish-jsr
-  cancel-in-progress: false
 
 permissions:
   contents: write
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
-    env:
+    uses: mrg-keystone/actions/.github/workflows/jsr-publish.yml@main
+    secrets:
       JSR_TOKEN: ${{ secrets.JSR_TOKEN }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-      - name: Preflight — emulate JSR's server-side checks locally
-        run: |
-          deno run --allow-net --allow-read scripts/check-jsr-deps.ts
-          deno publish --dry-run --allow-dirty --no-provenance --allow-slow-types
-      - name: Determine version (auto-bump when deno.json's is already on JSR)
-        id: ver
-        run: |
-          set -euo pipefail
-          NAME="$(jq -r .name deno.json)"            # e.g. @my-scope/my-pkg
-          SCOPE="${NAME#@}"; SCOPE="${SCOPE%%/*}"
-          PKG="${NAME##*/}"
-          VER="$(jq -r .version deno.json)"
-          echo "scope=$SCOPE" >> "$GITHUB_OUTPUT"
-          echo "pkg=$PKG" >> "$GITHUB_OUTPUT"
-          if ! curl -fsS "https://api.jsr.io/scopes/$SCOPE/packages/$PKG/versions/$VER" >/dev/null 2>&1; then
-            echo "deno.json version $VER is not on JSR yet — publishing as-is"
-            echo "version=$VER" >> "$GITHUB_OUTPUT"
-            echo "bumped=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          # api.jsr.io is authoritative; jsr.io/meta.json is CDN-cached and can
-          # lag several minutes behind a publish, deriving a wrong bump.
-          LATEST="$(curl -fsS -H "Authorization: Bearer $JSR_TOKEN" \
-            "https://api.jsr.io/scopes/$SCOPE/packages/$PKG/versions?limit=1000" \
-            | jq -r '(.items // .) | .[]?.version' | sort -V | tail -1)"
-          BUMP=patch
-          BEFORE="${{ github.event.before }}"
-          AFTER="${{ github.event.after }}"
-          if git rev-parse -q --verify "$BEFORE^{commit}" >/dev/null 2>&1; then
-            LOG="$(git log --format=%B "$BEFORE..$AFTER")"
-            if echo "$LOG" | grep -qE '^[a-z]+(\([^)]*\))?!:|BREAKING CHANGE'; then
-              BUMP=major
-            elif echo "$LOG" | grep -qE '^feat(\([^)]*\))?:'; then
-              BUMP=minor
-            fi
-          fi
-          IFS=. read -r MA MI PA <<< "$LATEST"
-          case "$BUMP" in
-            major) NEW="$((MA + 1)).0.0" ;;
-            minor) NEW="$MA.$((MI + 1)).0" ;;
-            patch) NEW="$MA.$MI.$((PA + 1))" ;;
-          esac
-          echo "$VER is already on JSR (latest: $LATEST) — auto-bumping $BUMP to $NEW"
-          jq --arg v "$NEW" '.version = $v' deno.json > deno.json.tmp && mv deno.json.tmp deno.json
-          echo "version=$NEW" >> "$GITHUB_OUTPUT"
-          echo "bumped=true" >> "$GITHUB_OUTPUT"
-      - name: Publish to JSR (poll API — deno publish does not exit after success)
-        run: |
-          set -uo pipefail
-          SCOPE="${{ steps.ver.outputs.scope }}"
-          PKG="${{ steps.ver.outputs.pkg }}"
-          VER="${{ steps.ver.outputs.version }}"
-          VURL="https://api.jsr.io/scopes/$SCOPE/packages/$PKG/versions/$VER"
-          TASKS_URL="https://api.jsr.io/scopes/$SCOPE/packages/$PKG/publishing_tasks"
-          START_ISO="$(date -u +%Y-%m-%dT%H:%M:%S)"
-          echo "Publishing @$SCOPE/$PKG@$VER ..."
-          deno publish --token "$JSR_TOKEN" --allow-dirty --no-provenance --allow-slow-types &
-          PUB_PID=$!
-          for i in $(seq 1 600); do
-            if curl -fsS "$VURL" >/dev/null 2>&1; then
-              echo "✓ @$SCOPE/$PKG@$VER is live on JSR"
-              kill "$PUB_PID" 2>/dev/null || true
-              wait "$PUB_PID" 2>/dev/null || true
-              exit 0
-            fi
-            if ! kill -0 "$PUB_PID" 2>/dev/null; then
-              # deno publish exits right after a fast successful upload, but
-              # the version can take a few seconds to appear in the API —
-              # poll a grace window instead of failing on one instant check.
-              for j in $(seq 1 30); do
-                curl -fsS "$VURL" >/dev/null 2>&1 && { echo "✓ @$SCOPE/$PKG@$VER is live on JSR"; exit 0; }
-                sleep 2
-              done
-              echo "✗ deno publish exited and @$SCOPE/$PKG@$VER did not appear on JSR within 60s" >&2
-              exit 1
-            fi
-            if [ $((i % 10)) -eq 0 ]; then
-              FAIL_MSG="$(curl -fsS -H "Authorization: Bearer $JSR_TOKEN" "$TASKS_URL" 2>/dev/null \
-                | jq -r --arg v "$VER" --arg t "$START_ISO" \
-                    '(.items // .) | [.[]? | select(.packageVersion == $v and .status == "failure" and .createdAt >= $t)]
-                     | first | if . then (.error.code + ": " + .error.message) else empty end' 2>/dev/null || true)"
-              if [ -n "$FAIL_MSG" ]; then
-                echo "✗ JSR publishing task FAILED for @$SCOPE/$PKG@$VER: $FAIL_MSG" >&2
-                kill "$PUB_PID" 2>/dev/null || true
-                exit 1
-              fi
-              echo "… still waiting ($((i * 2))s)"
-            fi
-            sleep 2
-          done
-          echo "✗ timed out waiting for @$SCOPE/$PKG@$VER to appear on JSR" >&2
-          kill "$PUB_PID" 2>/dev/null || true
-          exit 1
-      - name: Commit the auto-bump back to main
-        if: steps.ver.outputs.bumped == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deno.json
-          git commit -m "release: v${{ steps.ver.outputs.version }} (auto-bump)"
-          git push || echo "::warning::could not push the version bump back to main; the next run will re-derive from the JSR latest"
 
   # Ship each skills/<name>/ dir (SKILL.md + references/) as a rolling
   # `latest` GitHub release — one tarball per skill, plus the installer.
   # `curl …/releases/download/latest/install.sh | sh` then installs the skill
   # version-matched to what just published. Repos without a skills/ dir skip
-  # this job entirely, so the workflow stays drop-in reusable.
+  # this job entirely.
   skill-release:
     needs: publish
     runs-on: ubuntu-latest
@@ -167,7 +31,7 @@ jobs:
       - uses: actions/checkout@v4
       # hashFiles() is not allowed in a job-level `if` (no workspace exists at
       # job scheduling time), so the skills/ check lives in a step instead —
-      # repos without skills/ no-op here and the workflow stays drop-in reusable.
+      # repos without skills/ no-op here.
       - name: Detect skills
         id: detect
         run: |
