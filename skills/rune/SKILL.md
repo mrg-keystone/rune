@@ -71,7 +71,9 @@ before you `sync`. The full step-by-step is **The lifecycle** below.
 
 A spec is a flat, indentation-significant file. Tags are bracketed 3-letter
 codes. The canonical reference is `lang/docs/spec.md`; the enforced rules are in
-`lang/docs/constraints.md`. The essentials:
+`lang/docs/constraints.md`; modeling patterns (echo-fields, teardown flows,
+`$input` vs capture-bind, dependsOn-as-sequencing) are in `lang/docs/cookbook.md`.
+The essentials:
 
 ```
 [MOD] tasks                                  # names the module (optional; else filename)
@@ -145,10 +147,10 @@ they all execute and combine (→ a single step, looped in the body)?**
 ### `[ENT]` is the outside edge — wire it to keep
 
 `[ENT] surface.action(InDto): OutDto` is the **inbound** edge — the HTTP route (or
-CLI/queue handler) that reaches the `[REQ]` it dispatches to. `rune sync` emits
-`src/<module>/entrypoints/<surface>/mod.ts` (dev-owned). **Fill it by writing a tiny
-keep controller — don't hand-roll routing, request parsing, or Swagger.** Decorate one
-handler per `[ENT]` and delegate to the coordinator the `[REQ]` generated:
+CLI/queue handler) that reaches the `[REQ]` it dispatches to. `rune sync` generates
+`src/<module>/entrypoints/<surface>/mod.ts` (create-once, **dev-owned**): a keep
+controller with one `@Endpoint` per `[ENT]`, each delegating to its coordinator. You
+own and tweak it afterward — don't hand-roll routing, request parsing, or Swagger:
 
 ```ts
 import { Endpoint, EndpointController } from "@mrg-keystone/keep";
@@ -164,6 +166,18 @@ class OrdersController {
 keep serves the route, generates per-module Swagger from the DTO classes, and renders
 the cake — all from the decorators. Type the handler param as the input
 DTO; `@Endpoint` wires the body for you (don't add `@Body()`).
+
+rune picks each `[ENT]`'s coordinator by the `(input, output)` DTO pair. Two `[REQ]`s
+sharing that signature are **ambiguous** (`rune check` errors) — name the target in
+the `[ENT]` body to disambiguate:
+
+```
+[ENT] http.postRecording(GetRecordingDto): IdDto
+    [REQ] recording.set(GetRecordingDto): IdDto    # dispatch to recording.set
+```
+
+An empty input (`[ENT] http.refresh({}): StatusDto`) generates a **no-argument**
+handler — the `@Endpoint` omits `input` and the method takes no body.
 
 ### Declare process order + dependencies on the endpoint
 
