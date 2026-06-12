@@ -751,12 +751,14 @@ input at `{{members:create.memberId}}` once and every re-run upstream feeds it
 fresh. Dependency cycles are called out in a banner instead of leaving steps
 mutely locked.
 
-Composed modules **snap together** without any of that typing: when another
-module in the app has an endpoint whose output carries the same field name as
-a declared `$input`, the Module-inputs row shows a dim **`auto:
+Composed modules **snap together** without any of that typing: when an
+endpoint anywhere in the app (this module included) outputs a declared
+`$input`'s field — **exactly, or as its plural collection** (`$tableName` ←
+`tableNames[0]`) — the Module-inputs row shows a dim **`auto:
 <module>:<endpoint>`** note instead of the amber "not set" state, and the
-input is satisfied automatically from that producer's shared capture — run the
-producer once (in any tab) and the consumer module just works. Typing a value
+input is satisfied automatically from that producer's capture — run the
+producer once (in any tab) and the consumer just works. Endpoints that merely
+echo the field they consume never count as producers. Typing a value
 overrides the auto-wiring; clearing it back to empty returns to auto.
 Endpoints declared `stub: true` carry an amber **`stub`** chip marking them as
 generated stand-ins minting placeholder values, not part of the real process.
@@ -820,7 +822,9 @@ session as it lands (status, response body, timing, captures + the shared
 scope) and its node settles green/red while the rest keep pulsing. One source
 of truth for run state: colors survive a reload, **already-open cake tabs
 update live**, and opening a cake afterwards finds its steps green with
-responses and captures pre-filled.
+responses and captures pre-filled. When steps fail, **heal takes over**: each
+failed name in the banner is a deep-link into its cake step, where the heal
+panel is already lit with that run's actual failure.
 Clicking a node **deep-links** into that module's cake with the step expanded
 (`/docs/<module>#<endpointId>`). (Underscore-prefixed so a module named "map"
 can still own `/docs/map`.)
@@ -865,11 +869,25 @@ await exerciseEndpoints({ api, flow: "card", overrides: { seeds: { memberId: "m-
 - **`$`-input resolution order.** A `"$name"` bind resolves from
   `overrides.seeds[name]` first — a seed always wins. With no seed,
   **composition fulfills the contract**: the value falls back to the first
-  captured response (in run order) owning a same-named field, from any
-  composed module. The runner adds a synthetic dependency edge from the
-  consumer to that producer, so the producer runs first and the fallback hits
-  on pass one — a composed app with stub or real producers needs no seeds at
-  all.
+  captured response (in run order) owning a same-named field — or, failing
+  that, a same-named **plural collection** (`name + "s"`) whose first scalar
+  element supplies the value (`$tableName` ← `discover.tableNames[0]`): the
+  list→item pattern auto-wires. The runner adds a synthetic dependency edge
+  from the consumer to that producer, so the producer runs first and the
+  fallback hits on pass one — a composed app with stub or real producers
+  needs no seeds at all. **Echoes never count as producers**: an endpoint
+  that consumes the very field it outputs can't bootstrap a value, so it is
+  excluded from producer matching, `unresolvedInputs`, and map edges.
+- **Required fields with real examples are filled.** A required input field
+  with no seed/bind fills from its schema `example` when one is declared
+  (typed zeros like `0`/`false` count; the empty-string placeholder doesn't) —
+  matching the cake's generated bodies.
+- **Transient retries** (`retry: { slugs, delayMs?, attempts? }`): a failed
+  response whose `body.message` matches a listed slug is re-attempted after a
+  delay instead of failing the walk. `/docs/_run` derives the slugs from the
+  project's heal rules (`retry` actions in `fixtures/heal-rules.json`) plus
+  the built-in transients (`timeout`, `rate-limited`) — heal knowledge feeds
+  the runner, not just the UI.
 - **`rateLimit`** (`{ requestsPerSecond?, maxConcurrency? }`) and
   **`maxIterations`** (default 5).
 - **Report rows** carry `{ id, module, method, path, ok, status, attempts,

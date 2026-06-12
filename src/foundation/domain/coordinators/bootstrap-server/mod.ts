@@ -260,12 +260,19 @@ export class BootstrapServer {
       for (const { moduleName, endpoints } of moduleEntries) {
         for (const ep of endpoints) {
           for (const field of ep.outputFields) {
+            // An echo (consumes the field it outputs) can never bootstrap a value — not a
+            // producer for contract purposes.
+            if (ep.inputFields.includes(field) || field in ep.bind) continue;
             if (!producersByField.has(field)) {
               producersByField.set(field, `${moduleName}:${ep.id}`);
             }
           }
         }
       }
+      // `$name` is satisfiable by an exact `name` output, or by a `name + "s"` collection whose
+      // first element supplies the value (the plural half of the composition contract).
+      const producerForInput = (name: string): string | undefined =>
+        producersByField.get(name) ?? producersByField.get(`${name}s`);
       // App-wide endpoint index for the cake's Module-setup picker: setup can call ANY composed
       // module's endpoint to put the whole app in a known state, so every page gets the slim
       // request-building slice (schema, binds, params) of every endpoint in the app.
@@ -284,16 +291,17 @@ export class BootstrapServer {
 
       for (const { path, doc, moduleName, endpoints } of moduleEntries) {
         const title = `API · ${moduleName}`;
-        // This module's $inputs that a DIFFERENT composed module produces — names with no
-        // producer (or only this module itself) stay explicit-only.
+        // This module's $inputs that some composed endpoint (any module, including this one)
+        // genuinely produces — exact field or its plural collection; echoes never count. The
+        // consumer itself can't be its own producer. Names with no producer stay explicit-only.
         const producers: Record<string, string> = {};
         for (const ep of endpoints) {
           for (const ref of Object.values(ep.bind)) {
             for (const candidate of Array.isArray(ref) ? ref : [ref]) {
               if (!candidate.startsWith("$")) continue;
               const name = candidate.slice(1);
-              const producer = producersByField.get(name);
-              if (!producer || producer.startsWith(`${moduleName}:`)) continue;
+              const producer = producerForInput(name);
+              if (!producer || producer === `${moduleName}:${ep.id}`) continue;
               producers[name] = producer;
             }
           }
@@ -408,9 +416,26 @@ export class BootstrapServer {
               }
             }
           }
+          // Transient slugs come from the project's own heal rules: any slug with a `retry`
+          // action (or a `note` with retryAfter) is declared "worth re-attempting", and the
+          // built-in transients always are. The walk then waits-and-retries those instead of
+          // failing — heal knowledge feeding the runner, not just the UI.
+          const healRules = await readHealRules();
+          const retrySlugs = new Set<string>(["timeout", "rate-limited"]);
+          for (const [slug, rules] of Object.entries(healRules.slugs)) {
+            for (const rule of rules) {
+              if (
+                rule.kind === "retry" ||
+                (rule.kind === "note" && rule.retryAfter)
+              ) {
+                retrySlugs.add(slug);
+              }
+            }
+          }
           const opts: ExerciseOptions = {
             api: runTarget,
             flow: typeof body.flow === "string" ? body.flow : scenarioFlow,
+            retry: { slugs: [...retrySlugs] },
             orderBy: body.orderBy === "module" ? "module" : undefined,
             skip: Array.isArray(body.skip)
               ? (body.skip as unknown[]).filter((s): s is string =>

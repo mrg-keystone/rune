@@ -229,3 +229,60 @@ Deno.test("/docs/_run - stream:true emits ndjson result lines then a done summar
     await server.stop();
   }
 });
+
+// ── heal rules feed the runner: retry slugs ───────────────────────────────────
+
+class LeaseDto {
+  @ApiProperty()
+  done!: boolean;
+}
+
+@EndpointController("lease")
+class LeaseController {
+  static failures = 0;
+  @Endpoint({ path: "resolve", output: LeaseDto, order: 1 })
+  resolve(): LeaseDto {
+    if (LeaseController.failures > 0) {
+      LeaseController.failures--;
+      throw new Error("lease-held");
+    }
+    return { done: true };
+  }
+}
+const LeaseModule = endpointModule("Lease", [LeaseController]);
+
+Deno.test("/docs/_run - a slug the heal rules mark retryable is re-attempted, not failed", async () => {
+  const dir = await Deno.makeTempDir();
+  Deno.env.set("KEEP_FIXTURES_DIR", dir);
+  await Deno.writeTextFile(
+    `${dir}/heal-rules.json`,
+    JSON.stringify({
+      v: 1,
+      slugs: {
+        "lease-held": [{
+          kind: "retry",
+          why: "another tick holds the lease — it expires in seconds",
+        }],
+      },
+    }),
+  );
+  LeaseController.failures = 2;
+  const server = await bootstrapServer("lease-app", LeaseModule);
+  try {
+    const res = await server.handler(
+      jsonReq("/docs/_run", {}),
+      conn(loopback),
+    );
+    const report = await res.json();
+    assertEquals(report.ok, true);
+    const resolve = report.passed.find((r: { id: string }) =>
+      r.id === "resolve"
+    );
+    // Two lease-held failures absorbed by heal-informed retries within the walk.
+    assert(resolve.attempts >= 3, `expected retries: ${resolve.attempts}`);
+  } finally {
+    await server.stop();
+    Deno.env.delete("KEEP_FIXTURES_DIR");
+    await Deno.remove(dir, { recursive: true });
+  }
+});

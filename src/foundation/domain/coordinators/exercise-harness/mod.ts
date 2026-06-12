@@ -82,6 +82,14 @@ export interface ExerciseOptions {
    */
   onResult?: (result: EndpointResult) => void;
   /**
+   * Transient-failure policy: when a failed response's `body.message` matches one of these
+   * slugs, the step is re-attempted after `delayMs` (default 800) up to `attempts` (default 3)
+   * extra times before counting as failed — a lease expiring in seconds shouldn't fail a walk.
+   * `/docs/_run` derives the slugs from the project's heal rules (`retry` actions) plus the
+   * built-in transients.
+   */
+  retry?: { slugs: string[]; delayMs?: number; attempts?: number };
+  /**
    * Build the run order, cycles, and unresolved $inputs without sending a single request — a
    * cheap graph pre-flight. The report's passed/failed/optionalFailed are empty, iterations 0.
    */
@@ -138,6 +146,27 @@ type Transport = (
  */
 type RunEndpoint = SpecEndpoint & { bareId: string; module: string };
 
+/**
+ * The first scalar element of a captured `name + "s"` array — the **plural fallback** half of
+ * the composition contract. Real APIs produce collections (`tableNames: [...]`) that consumers
+ * take one element of (`$tableName`); exact-name matching alone can never bridge that.
+ */
+function pluralElement(
+  src: Record<string, unknown>,
+  name: string,
+): { found: boolean; value?: unknown } {
+  const arr = src[name + "s"];
+  if (Array.isArray(arr) && arr.length) {
+    const v = arr[0];
+    if (
+      typeof v === "string" || typeof v === "number" || typeof v === "boolean"
+    ) {
+      return { found: true, value: v };
+    }
+  }
+  return { found: false };
+}
+
 /** Assemble an endpoint's request values from seeds → bind (captured outputs) → per-endpoint overrides. */
 function buildValues(
   ep: RunEndpoint,
@@ -158,7 +187,8 @@ function buildValues(
         // External input: `"$name"` declares a value produced outside this module (another
         // service, a human). The runner's variable scope is `overrides.seeds` — it always
         // wins. When no seed exists, composition fulfills the contract: the first captured
-        // response (insertion = run order) owning a same-named field provides the value.
+        // response (insertion = run order) owning a same-named field — or, failing that, a
+        // same-named PLURAL array whose first element supplies the value.
         const name = candidate.slice(1);
         if (overrides.seeds && name in overrides.seeds) {
           values[field] = overrides.seeds[name];
@@ -172,6 +202,16 @@ function buildValues(
             break;
           }
         }
+        if (!captured) {
+          for (const src of store.values()) {
+            const plural = pluralElement(src, name);
+            if (plural.found) {
+              values[field] = plural.value;
+              captured = true;
+              break;
+            }
+          }
+        }
         if (captured) break;
         continue;
       }
@@ -182,6 +222,17 @@ function buildValues(
         break;
       }
     }
+  }
+  // Required fields still empty fill from the schema's example — but only a REAL one (a typed
+  // zero like 0/false counts; the empty-string placeholder does not), mirroring the cake's
+  // generated bodies. rune emits these from spec literals; without one the field stays absent
+  // and the server's validation names it precisely.
+  for (const f of ep.inputSchema) {
+    if (!f.required || f.name in values) continue;
+    if (f.example === undefined || f.example === null || f.example === "") {
+      continue;
+    }
+    values[f.name] = f.example;
   }
   Object.assign(values, overrides.byEndpoint?.[ep.bareId] ?? {});
   // Coerce assembled values to their declared schema type (mirrors the cake client): a clean
@@ -306,6 +357,9 @@ export async function exerciseEndpoints(
   const overrides = opts.overrides ?? {};
   const maxIterations = opts.maxIterations ?? 5;
   const limiter = createLimiter(opts.rateLimit);
+  const retrySlugs = new Set(opts.retry?.slugs ?? []);
+  const retryDelayMs = opts.retry?.delayMs ?? 800;
+  const retryAttempts = opts.retry?.attempts ?? 3;
 
   // Flatten endpoints across all module docs. Two composed modules can expose the same
   // operationId (e.g. both have `create`); the working `id` is namespaced `<module>:<op>` so
@@ -379,11 +433,22 @@ export async function exerciseEndpoints(
   const producersByField = new Map<string, string[]>();
   for (const ep of endpoints) {
     for (const field of ep.outputFields) {
+      // An ECHO — an endpoint that consumes the very field it outputs — can never bootstrap a
+      // value, so it is not a producer: counting it gave dry runs a false "all resolvable" and
+      // synthetic edges a useless target. (At run time an echo's capture still resolves refs —
+      // this exclusion is only for the static contract indexes.)
+      if (ep.inputFields.includes(field) || field in ep.bind) continue;
       const list = producersByField.get(field) ?? [];
       if (!list.includes(ep.id)) list.push(ep.id);
       producersByField.set(field, list);
     }
   }
+  // Producers able to satisfy `$name`: exact-field producers first, else producers of the
+  // `name + "s"` collection (the plural fallback buildValues resolves from).
+  const producersForInput = (name: string): string[] => {
+    const exact = producersByField.get(name) ?? [];
+    return exact.length ? exact : producersByField.get(name + "s") ?? [];
+  };
   const byId = new Map(endpoints.map((e) => [e.id, e]));
   // A synthetic edge `consumer ← producer` closes a cycle iff the producer already
   // (transitively) depends on the consumer — ordering the producer first would then be
@@ -413,7 +478,7 @@ export async function exerciseEndpoints(
         // Prefer a producer that isn't the consumer itself and isn't already downstream of it
         // (which would make the synthetic edge close a cycle). With none, fall back to whatever
         // capture exists at run time; processOrder keeps a clean topological order either way.
-        const producers = (producersByField.get(candidate.slice(1)) ?? [])
+        const producers = producersForInput(candidate.slice(1))
           .filter((p) => p !== ep.id && !producerDependsOnConsumer(p, ep.id));
         if (producers.length === 0) continue;
         if (producers.some((p) => ep.dependsOn.flat().includes(p))) continue;
@@ -437,8 +502,8 @@ export async function exerciseEndpoints(
   // Report bare operationIds (working ids are module-namespaced); each result's `module`
   // disambiguates same-named handlers across composed modules.
   const bare = (key: string) => byId.get(key)?.bareId ?? key;
-  // External $inputs nothing will satisfy (no seed, no composed producer) — the static signal a
-  // dry run surfaces (e.g. an unset $fid) before any request fires.
+  // External $inputs nothing will satisfy (no seed, no non-echo exact/plural producer) — the
+  // static signal a dry run surfaces (e.g. an unset $fid) before any request fires.
   const unresolvedInputs = (() => {
     const seeds = overrides.seeds ?? {};
     const unmet = new Set<string>();
@@ -447,7 +512,7 @@ export async function exerciseEndpoints(
         for (const candidate of Array.isArray(ref) ? ref : [ref]) {
           if (!candidate.startsWith("$")) continue;
           const name = candidate.slice(1);
-          if (name in seeds || producersByField.has(name)) continue;
+          if (name in seeds || producersForInput(name).length) continue;
           unmet.add("$" + name);
         }
       }
@@ -493,12 +558,36 @@ export async function exerciseEndpoints(
         const values = buildValues(ep, store, overrides);
         const path = resolvePath(ep.path, values);
         const result = results.get(id)!;
-        result.attempts++;
-        const t0 = performance.now();
-        const call = await limiter.run(() =>
-          transport(ep.method, path, values)
-        );
-        result.ms = Math.round(performance.now() - t0);
+        const attempt = async () => {
+          result.attempts++;
+          const t0 = performance.now();
+          const call = await limiter.run(() =>
+            transport(ep.method, path, values)
+          );
+          result.ms = Math.round(performance.now() - t0);
+          return call;
+        };
+        let call = await attempt();
+        // Transient slugs (declared retryable by the project's heal rules, or built-in) get
+        // delayed re-attempts before counting as failed — "the lease expires in seconds" should
+        // cost seconds, not the walk.
+        if (retrySlugs.size) {
+          for (
+            let extra = 0;
+            extra < retryAttempts &&
+            !(call.status >= 200 && call.status < 300);
+            extra++
+          ) {
+            const body = call.body as { message?: unknown } | null;
+            const slug = body && typeof body === "object" &&
+                typeof body.message === "string"
+              ? body.message
+              : null;
+            if (!slug || !retrySlugs.has(slug)) break;
+            await new Promise((r) => setTimeout(r, retryDelayMs));
+            call = await attempt();
+          }
+        }
         result.status = call.status;
         result.error = call.error;
         result.body = call.body;

@@ -925,3 +925,85 @@ Deno.test({
     }
   },
 });
+
+// ── the plural composition contract: tableNames[0] → $tableName, zero typing ──
+
+class DiscoverOutDto {
+  @ApiProperty()
+  tableNames!: string[];
+}
+class EnableDto {
+  @ApiProperty()
+  tableName!: string;
+}
+class EnabledDto {
+  @ApiProperty()
+  tableName!: string; // echo — must not be treated as the producer
+  @ApiProperty()
+  enabled!: boolean;
+}
+
+@EndpointController("catalog")
+class CatalogController {
+  @Endpoint({ path: "discover", output: DiscoverOutDto, order: 1 })
+  discover(): DiscoverOutDto {
+    return { tableNames: ["alpha", "beta"] };
+  }
+  @Endpoint({
+    path: "enable",
+    input: EnableDto,
+    output: EnabledDto,
+    order: 2,
+    bind: { tableName: "$tableName" },
+  })
+  enable(body: EnableDto): EnabledDto {
+    if (!body?.tableName) throw new Error("tableName should not be empty");
+    return { tableName: body.tableName, enabled: true };
+  }
+}
+const CatalogModule = endpointModule("Catalog", [CatalogController]);
+
+Deno.test({
+  name:
+    "emulator — $tableName auto-fills from the tableNames collection, zero typing (headless chromium)",
+  ignore: !enabled,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const port = 9625;
+    const server = await bootstrapServer("catalog", CatalogModule, { port });
+    await server.listen();
+    const { chromium } = await import("#playwright");
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.goto(`http://localhost:${port}/docs/catalog`);
+
+      // The Module-inputs card knows the collection producer (NOT the echo): auto, not amber.
+      await page.locator("#inputs-card").waitFor();
+      const auto = await page.locator("#inputs .input-auto").textContent();
+      assert(
+        auto?.includes("catalog:discover"),
+        `tableName should be auto-wired to the collection producer: ${auto}`,
+      );
+      assertEquals(await page.locator("#inputs .var-name.unset").count(), 0);
+
+      // Run all with NO typing at all: discover runs, $tableName resolves to tableNames[0],
+      // enable goes green with "alpha".
+      await page.locator("#runall").click();
+      await page.waitForFunction(
+        "document.querySelectorAll('li .dot.ok').length === 2",
+        { timeout: 8000 },
+      );
+      const resp = await page.locator('li[data-id="enable"] .resp')
+        .textContent();
+      assert(
+        resp?.includes('"alpha"'),
+        `enable should have received the collection's first element: ${resp}`,
+      );
+    } finally {
+      await browser.close();
+      await server.stop();
+    }
+  },
+});

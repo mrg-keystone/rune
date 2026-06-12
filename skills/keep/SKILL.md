@@ -117,8 +117,10 @@ To compose several modules into one app, pass an array:
   - `"otherEndpointId.outputField"` — fill from a captured response;
   - `"$name"` — an **external input** nothing in this module produces. The
     cake shows it under a "Module inputs" card; the headless runner reads
-    `overrides.seeds[name]`; a composed producer of a same-named field
-    satisfies it automatically (seed/typed value always wins).
+    `overrides.seeds[name]`; a composed producer of a same-named field — or
+    a same-named **plural collection** (`$tableName` ← `tableNames[0]`) —
+    satisfies it automatically (seed/typed value always wins; endpoints that
+    echo the field they consume never count as producers).
   - `["payCard.paymentId", "payCash.paymentId"]` — alternatives, first
     resolvable wins (the join after a branch).
 - `flows: string | string[]` — named XOR branches. Untagged endpoints belong
@@ -180,8 +182,10 @@ await exerciseEndpoints({
 ```
 
 `$name` resolution order: `overrides.seeds[name]` first; with no seed, the
-first captured response owning a same-named field (from any composed module)
-— the runner adds a synthetic edge so producers run before consumers. A
+first captured response owning a same-named field, then one owning the
+**plural collection** (`name + "s"`, first element) — from any composed
+module; echoes never count — the runner adds a synthetic edge so producers
+run before consumers. A
 composed app with real or stub producers needs **no seeds at all**.
 
 4. Against a *running* server, **`POST /docs/_run`** (localhost-only, like

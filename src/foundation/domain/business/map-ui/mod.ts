@@ -99,12 +99,18 @@ export function buildMapModel(docs: SwaggerDocEntry[]): MapModel {
   for (const { moduleName, endpoints } of moduleEntries) {
     for (const ep of endpoints) {
       for (const field of ep.outputFields) {
+        // An echo (consumes the field it outputs) can never bootstrap a value — not a producer.
+        if (ep.inputFields.includes(field) || field in ep.bind) continue;
         if (!producersByField.has(field)) {
           producersByField.set(field, `${moduleName}:${ep.id}`);
         }
       }
     }
   }
+  // `$name` is satisfiable by an exact `name` output, or a `name + "s"` collection (first
+  // element) — the plural half of the composition contract.
+  const producerForInput = (name: string): string | undefined =>
+    producersByField.get(name) ?? producersByField.get(`${name}s`);
 
   const nodes: MapNode[] = [];
   const nodeByKey = new Map<string, MapNode>();
@@ -148,12 +154,12 @@ export function buildMapModel(docs: SwaggerDocEntry[]): MapModel {
       for (const [field, ref] of Object.entries(ep.bind)) {
         for (const candidate of Array.isArray(ref) ? ref : [ref]) {
           if (candidate.startsWith("$")) {
-            // A declared external input: a producer in ANOTHER module draws the dashed
-            // contract edge; with no producer (or only this module itself) it stays an
-            // explicit-only input — an amber badge on the consumer node.
+            // A declared external input: a genuine producer (any module — exact field or its
+            // plural collection, echoes never count) draws the dashed contract edge; with no
+            // producer it stays an explicit-only input — an amber badge on the consumer node.
             const name = candidate.slice(1);
-            const producer = producersByField.get(name);
-            if (producer && !producer.startsWith(`${moduleName}:`)) {
+            const producer = producerForInput(name);
+            if (producer && producer !== consumer.key) {
               const producerNode = nodeByKey.get(producer)!;
               addEdge({
                 from: producer,
@@ -164,7 +170,7 @@ export function buildMapModel(docs: SwaggerDocEntry[]): MapModel {
                   ? consumer.flows
                   : producerNode.flows,
               });
-            } else if (!consumer.inputs.includes(name)) {
+            } else if (!producer && !consumer.inputs.includes(name)) {
               consumer.inputs.push(name);
             }
           } else {

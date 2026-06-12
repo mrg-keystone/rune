@@ -245,3 +245,106 @@ Deno.test("mapShellHtml - spec text cannot break out of the inline script tag", 
   assert(!html.includes("</script><script>alert"));
   assertStringIncludes(html, "\\u003c/script>");
 });
+
+// ── the plural/echo contract on the map ───────────────────────────────────────
+// A producer returns a COLLECTION (tableNames); the consumer needs ONE element ($tableName) and
+// echoes it back. The echo must not count as the producer; the plural collection must.
+const catalogDoc: OpenApiDocument = {
+  info: { title: "catalog" },
+  paths: {
+    "/catalog/discover": {
+      post: {
+        operationId: "discover",
+        responses: {
+          "200": {
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/DiscoverOutDto" },
+              },
+            },
+          },
+        },
+        "x-keep-process": {
+          order: 1,
+          dependsOn: [],
+          bind: {},
+          method: "post",
+          path: "discover",
+        },
+      },
+    },
+    "/catalog/enable": {
+      post: {
+        operationId: "enable",
+        requestBody: {
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/EnableDto" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/EnabledDto" },
+              },
+            },
+          },
+        },
+        "x-keep-process": {
+          order: 2,
+          dependsOn: [],
+          bind: { tableName: "$tableName" },
+          method: "post",
+          path: "enable",
+        },
+      },
+    },
+  },
+  components: {
+    schemas: {
+      DiscoverOutDto: {
+        properties: {
+          tableNames: { type: "array", items: { type: "string" } },
+        },
+      },
+      EnableDto: { properties: { tableName: { type: "string" } } },
+      EnabledDto: {
+        properties: {
+          tableName: { type: "string" },
+          enabled: { type: "boolean" },
+        },
+      },
+    },
+  },
+};
+
+Deno.test("buildMapModel - a plural collection producer draws the $input edge; the echo does not", () => {
+  const model = buildMapModel([{ path: "/catalog", doc: catalogDoc }]);
+  const input = model.edges.find((e) => e.kind === "input");
+  // The dashed contract edge comes from the COLLECTION producer (same module is fine now) —
+  // never from `enable` itself, whose tableName output is an echo of its own input.
+  assertEquals(input, {
+    from: "catalog:discover",
+    to: "catalog:enable",
+    label: "$tableName",
+    kind: "input",
+    flows: [],
+  });
+  // Produced ⇒ no amber unfulfilled-input badge.
+  const enable = model.nodes.find((n) => n.key === "catalog:enable")!;
+  assertEquals(enable.inputs, []);
+  // And the producer sits in an earlier column than its consumer.
+  const discover = model.nodes.find((n) => n.key === "catalog:discover")!;
+  assert(
+    enable.x > discover.x,
+    "consumer must sit right of the plural producer",
+  );
+});
+
+Deno.test("mapShellHtml - failed run-all steps deep-link into their cake (heal takeover)", () => {
+  const html = mapShellHtml("checkout", docs);
+  assertStringIncludes(html, "Click a step to open its cake");
+  assertStringIncludes(html, "the heal panel has the failure loaded");
+});

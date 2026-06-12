@@ -261,9 +261,12 @@ while the rest keep pulsing. The cake sessions stay the one source of truth:
 map colors survive a reload, **already-open cake tabs absorb the writes live**
 (they merge external `status`/`meta`/`captured` changes to their own session
 key — local edits always win), and a cake opened afterwards has its steps
-green with responses pre-filled. Clicking a node deep-links to
-`/docs/<module>#<endpointId>` with that step expanded. (Underscore-prefixed
-so a module named "map" can still own `/docs/map`.)
+green with responses pre-filled. When steps fail, **heal takes over**: each
+failed name in the banner deep-links into its cake step, where the heal panel
+is already lit with that run's failure (rules first, Ask Claude for the long
+tail). Clicking a node deep-links to `/docs/<module>#<endpointId>` with that
+step expanded. (Underscore-prefixed so a module named "map" can still own
+`/docs/map`.)
 
 ## Dev mode — `KEEP_DEV` and `/docs/_dev`
 
@@ -311,15 +314,28 @@ Options:
   with `MANUAL_KEY`).
 - `rateLimit` — `{ requestsPerSecond?, maxConcurrency? }`.
 - `maxIterations` — default 5.
+- `retry` — `{ slugs, delayMs?, attempts? }`: a failed response whose
+  `body.message` matches a listed slug is re-attempted after a delay (default
+  800 ms × 3) instead of failing the walk. `/docs/_run` derives the slugs from
+  the project's heal rules (`retry` actions / `note` + `retryAfter`) plus the
+  built-in transients (`timeout`, `rate-limited`).
+- `onResult` — per-attempt streaming callback (what `stream: true` forwards).
 - `dryRun` — build `order` / `cycles` / `unresolvedInputs` (external `$inputs`
   with no seed and no producer) without sending a request; the run loop is
   skipped and `passed`/`failed` come back empty.
 
 `$name` resolution order: `seeds[name]` → first captured response (run
-order) owning a same-named field, from any composed module. The runner adds
-a **synthetic dependency edge** consumer→producer so producers run first and
-the fallback hits on pass one. `failed` excludes `optional` endpoints (those
-land in `optionalFailed`).
+order) owning a same-named field → first captured response owning a
+same-named **plural collection** (`name + "s"`), whose first scalar element
+supplies the value (`$tableName` ← `discover.tableNames[0]` — the list→item
+pattern auto-wires). The runner adds a **synthetic dependency edge**
+consumer→producer so producers run first and the fallback hits on pass one.
+**Echoes never count as producers** — an endpoint that consumes the field it
+outputs can't bootstrap a value, so it's excluded from producer matching,
+`unresolvedInputs`, the cake's `auto:` index, and map edges. Required fields
+with no seed/bind fill from a REAL schema `example` (typed zeros count, the
+empty-string placeholder doesn't). `failed` excludes `optional` endpoints
+(those land in `optionalFailed`).
 
 Composition acceptance pattern (proves the snap-together contract — this is
 keep's own e2e pattern):

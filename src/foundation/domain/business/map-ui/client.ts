@@ -39,6 +39,7 @@ export const mapCss: string = String.raw`
   #banner.err{background:#2a1215;border-color:#6e2a2f;color:#ffb4ad}
   #banner.ok{background:#11261a;border-color:#2b5e3c;color:#7ee787}
   #banner.info{background:#13233a;border-color:#33547e;color:#9ecbff}
+  #banner a{color:inherit;text-decoration:underline;font-family:ui-monospace,monospace}
 
   #legend{display:flex;gap:1.1rem;align-items:center;flex-wrap:wrap;padding:.55rem 1.25rem;border-bottom:1px solid #161a23;font-size:.72rem;color:#6b7394}
   .lg{display:inline-flex;align-items:center;gap:.35rem;white-space:nowrap}
@@ -324,10 +325,16 @@ export const mapClientJs: string = String.raw`
         return esc(c.join(" → "));
       }).join("; ") + ".");
     } else if (nfail) {
+      // Heal takes over from here: each failed step links straight into its cake step, where
+      // the heal panel is already lit with this run's actual failure (the results were written
+      // into the cake sessions as they streamed).
       banner("err", nfail + " step" + (nfail === 1 ? "" : "s") + " failed: " +
         (rep.failed || []).map(function (row) {
-          return esc((row.module ? row.module + ":" : "") + row.id);
-        }).join(", ") + "." + (nopt ? " " + nopt + " optional also failed." : ""));
+          var label = esc((row.module ? row.module + ":" : "") + row.id);
+          if (!row.module) return label;
+          return '<a href="' + esc(prefix + "/docs/" + row.module + "#" + encodeURIComponent(row.id)) + '">' + label + "</a>";
+        }).join(", ") + "." + (nopt ? " " + nopt + " optional also failed." : "") +
+        " Click a step to open its cake — the heal panel has the failure loaded.");
     } else {
       banner("ok", "All " + (rep.passed || 0) + " steps passed." +
         (nopt ? " " + nopt + " optional failed." : ""));

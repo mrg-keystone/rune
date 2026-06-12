@@ -362,6 +362,25 @@ export const emulatorClientJs: string = String.raw`
     }
     return { found: true, value: cur };
   }
+  function fieldFrom(obj, name) {
+    if (obj !== null && typeof obj === "object" && !Array.isArray(obj) && hasOwn(obj, name)) {
+      return { found: true, value: obj[name] };
+    }
+    return { found: false };
+  }
+  // The plural half of the composition contract: a capture's name+"s" array supplies the
+  // value for $name via its first scalar element (tableNames[0] -> $tableName).
+  function pluralFrom(obj, name) {
+    if (obj === null || typeof obj !== "object" || Array.isArray(obj)) return { found: false };
+    var arr = obj[name + "s"];
+    if (Array.isArray(arr) && arr.length) {
+      var v = arr[0];
+      if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+        return { found: true, value: v };
+      }
+    }
+    return { found: false };
+  }
   function lookupRef(ref) {
     // {{a.x || b.y}} — alternatives (the join after a branch): first resolvable wins.
     if (ref.indexOf("||") >= 0) {
@@ -374,8 +393,10 @@ export const emulatorClientJs: string = String.raw`
     }
     // {{$name}} — a declared external input. An explicit shared-environment value wins; when
     // it's unset (or cleared back to ""), the composed-app contract kicks in: a producer
-    // endpoint in another module whose output carries this same field name (DATA.producers,
-    // computed server-side) satisfies it from its shared capture.
+    // endpoint whose output carries this field name — exactly, or as a name+"s" collection
+    // whose first element supplies the value (the plural half of the contract). The declared
+    // producer (DATA.producers, computed server-side) is checked first, then every capture in
+    // scope: exact fields anywhere beat plural fallbacks anywhere.
     if (ref.charAt(0) === "$") {
       var name = ref.slice(1);
       if (hasOwn(globals.vars, name) && globals.vars[name] !== "") {
@@ -383,10 +404,18 @@ export const emulatorClientJs: string = String.raw`
       }
       var producerId = PRODUCERS[name];
       if (producerId && hasOwn(globals.captured, producerId)) {
-        var cap = globals.captured[producerId];
-        if (cap !== null && typeof cap === "object" && hasOwn(cap, name)) {
-          return { found: true, value: cap[name] };
-        }
+        var hit = fieldFrom(globals.captured[producerId], name);
+        if (!hit.found) hit = pluralFrom(globals.captured[producerId], name);
+        if (hit.found) return hit;
+      }
+      var entries = allCaptureEntries();
+      for (var ei = 0; ei < entries.length; ei++) {
+        var exact = fieldFrom(entries[ei].obj, name);
+        if (exact.found) return exact;
+      }
+      for (var pi = 0; pi < entries.length; pi++) {
+        var plural = pluralFrom(entries[pi].obj, name);
+        if (plural.found) return plural;
       }
       return hasOwn(globals.vars, name) ? { found: true, value: globals.vars[name] } : { found: false };
     }
@@ -1718,7 +1747,7 @@ export const emulatorClientJs: string = String.raw`
         widget +
       "</div>" +
       (auto
-        ? '<div class="input-auto" title="another module\'s endpoint outputs this field — its capture fills the input; type a value to override">auto: ' +
+        ? '<div class="input-auto" title="a composed endpoint outputs this field (exactly, or as its plural collection) — its capture fills the input; type a value to override">auto: ' +
           esc(PRODUCERS[name]) + "." + esc(name) + "</div>"
         : "");
     }).join("");

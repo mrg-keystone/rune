@@ -602,3 +602,204 @@ Deno.test("exerciseEndpoints - skip excludes steps from the walk and the report 
     await server.stop();
   }
 });
+
+// ── the run-all-green contract: plural fallback, echo awareness, retry, examples ──
+// These replicate the generalized failure shapes of real generated apps: a producer returns a
+// COLLECTION (tableNames), consumers need ONE element ($tableName) and echo it back; a step
+// fails transiently (lease-held); a required field has only its schema example.
+
+class DiscoverOutDto {
+  @ApiProperty()
+  tableNames!: string[];
+}
+class EnableDto {
+  @ApiProperty()
+  tableName!: string;
+}
+class EnabledDto {
+  @ApiProperty()
+  tableName!: string; // echoes its input — must NOT count as the producer
+  @ApiProperty()
+  enabled!: boolean;
+}
+
+@EndpointController("catalog")
+class CatalogController {
+  @Endpoint({ path: "discover", output: DiscoverOutDto, order: 1 })
+  discover(): DiscoverOutDto {
+    return { tableNames: ["alpha", "beta"] };
+  }
+  @Endpoint({
+    path: "enable",
+    input: EnableDto,
+    output: EnabledDto,
+    order: 2,
+    bind: { tableName: "$tableName" },
+  })
+  enable(body: EnableDto): EnabledDto {
+    if (!body?.tableName) throw new Error("tableName should not be empty");
+    return { tableName: body.tableName, enabled: true };
+  }
+}
+const CatalogModule = endpointModule("Catalog", [CatalogController]);
+
+@EndpointController("echo-only")
+class EchoOnlyController {
+  // The ONLY thing outputting tableName is this echo — nothing can bootstrap the value.
+  @Endpoint({
+    input: EnableDto,
+    output: EnabledDto,
+    order: 1,
+    bind: { tableName: "$tableName" },
+  })
+  enable(body: EnableDto): EnabledDto {
+    return { tableName: body?.tableName ?? "", enabled: true };
+  }
+}
+const EchoOnlyModule = endpointModule("EchoOnly", [EchoOnlyController]);
+
+Deno.test("exerciseEndpoints - $name resolves from a captured plural collection's first element", async () => {
+  const server = await bootstrapServer("plural-app", CatalogModule);
+  try {
+    const report = await exerciseEndpoints({ api: server });
+    assertEquals(report.failed, []);
+    // The plural producer got the synthetic ordering edge: discover runs first, pass one.
+    assert(
+      report.order.indexOf("discover") < report.order.indexOf("enable"),
+      `producer must run first: ${report.order}`,
+    );
+    const enable = report.passed.find((r) => r.id === "enable")!;
+    assertEquals(enable.attempts, 1);
+    assertEquals((enable.body as { tableName: string }).tableName, "alpha");
+  } finally {
+    await server.stop();
+  }
+});
+
+Deno.test("exerciseEndpoints - an echo is not a producer: dry run names the unresolved $input", async () => {
+  const server = await bootstrapServer("echo-app", EchoOnlyModule);
+  try {
+    const report = await exerciseEndpoints({ api: server, dryRun: true });
+    // Before the echo fix this reported [] — the pre-flight lied.
+    assertEquals(report.unresolvedInputs, ["$tableName"]);
+  } finally {
+    await server.stop();
+  }
+});
+
+Deno.test("exerciseEndpoints - retry slugs get delayed re-attempts instead of failing the walk", async () => {
+  // Fabricated target: fails twice with the slug, then passes — like a single-writer lease.
+  let calls = 0;
+  const api = {
+    backend: {
+      fetch: (_path: string, _init?: RequestInit) => {
+        calls++;
+        return Promise.resolve(
+          calls < 3
+            ? new Response(
+              JSON.stringify({ status: 500, message: "lease-held" }),
+              {
+                status: 500,
+                headers: { "content-type": "application/json" },
+              },
+            )
+            : Response.json({ done: true }),
+        );
+      },
+    },
+    docs: [{
+      path: "/write",
+      doc: {
+        info: { title: "write" },
+        paths: {
+          "/write/resolve": {
+            post: {
+              operationId: "resolve",
+              responses: {},
+              "x-keep-process": {
+                order: 1,
+                dependsOn: [],
+                bind: {},
+                method: "post",
+                path: "resolve",
+              },
+            },
+          },
+        },
+      },
+    }],
+    // deno-lint-ignore no-explicit-any
+  } as any;
+  const report = await exerciseEndpoints({
+    api,
+    retry: { slugs: ["lease-held"], delayMs: 5, attempts: 3 },
+  });
+  assertEquals(report.failed, []);
+  const resolve = report.passed.find((r) => r.id === "resolve")!;
+  assertEquals(resolve.attempts, 3);
+
+  // Without the slug declared retryable, the same failure stays failed in pass one's attempts.
+  calls = 0;
+  const cold = await exerciseEndpoints({ api, maxIterations: 1 });
+  assertEquals(cold.failed.map((r) => r.id), ["resolve"]);
+});
+
+Deno.test("exerciseEndpoints - required unbound fields fill from a REAL schema example", async () => {
+  // Fabricated target: the doc declares a required field with a meaningful example and one with
+  // the empty-string placeholder — only the real example is sent.
+  let seenBody: Record<string, unknown> = {};
+  const api = {
+    backend: {
+      fetch: (_path: string, init?: RequestInit) => {
+        seenBody = JSON.parse(String(init?.body ?? "{}"));
+        return Promise.resolve(Response.json({ ok: true }));
+      },
+    },
+    docs: [{
+      path: "/geo",
+      doc: {
+        info: { title: "geo" },
+        paths: {
+          "/geo/search": {
+            post: {
+              operationId: "search",
+              requestBody: {
+                content: {
+                  "application/json": {
+                    schema: { $ref: "#/components/schemas/SearchDto" },
+                  },
+                },
+              },
+              responses: {},
+              "x-keep-process": {
+                order: 1,
+                dependsOn: [],
+                bind: {},
+                method: "post",
+                path: "search",
+              },
+            },
+          },
+        },
+        components: {
+          schemas: {
+            SearchDto: {
+              required: ["region", "query"],
+              properties: {
+                region: { type: "string", example: "eu-west" },
+                query: { type: "string" }, // zero-value example "" — must stay absent
+              },
+            },
+          },
+        },
+      },
+    }],
+    // deno-lint-ignore no-explicit-any
+  } as any;
+  await exerciseEndpoints({ api });
+  assertEquals(seenBody.region, "eu-west");
+  assert(
+    !("query" in seenBody),
+    "empty-string placeholder examples must not be sent",
+  );
+});
