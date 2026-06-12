@@ -1,8 +1,11 @@
 name: Publish to JSR
 
-# Publishing is the org-wide reusable workflow (validate -> settle in-flight
-# -> next version -> bump -> registry-watched publish). All the hang/version
-# defenses live there: see mrg-keystone/actions README.
+# Both halves are org reusable workflows (mrg-keystone/actions):
+#   - jsr-publish: validate -> settle in-flight -> next version -> bump ->
+#     registry-watched publish (all the hang/version defenses live there).
+#   - gh-release: each skills/<name>/ dir ships as <name>-skill.tar.gz on the
+#     rolling `latest` release, plus the installer, version-matched to the
+#     JSR publish that just landed.
 on:
   push:
     branches:
@@ -17,48 +20,11 @@ jobs:
     secrets:
       JSR_TOKEN: ${{ secrets.JSR_TOKEN }}
 
-  # Ship each skills/<name>/ dir (SKILL.md + references/) as a rolling
-  # `latest` GitHub release — one tarball per skill, plus the installer.
-  # `curl …/releases/download/latest/install.sh | sh` then installs the skill
-  # version-matched to what just published. Repos without a skills/ dir skip
-  # this job entirely.
   skill-release:
     needs: publish
-    runs-on: ubuntu-latest
+    uses: mrg-keystone/actions/.github/workflows/gh-release.yml@main
     permissions:
       contents: write
-    steps:
-      - uses: actions/checkout@v4
-      # hashFiles() is not allowed in a job-level `if` (no workspace exists at
-      # job scheduling time), so the skills/ check lives in a step instead —
-      # repos without skills/ no-op here.
-      - name: Detect skills
-        id: detect
-        run: |
-          if ls skills/*/SKILL.md >/dev/null 2>&1; then
-            echo "found=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "found=false" >> "$GITHUB_OUTPUT"
-            echo "no skills/ dir — nothing to release"
-          fi
-      - name: Pack one tarball per skill
-        if: steps.detect.outputs.found == 'true'
-        run: |
-          mkdir -p dist
-          for d in skills/*/; do
-            n="$(basename "$d")"
-            tar -C "$d" -czf "dist/$n-skill.tar.gz" .
-          done
-          ls -l dist/
-      - name: Publish skill + installer (rolling `latest` release)
-        if: steps.detect.outputs.found == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest
-          name: latest (main)
-          make_latest: true
-          prerelease: false
-          files: |
-            dist/*-skill.tar.gz
-            scripts/install.sh
-          fail_on_unmatched_files: true
+    with:
+      extra-assets: |
+        scripts/install.sh
