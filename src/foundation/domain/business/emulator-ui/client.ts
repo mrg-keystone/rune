@@ -176,6 +176,15 @@ export const emulatorCss: string = String.raw`
   .setup-name{color:#7aa2f7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
   .setup-actions{display:flex;gap:.2rem;flex:none}
   .setup-body{width:100%;color:#6b7394;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:1.4rem}
+  .su-dot{width:.5rem;height:.5rem;border-radius:50%;flex:none;background:#12151d;border:1px solid #2c3142}
+  .su-dot.ok{background:#7ee787;border-color:#2b5e3c}
+  .su-dot.fail{background:#ff7b72;border-color:#6e2a2f}
+  .su-dot.run{background:#7aa2f7;border-color:#33547e;animation:kpulse .9s ease-in-out infinite}
+  @keyframes kpulse{0%,100%{opacity:.45}50%{opacity:1}}
+  .setup-edit{width:100%;padding-left:1.4rem}
+  .setup-edit textarea{min-height:3rem;font-size:.74rem}
+  .setup-edit .params input{width:8rem}
+  #setup-add{display:block;width:100%;margin-top:.5rem;background:#0e1117;color:#9aa5ce;border:1px solid #2c3142;border-radius:5px;font-size:.74rem;padding:.25rem .35rem}
   #run-setup{margin-top:.5rem}
 
   #scenarios .empty{font-size:.74rem;color:#4d5468;font-style:italic}
@@ -229,11 +238,17 @@ export const emulatorClientJs: string = String.raw`
   var PRODUCERS = DATA.producers || {};
   var byId = {};
   EPS.forEach(function (ep) { byId[ep.id] = ep; });
+  // Every endpoint in the composed app (any module) — the Module-setup picker's universe.
+  var APP_EPS = DATA.appEndpoints || [];
+  var appByKey = {};
+  APP_EPS.forEach(function (ae) { appByKey[ae.module + ":" + ae.id] = ae; });
 
   // ── paths ──────────────────────────────────────────────────────────────────
   var pagePath = location.pathname.replace(/\/+$/, "");
+  // Mount prefix ("" standalone, "/api" under Fresh) — other modules' session keys carry it.
+  var pathPrefix = pagePath.replace(/\/docs\/[^/]+$/, "");
   // App root: works standalone (/docs/<m>) and mounted under a prefix (/api/docs/<m>).
-  var appRoot = location.origin + pagePath.replace(/\/docs\/[^/]+$/, "");
+  var appRoot = location.origin + pathPrefix;
   document.getElementById("link-swagger").href = pagePath + "/swagger";
   // The sibling system map: /docs/<m> -> /docs/_map (the prefix-mounted form holds too).
   document.getElementById("link-map").href = pagePath.replace(/\/[^/]+$/, "/_map");
@@ -1746,7 +1761,22 @@ export const emulatorClientJs: string = String.raw`
     });
   }
   // ── module setup panel ──────────────────────────────────────────────────────
+  // Setup steps may target ANY composed module's endpoint (s.module qualifies; absent = this
+  // module) — setup's job is putting the whole app in a known state, not just this page.
   var setupEl = document.getElementById("setup");
+  var setupRun = {};    // transient per-load: index -> "run" | "ok" | "fail"
+  var setupOpen = {};   // transient: index -> frozen-request editor expanded
+  // The endpoint a setup step targets: this page's full endpoint for local steps, the slim
+  // app-index entry for foreign ones. Null = the endpoint no longer exists anywhere.
+  function setupEndpointFor(s) {
+    if (s.module && s.module !== MODULE) return appByKey[s.module + ":" + s.id] || null;
+    return byId[s.id] || null;
+  }
+  function setupLabel(s) {
+    var ae = setupEndpointFor(s);
+    var qualifier = s.module && s.module !== MODULE ? s.module + ": " : "";
+    return ae ? qualifier + ae.method + " " + ae.path : qualifier + s.id;
+  }
   function renderSetup() {
     var steps = state.setup || [];
     var runBtn = document.getElementById("run-setup");
@@ -1754,24 +1784,41 @@ export const emulatorClientJs: string = String.raw`
     var saveBtn = document.getElementById("save-fixtures");
     if (saveBtn) saveBtn.disabled = runningAll;
     if (!setupEl) return;
+    // Never rebuild the rows out from under an actively-edited frozen request.
+    if (setupEl.contains(document.activeElement)) return;
     if (!steps.length) {
-      setupEl.innerHTML = '<div class="empty">No setup steps yet. Open a step and press <b>+ setup</b> in its Request panel to snapshot it here.</div>';
+      setupEl.innerHTML = '<div class="empty">No setup steps yet. Pick any endpoint below (any module), or press <b>+ setup</b> in a step’s Request panel.</div>';
       return;
     }
     setupEl.innerHTML = steps.map(function (s, i) {
-      var ep = byId[s.id];
-      var missing = !ep;
+      var ae = setupEndpointFor(s);
+      var missing = !ae;
+      var st = setupRun[i] || "";
+      var hasParams = !!(ae && (ae.params || []).length);
+      var editable = s.body !== undefined || hasParams;
       var preview = (s.body || "").replace(/\s+/g, " ").trim().slice(0, 80);
       return '<div class="setup-row' + (missing ? " missing" : "") + '" data-i="' + i + '">' +
+        '<span class="su-dot' + (st ? " " + st : "") + '"></span>' +
         '<span class="setup-num">' + (i + 1) + "</span>" +
-        '<span class="setup-name" title="' + esc(s.id) + (missing ? " — no longer in this module" : "") + '">' + esc(setupLabel(s)) + "</span>" +
+        '<span class="setup-name" title="' + esc((s.module ? s.module + ":" : "") + s.id) + (missing ? " — endpoint no longer exists" : "") + '">' + esc(setupLabel(s)) + "</span>" +
         '<span class="setup-actions">' +
           '<button class="mini su-up"' + (i === 0 ? " disabled" : "") + ' title="move earlier">▲</button>' +
           '<button class="mini su-down"' + (i === steps.length - 1 ? " disabled" : "") + ' title="move later">▼</button>' +
+          (editable ? '<button class="mini su-edit" title="edit this step’s frozen request">' + (setupOpen[i] ? "close" : "edit") + "</button>" : "") +
           '<button class="mini su-run"' + (missing || runningAll ? " disabled" : "") + ' title="run this setup step now">run</button>' +
           '<button class="mini su-del" title="remove from setup">×</button>' +
         "</span>" +
-        (preview ? '<span class="setup-body" title="' + esc(s.body || "") + '">' + esc(preview) + "</span>" : "") +
+        (setupOpen[i]
+          ? '<div class="setup-edit">' +
+            (hasParams
+              ? '<div class="params">' + ae.params.map(function (prm) {
+                return "<label>" + esc(prm.name) + (prm.required ? " *" : "") +
+                  ' <input data-suparam="' + esc(prm.name) + '" value="' + esc((s.params || {})[prm.name] || "") + '" placeholder="' + esc(prm.in) + '"></label>';
+              }).join("") + "</div>"
+              : "") +
+            (s.body !== undefined ? '<textarea class="su-body" spellcheck="false"></textarea>' : "") +
+            "</div>"
+          : (preview ? '<span class="setup-body" title="' + esc(s.body || "") + '">' + esc(preview) + "</span>" : "")) +
       "</div>";
     }).join("");
     setupEl.querySelectorAll(".setup-row").forEach(function (row) {
@@ -1780,34 +1827,108 @@ export const emulatorClientJs: string = String.raw`
       var down = row.querySelector(".su-down");
       var run = row.querySelector(".su-run");
       var del = row.querySelector(".su-del");
+      var edit = row.querySelector(".su-edit");
       if (up) up.addEventListener("click", function () { swapSetup(i, i - 1); });
       if (down) down.addEventListener("click", function () { swapSetup(i, i + 1); });
-      if (del) del.addEventListener("click", function () { state.setup.splice(i, 1); save(); renderSetup(); });
+      if (del) {
+        del.addEventListener("click", function () {
+          state.setup.splice(i, 1);
+          setupRun = {};   // indices shifted — transient UI state restarts clean
+          setupOpen = {};
+          save();
+          renderSetup();
+        });
+      }
       if (run) run.addEventListener("click", function () { runOneSetup(i); });
+      if (edit) edit.addEventListener("click", function () { setupOpen[i] = !setupOpen[i]; renderSetup(); });
+      var ta = row.querySelector(".su-body");
+      if (ta) {
+        ta.value = state.setup[i].body || "";
+        autosize(ta);
+        ta.addEventListener("input", function () {
+          state.setup[i].body = ta.value;   // edits save without re-render — focus is sacred
+          autosize(ta);
+          save();
+        });
+      }
+      row.querySelectorAll("input[data-suparam]").forEach(function (inp) {
+        inp.addEventListener("input", function () {
+          (state.setup[i].params = state.setup[i].params || {})[inp.dataset.suparam] = inp.value;
+          save();
+        });
+      });
     });
   }
   function swapSetup(a, b) {
     var s = state.setup;
     if (!s || b < 0 || b >= s.length) return;
     var tmp = s[a]; s[a] = s[b]; s[b] = tmp;
+    setupRun = {};
+    setupOpen = {};
     save();
     renderSetup();
   }
+  // The picker: every endpoint in the composed app, grouped by module. Choosing one appends a
+  // setup step with a generated body whose bind refs are module-qualified (a foreign step's
+  // "create.id" must read {{thatmodule:create.id}} from the shared scope, not this page's).
+  function setupDefaultBody(ae) {
+    function qualify(ref) {
+      if (ref.charAt(0) === "$") return ref;
+      return ae.module === MODULE ? ref : ae.module + ":" + ref;
+    }
+    function refText(v) {
+      var refs = Array.isArray(v) ? v : [v];
+      return "{{" + refs.map(qualify).join(" || ") + "}}";
+    }
+    var body = {};
+    (ae.inputSchema || []).forEach(function (f) {
+      if (ae.bind && ae.bind[f.name]) body[f.name] = refText(ae.bind[f.name]);
+      else if (f.required) body[f.name] = f.example;
+    });
+    Object.keys(ae.bind || {}).forEach(function (k) {
+      if (!(k in body)) body[k] = refText(ae.bind[k]);
+    });
+    return body;
+  }
+  function populateSetupPicker() {
+    var sel = document.getElementById("setup-add");
+    if (!sel) return;
+    if (!APP_EPS.length) { sel.hidden = true; return; }
+    var byModule = {};
+    APP_EPS.forEach(function (ae) { (byModule[ae.module] = byModule[ae.module] || []).push(ae); });
+    var html = '<option value="">+ add step from app…</option>';
+    Object.keys(byModule).sort().forEach(function (m) {
+      html += '<optgroup label="' + esc(m) + '">' + byModule[m].map(function (ae) {
+        return '<option value="' + esc(ae.module + ":" + ae.id) + '">' + esc(ae.method + " " + ae.path) + "</option>";
+      }).join("") + "</optgroup>";
+    });
+    sel.innerHTML = html;
+    sel.addEventListener("change", function () {
+      var ae = appByKey[sel.value];
+      sel.value = "";
+      if (!ae) return;
+      state.setup = state.setup || [];
+      var step = { id: ae.id };
+      if (ae.module !== MODULE) step.module = ae.module;
+      if (ae.method !== "GET") step.body = JSON.stringify(setupDefaultBody(ae), null, 2);
+      state.setup.push(step);
+      save();
+      renderSetup();
+    });
+  }
   function runOneSetup(i) {
     var s = (state.setup || [])[i];
-    if (!s) return;
-    var ep = byId[s.id];
-    if (!ep || runningAll) return;
+    if (!s || runningAll || !setupEndpointFor(s)) return;
     runningAll = true;
     banner(null);
+    setupRun[i] = "run";
     updateAll();
-    send(ep, true, { body: s.body, params: s.params }).then(function (r) {
+    runSetupStep(s).then(function (r) {
+      setupRun[i] = r.ok ? "ok" : "fail";
       runningAll = false;
       updateAll();
-      if (r.ok) { banner("ok", "Setup step ran — " + esc(setupLabel(s)) + "."); return; }
-      var meta = state.meta[ep.id];
-      var why = r.blocked ? r.blocked : (meta && meta.http ? "HTTP " + meta.http : "network error");
-      banner("err", "Setup step failed — " + esc(setupLabel(s)) + " — " + esc(why) + ".");
+      if (r.ok) banner("ok", "Setup step ran — " + esc(setupLabel(s)) + ".");
+      else banner("err", "Setup step failed — " + esc(setupLabel(s)) + " — " + esc(r.why) + ".");
     });
   }
 
@@ -2099,27 +2220,109 @@ export const emulatorClientJs: string = String.raw`
     });
   }
 
-  // ── module setup: pre-run calls that put the system in a known state ────────
-  function setupLabel(s) {
-    var ep = byId[s.id];
-    return ep ? ep.method + " " + ep.path : s.id;
+  // ── module setup: pre-run calls that put the WHOLE APP in a known state ─────
+  // A step targeting this module fires through send() (main row updates as usual). A step
+  // targeting another module fires directly and writes its result into THAT module's session +
+  // the shared capture scope (same write-back shape as the system map's Run all), so every page
+  // agrees on what happened.
+  function writeForeignResult(module, id, st, meta) {
+    var key = "keep:emulator:" + pathPrefix + "/docs/" + module;
+    var session = null;
+    try {
+      var parsed = JSON.parse(localStorage.getItem(key));
+      if (parsed && parsed.v === 1) session = parsed;
+    } catch (e) { /* corrupted session is replaced */ }
+    if (!session) session = freshState();
+    ["status", "captured", "meta"].forEach(function (k) { if (!session[k]) session[k] = {}; });
+    session.status[id] = st;
+    session.meta[id] = meta;
+    if (st === "ok" && meta.body !== null && typeof meta.body === "object") {
+      session.captured[id] = meta.body;
+      globals.captured[module + ":" + id] = meta.body;
+      saveGlobals();
+    }
+    session.savedAt = Date.now();
+    try { localStorage.setItem(key, JSON.stringify(session)); } catch (e) { /* storage full */ }
   }
-  // Walk the setup steps in order, each firing its frozen snapshot, stopping at the first
-  // failure. cb({ ok }) when done. Callers own the runningAll lock and the final banner.
+  function sendForeign(s, ae) {
+    var missing = [];
+    var init = { method: ae.method, headers: {} };
+    if (ae.method !== "GET" && s.body !== undefined) {
+      var parsed;
+      try { parsed = JSON.parse(s.body); }
+      catch (e) { return Promise.resolve({ ok: false, why: "its request body is invalid JSON — " + e.message }); }
+      init.headers["content-type"] = "application/json";
+      init.body = JSON.stringify(resolveValue(parsed, missing));
+    }
+    var p = ae.path;
+    var query = [];
+    (ae.params || []).forEach(function (prm) {
+      var v = resolveString((s.params || {})[prm.name] || "", missing);
+      if (prm.in === "path") {
+        var enc = encodeURIComponent(String(v));
+        p = p.split("{" + prm.name + "}").join(enc);
+        var colonRe = new RegExp(":" + prm.name.replace(/[^\w]/g, "\\$&") + "(?!\\w)", "g");
+        p = p.replace(colonRe, function () { return enc; });
+      } else if (v !== "" && v !== null && v !== undefined) {
+        query.push(encodeURIComponent(prm.name) + "=" + encodeURIComponent(String(v)));
+      }
+    });
+    if (missing.length) {
+      return Promise.resolve({
+        ok: false,
+        why: missing.map(function (m) { return "{{" + m + "}}"; }).join(", ") + " cannot be resolved yet",
+      });
+    }
+    var t = token();
+    if (t) init.headers["authorization"] = "Bearer " + t;
+    var t0 = performance.now();
+    return fetch(appRoot + p + (query.length ? "?" + query.join("&") : ""), init).then(function (res) {
+      return res.text().then(function (text) {
+        var body;
+        try { body = JSON.parse(text); } catch (e) { body = text; }
+        writeForeignResult(ae.module, ae.id, res.ok ? "ok" : "fail", {
+          http: res.status,
+          ms: Math.round(performance.now() - t0),
+          body: body,
+        });
+        return { ok: res.ok, why: res.ok ? "" : "HTTP " + res.status };
+      });
+    }).catch(function (err) {
+      return { ok: false, why: err && err.message ? err.message : String(err) };
+    });
+  }
+  // Run ONE setup step wherever it lives. -> Promise<{ ok, why? }>.
+  function runSetupStep(s) {
+    var ae = setupEndpointFor(s);
+    if (!ae) return Promise.resolve({ ok: true, skipped: true });   // stale step — never blocks
+    if (s.module && s.module !== MODULE) return sendForeign(s, ae);
+    ensureRowVisible(ae);
+    return send(ae, true, { body: s.body, params: s.params }).then(function (r) {
+      if (r.ok) return { ok: true };
+      var meta = state.meta[ae.id];
+      return {
+        ok: false,
+        why: r.blocked ? r.blocked : (meta && meta.http ? "HTTP " + meta.http : "network error"),
+      };
+    });
+  }
+  // Walk the setup steps in order, stopping at the first failure. cb({ ok }) when done.
+  // Callers own the runningAll lock and the final banner.
   function runSetupSteps(cb) {
     var steps = (state.setup || []).slice();
     var j = 0;
     function next() {
       if (j >= steps.length) return cb({ ok: true });
+      var idx = j;
       var s = steps[j++];
-      var ep = byId[s.id];
-      if (!ep) return next();   // endpoint no longer in this module — skip silently
-      ensureRowVisible(ep);
-      return send(ep, true, { body: s.body, params: s.params }).then(function (r) {
+      if (!setupEndpointFor(s)) return next();
+      setupRun[idx] = "run";
+      renderSetup();
+      return runSetupStep(s).then(function (r) {
+        setupRun[idx] = r.ok ? "ok" : "fail";
+        renderSetup();
         if (r.ok) return next();
-        var meta = state.meta[ep.id];
-        var why = r.blocked ? r.blocked : (meta && meta.http ? "HTTP " + meta.http : "network error");
-        banner("err", "Stopped in setup — " + esc(setupLabel(s)) + " — " + esc(why) + ".");
+        banner("err", "Stopped in setup — " + esc(setupLabel(s)) + " — " + esc(r.why) + ".");
         return cb({ ok: false });
       });
     }
@@ -2322,6 +2525,7 @@ export const emulatorClientJs: string = String.raw`
       return c.join(" → ");
     }).join("; ")) + ". These steps wait on each other and can never unlock; fix their dependsOn.");
   }
+  populateSetupPicker();
   // Pull the saved artifact (fixtures/cake.json) and apply its setup + persisted variables, the
   // project heal rules, and the saved scenarios. Async, localhost-only; remote fetches no-op.
   loadFixtures();

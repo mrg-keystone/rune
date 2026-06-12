@@ -266,6 +266,21 @@ export class BootstrapServer {
           }
         }
       }
+      // App-wide endpoint index for the cake's Module-setup picker: setup can call ANY composed
+      // module's endpoint to put the whole app in a known state, so every page gets the slim
+      // request-building slice (schema, binds, params) of every endpoint in the app.
+      const appEndpoints = moduleEntries.flatMap(({ moduleName, endpoints }) =>
+        endpoints.map((ep) => ({
+          module: moduleName,
+          id: ep.id,
+          method: ep.method,
+          path: ep.path,
+          description: ep.description ?? "",
+          bind: ep.bind,
+          inputSchema: ep.inputSchema,
+          params: ep.params,
+        }))
+      );
 
       for (const { path, doc, moduleName, endpoints } of moduleEntries) {
         const title = `API · ${moduleName}`;
@@ -292,6 +307,7 @@ export class BootstrapServer {
             html(
               injectDocsScript(emulatorShellHtml(moduleName, doc, {
                 producers,
+                appEndpoints,
                 dev: Boolean(devStatusPath),
               })),
             ),

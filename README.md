@@ -767,11 +767,17 @@ generated stand-ins minting placeholder values, not part of the real process.
 disappears with the cache. The **Module setup** rail card is the durable
 counterpart. It holds **setup steps** — calls that put the system in a known
 state _before_ the process runs (seed a tenant, flip a flag, create a
-prerequisite record). Press **`+ setup`** in any step's Request panel to
-snapshot its current request (body and params, `{{refs}}` intact) into the
-card; reorder or remove them there, **Run setup** to fire them on their own, or
-just press **Run all** — setup runs first, then the process walk, stopping with
-a banner if a setup call fails.
+prerequisite record) — and they can target **any endpoint in the composed
+app, not just this module**: the card's picker lists every module's endpoints,
+so one cake page can stand up the whole app's state. Pick from the app
+(generated bodies qualify their refs — `{{mint:create.id}}` — so they resolve
+from the shared scope), or press **`+ setup`** in any step's Request panel to
+snapshot its current request. Each step is editable in place (frozen body +
+params), reorderable, and runnable alone; **Run setup** fires them all, and
+**Run all** runs setup first, then the process walk, stopping with a banner if
+a setup call fails. A cross-module setup step writes its result into **that
+module's** session and the shared capture scope (the same write-back the
+map's Run all uses), so every page agrees on what happened.
 
 **Save fixtures** writes the whole configuration to **`fixtures/cake.json`**:
 this module's setup steps, its pinned **expectations**, plus every environment

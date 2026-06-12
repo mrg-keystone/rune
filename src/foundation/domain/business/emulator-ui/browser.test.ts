@@ -832,3 +832,96 @@ Deno.test({
     }
   },
 });
+
+// ── app-wide setup: a setup step can call ANOTHER module's endpoint ───────────
+
+Deno.test({
+  name:
+    "emulator — app-wide setup: a cross-module setup step establishes state and persists to fixtures (headless chromium)",
+  ignore: !enabled,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const port = 9624;
+    const fixturesDir = await Deno.makeTempDir();
+    Deno.env.set("KEEP_FIXTURES_DIR", fixturesDir);
+    const server = await bootstrapServer("xsetup", [MintModule, GreetModule], {
+      port,
+    });
+    await server.listen();
+    const { chromium } = await import("#playwright");
+    const browser = await chromium.launch();
+    try {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      // greet's only step needs $memberId, which mint (a DIFFERENT module) produces.
+      await page.goto(`http://localhost:${port}/docs/greet`);
+
+      // The picker lists the whole app — pick mint's endpoint as a setup step.
+      await page.selectOption("#setup-add", "mint:mintMember");
+      await page.locator("#setup .setup-row").waitFor({ timeout: 3000 });
+      const label = await page.locator("#setup .setup-name").textContent();
+      assert(
+        label?.includes("mint:") && label?.includes("/mint/member"),
+        `setup row should carry the module qualifier: ${label}`,
+      );
+
+      // Run setup → the foreign call fires, its result lands in MINT's session + the shared
+      // scope, and greet's $memberId is satisfied without typing anything.
+      await page.locator("#run-setup").click();
+      await page.locator("#setup .su-dot.ok").waitFor({ timeout: 5000 });
+      const written = await page.evaluate<{ status: string; shared: boolean }>(
+        `(() => {
+          const s = JSON.parse(localStorage.getItem("keep:emulator:/docs/mint"));
+          const g = JSON.parse(localStorage.getItem("keep:emulator:globals"));
+          return {
+            status: s.status.mintMember,
+            shared: g.captured["mint:mintMember"].memberId === "m-42",
+          };
+        })()`,
+      );
+      assertEquals(written, { status: "ok", shared: true });
+
+      // The whole walk now passes: setup (mint) runs first, then greet's step goes green.
+      await page.locator("#runall").click();
+      await page.locator('li[data-id="hello"] .dot.ok').waitFor({
+        timeout: 8000,
+      });
+      const resp = await page.locator('li[data-id="hello"] .resp')
+        .textContent();
+      assert(
+        resp?.includes("hi m-42"),
+        `greet should have received mint's value: ${resp}`,
+      );
+
+      // Save fixtures → the artifact carries the module-qualified setup step.
+      await page.locator("#save-fixtures").click();
+      await page.locator("#banner.ok").waitFor({ timeout: 5000 });
+      const onDisk = JSON.parse(
+        await Deno.readTextFile(`${fixturesDir}/cake.json`),
+      );
+      assertEquals(onDisk.modules.greet.setup[0].id, "mintMember");
+      assertEquals(onDisk.modules.greet.setup[0].module, "mint");
+
+      // A FRESH context restores the cross-module setup from fixtures and the walk still works.
+      const fresh = await browser.newContext();
+      const page2 = await fresh.newPage();
+      await page2.goto(`http://localhost:${port}/docs/greet`);
+      await page2.locator("#setup .setup-row").waitFor({ timeout: 5000 });
+      const label2 = await page2.locator("#setup .setup-name").textContent();
+      assert(
+        label2?.includes("mint:"),
+        `restored setup lost its module: ${label2}`,
+      );
+      await page2.locator("#runall").click();
+      await page2.locator('li[data-id="hello"] .dot.ok').waitFor({
+        timeout: 8000,
+      });
+    } finally {
+      await browser.close();
+      await server.stop();
+      Deno.env.delete("KEEP_FIXTURES_DIR");
+      await Deno.remove(fixturesDir, { recursive: true });
+    }
+  },
+});

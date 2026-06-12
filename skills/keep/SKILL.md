@@ -146,7 +146,9 @@ After wiring endpoints, **prove the chain runs, don't just type-check**:
    starter; keep just executes them); its **Ask Claude** button sends the
    failure to `POST /docs/_heal` for a structured diagnosis when
    `PRIVATE_CLAUDE_URL` is set. A **Module setup** card holds pre-run calls
-   (snapshot any step with **`+ setup`**); each step's **Expect** block pins
+   targeting **any composed module's endpoint** (app-wide picker; cross-module
+   results write into that module's session + the shared scope) — or snapshot
+   a local step with **`+ setup`**; each step's **Expect** block pins
    status/body expectations so green means *right*, not just 2xx; re-runs show
    a **diff vs the previous response**. **Save fixtures** persists setup +
    expectations + persist-ticked variables to `fixtures/cake.json`

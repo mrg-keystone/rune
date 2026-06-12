@@ -14,8 +14,13 @@
 
 /** One pre-run call: an endpoint id plus the request snapshot to send (body text + path/query params). */
 export interface SetupStep {
-  /** Bare endpoint id (handler method name) within the owning module. */
+  /** Bare endpoint id (handler method name) within `module` (or the slice's owning module). */
   id: string;
+  /**
+   * The endpoint's owning module when it is NOT the slice's own — setup can call any composed
+   * module's endpoint to put the whole app in a known state. Absent ⇒ the slice's module.
+   */
+  module?: string;
   /** The request body text to send, verbatim — may still hold `{{refs}}`, resolved at send time. */
   body?: string;
   /** Path/query param values by name. */

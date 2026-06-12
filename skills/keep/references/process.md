@@ -123,13 +123,21 @@ and browser-local. Two surfaces make the deliberate configuration **durable**:
 
 - **Module setup** — a rail card of calls that put the system in a known state
   **before** the process runs (seed a tenant, flip a flag, create a
-  prerequisite). Press **`+ setup`** in any step's Request panel to snapshot
-  that request (body + params, `{{refs}}` kept and resolved at send time) as a
-  setup step; reorder/remove/run them in the card. **Run all** runs the setup
-  steps first (in order, stopping with a banner on the first failure), then the
-  normal process walk; **Run setup** fires them on their own. Setup steps share
-  the run status/captures with the main steps, so a setup call's outputs feed
-  the process via the usual `{{step.field}}`/capture machinery.
+  prerequisite). Steps can target **any composed module's endpoint**, not just
+  this page's: the card's picker lists the whole app (grouped by module);
+  picking a foreign endpoint generates a body whose bind refs are
+  module-qualified (`{{mint:create.id}}`) so they resolve from the shared
+  scope. Alternatively press **`+ setup`** in any step's Request panel to
+  snapshot that request. Steps are editable in place (frozen body + params),
+  reorderable, and individually runnable. **Run all** runs the setup steps
+  first (in order, stopping with a banner on the first failure), then the
+  normal process walk; **Run setup** fires them on their own. A local step
+  runs through the page's normal send (main row updates); a **cross-module
+  step writes its result into that module's session + the shared capture
+  scope** (the map-write-back shape), so its outputs feed `$inputs` and
+  cross-module refs immediately. In the artifact, a foreign step carries
+  `module` (`{ module, id, body?, params? }`; absent = the slice's own
+  module).
 - **persist** — each environment variable in the Variables card has a
   **`persist`** checkbox. Ticked variables are written to the artifact.
 

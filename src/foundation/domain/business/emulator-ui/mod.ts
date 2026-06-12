@@ -46,27 +46,52 @@ function escapeHtml(value: string): string {
   );
 }
 
+/** The slim request-building slice of one endpoint anywhere in the composed app. */
+export interface AppEndpoint {
+  module: string;
+  id: string;
+  method: string;
+  path: string;
+  description: string;
+  bind: SpecEndpoint["bind"];
+  inputSchema: SpecEndpoint["inputSchema"];
+  params: SpecEndpoint["params"];
+}
+
 /**
  * Build the self-contained emulator HTML page for a module.
  *
  * `opts.producers` is the composed-app contract index for THIS module's declared `$inputs`:
  * input name → `"<module>:<endpointId>"` of an endpoint (in another composed module) whose
  * output carries a same-named field. The client falls back to that producer's shared capture
- * when the input has no explicit value. `opts.dev` appends the live-reload poller (the server
- * registered `/docs/_dev` because it booted under `KEEP_DEV`).
+ * when the input has no explicit value. `opts.appEndpoints` is the whole composed app's
+ * endpoint index — the Module-setup picker offers every endpoint, any module, so setup can
+ * establish app-wide state. `opts.dev` appends the live-reload poller (the server registered
+ * `/docs/_dev` because it booted under `KEEP_DEV`).
  */
 export function emulatorShellHtml(
   title: string,
   doc: OpenApiDocument,
-  opts: { producers?: Record<string, string>; dev?: boolean } = {},
+  opts: {
+    producers?: Record<string, string>;
+    appEndpoints?: AppEndpoint[];
+    dev?: boolean;
+  } = {},
 ): string {
   const endpoints = orderedEndpoints(doc);
   // Cycles can't be ordered or unlocked — surface them in the page instead of leaving the
   // steps mutely locked forever.
   const { cycles } = processOrder(endpointsFromDoc(doc));
   const producers = opts.producers ?? {};
+  const appEndpoints = opts.appEndpoints ?? [];
   // `<` is escaped so spec-sourced text (descriptions…) can never close the inline script tag.
-  const payload = JSON.stringify({ title, endpoints, cycles, producers })
+  const payload = JSON.stringify({
+    title,
+    endpoints,
+    cycles,
+    producers,
+    appEndpoints,
+  })
     .replace(
       /</g,
       "\\u003c",
@@ -106,15 +131,17 @@ export function emulatorShellHtml(
     </div>
     <div class="railcard" id="setup-card">
       <div class="railhead">Module setup
-        <button class="mini" id="save-fixtures" title="write setup steps + persisted variables to fixtures/cake.json">Save fixtures</button>
+        <button class="mini" id="save-fixtures" title="write setup steps + expectations + persisted variables to fixtures/cake.json">Save fixtures</button>
       </div>
       <div id="setup"></div>
+      <select id="setup-add" title="add any endpoint in the app — any module — as a setup step"></select>
       <button id="run-setup" class="mini" title="run all setup steps now (they also run before Run all)">Run setup</button>
       <div class="hint">
-        Calls that put the system in a known state <b>before</b> the process runs. Add one from a
-        step's Request panel (<code>+ setup</code>); <b>Save fixtures</b> writes them — plus any
-        variable you mark <code>persist</code> — to <code>fixtures/cake.json</code>, so the config
-        persists and can be checked in.
+        Calls that put the <b>whole app</b> in a known state before the process runs — pick any
+        module's endpoint above, or snapshot one of this page's steps with <code>+ setup</code>.
+        <b>Save fixtures</b> writes them — plus expectations and any variable you mark
+        <code>persist</code> — to <code>fixtures/cake.json</code>, so the config persists and can
+        be checked in.
       </div>
     </div>
     <div class="railcard" id="scenarios-card">

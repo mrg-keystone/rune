@@ -1,5 +1,9 @@
 import { assert, assertEquals, assertStringIncludes } from "#assert";
-import { emulatorShellHtml, orderedEndpoints } from "./mod.ts";
+import {
+  type AppEndpoint,
+  emulatorShellHtml,
+  orderedEndpoints,
+} from "./mod.ts";
 import type { OpenApiDocument } from "@types";
 
 // A two-endpoint cake-style doc: create (order 1) → fetch (order 2, depends on create, binds id).
@@ -124,6 +128,42 @@ Deno.test("emulatorShellHtml - per-route copy button + collapsed run-all follow"
   // Run-all keeps boxes collapsed and scrolls the active/stopped step into view rather than
   // auto-expanding it (the follow-without-expand helper).
   assertStringIncludes(html, "ensureRowVisible");
+});
+
+Deno.test("emulatorShellHtml - app-wide setup picker: embeds the composed endpoint index", () => {
+  const appEndpoints: AppEndpoint[] = [
+    {
+      module: "users",
+      id: "create",
+      method: "POST",
+      path: "/users",
+      description: "",
+      bind: {},
+      inputSchema: [
+        { name: "name", type: "string", required: false, example: "" },
+      ],
+      params: [],
+    },
+    {
+      module: "billing",
+      id: "charge",
+      method: "POST",
+      path: "/billing/charge",
+      description: "",
+      bind: { userId: "create.id" },
+      inputSchema: [
+        { name: "userId", type: "string", required: true, example: "" },
+      ],
+      params: [],
+    },
+  ];
+  const html = emulatorShellHtml("Users", doc, { appEndpoints });
+  // The picker element + the foreign module's endpoint riding the payload.
+  assertStringIncludes(html, 'id="setup-add"');
+  assertStringIncludes(html, '"module":"billing"');
+  assertStringIncludes(html, '"id":"charge"');
+  // Without the option the index is still present — just empty.
+  assertStringIncludes(emulatorShellHtml("Users", doc), '"appEndpoints":[]');
 });
 
 Deno.test("emulatorShellHtml - module setup card, persist checkboxes, and fixtures wiring", () => {

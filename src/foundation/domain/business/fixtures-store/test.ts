@@ -233,3 +233,19 @@ Deno.test("readScenarios - missing directory yields []", async () => {
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("normalize/merge - a module-qualified setup step survives the round-trip", () => {
+  const merged = mergeFixtures(emptyFixtures(), {
+    module: "greet",
+    setup: [
+      { id: "hello" }, // own module — no qualifier
+      { id: "mintMember", module: "mint", body: "{}" }, // cross-module setup
+    ],
+  });
+  assertEquals(merged.modules.greet.setup, [
+    { id: "hello" },
+    { id: "mintMember", module: "mint", body: "{}" },
+  ]);
+  const round = normalizeFixtures(JSON.parse(JSON.stringify(merged)));
+  assertEquals(round.modules.greet.setup[1].module, "mint");
+});
