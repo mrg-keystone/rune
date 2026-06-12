@@ -44,8 +44,12 @@ export interface EndpointOptions {
   output?: Type;
   /** Position in the process order shown by the emulator (ascending). */
   order?: number;
-  /** Endpoint id(s) — handler method names — that must succeed before this one is unlocked. */
-  dependsOn?: string | string[];
+  /**
+   * Endpoint id(s) — handler method names — that must succeed before this one is unlocked. An
+   * inner array is an OR-group (any member unlocks): `dependsOn: ["a", ["b", "c"]]` means
+   * `a AND (b OR c)`, mirroring `bind` alternatives.
+   */
+  dependsOn?: string | (string | string[])[];
   /**
    * Output→input wiring: `{ thisInputField: "otherEndpointId.outputField" }`. The emulator and
    * runner pre-fill this endpoint's request body from captured responses of the named endpoints.
@@ -84,7 +88,8 @@ export interface EndpointOptions {
 /** Normalized process metadata attached to each `@Endpoint` handler. */
 export interface ProcessMetadata {
   order?: number;
-  dependsOn: string[];
+  /** Normalized dependsOn — an inner array is an OR-group (any member unlocks). */
+  dependsOn: (string | string[])[];
   bind: Record<string, string | string[]>;
   flows: string[];
   optional: boolean;
@@ -138,7 +143,12 @@ export function Endpoint(opts: EndpointOptions = {}): MethodDecorator {
       v == null ? [] : Array.isArray(v) ? v : [v];
     const meta: ProcessMetadata = {
       order: opts.order,
-      dependsOn: toList(opts.dependsOn),
+      // Preserve OR-group arrays (don't flatten): a string → [string]; a list passes through.
+      dependsOn: opts.dependsOn == null
+        ? []
+        : Array.isArray(opts.dependsOn)
+        ? opts.dependsOn
+        : [opts.dependsOn],
       bind: opts.bind ?? {},
       flows: toList(opts.flows),
       optional: opts.optional ?? false,

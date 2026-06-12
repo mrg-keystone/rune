@@ -22,7 +22,7 @@ export const mapCss: string = String.raw`
   *{box-sizing:border-box}
   body{font-family:system-ui,sans-serif;margin:0;background:#0b0d12;color:#e6e9ef}
 
-  header{padding:.85rem 1.25rem;border-bottom:1px solid #232734;display:flex;align-items:center;gap:1rem;flex-wrap:wrap;position:sticky;top:0;background:#0b0d12e6;backdrop-filter:blur(6px);z-index:10}
+  header{padding:.85rem 1.25rem;border-bottom:1px solid #232734;display:flex;align-items:center;gap:1rem;flex-wrap:wrap;position:sticky;top:0;background:#0b0d12;z-index:10}
   header h1{font-size:1.05rem;margin:0;display:flex;align-items:baseline;gap:.5rem}
   .h-sub{color:#6b7394;font-weight:400;font-size:.85rem}
   header nav{display:flex;gap:.9rem;margin-top:.15rem}

@@ -9,7 +9,8 @@ export interface ProcessOperation {
   /** Endpoint id — the handler method name / OpenAPI operationId. */
   id: string;
   /** Ids that must run before this one. Unknown ids are ignored for ordering. */
-  dependsOn?: string[];
+  /** Ids that must run before this one. An inner array is an OR-group (any member). */
+  dependsOn?: (string | string[])[];
   /** Ascending position hint; ties and unspecified orders fall back to id. */
   order?: number;
 }
@@ -33,7 +34,7 @@ export function processOrder(ops: ProcessOperation[]): ProcessGraph {
     dependents.set(o.id, []);
   }
   for (const o of ops) {
-    for (const dep of o.dependsOn ?? []) {
+    for (const dep of (o.dependsOn ?? []).flat()) {
       if (!ids.has(dep) || dep === o.id) continue;
       dependents.get(dep)!.push(o.id);
       indegree.set(o.id, (indegree.get(o.id) ?? 0) + 1);
@@ -71,7 +72,7 @@ function findCycles(ops: ProcessOperation[], ids: Set<string>): string[][] {
   for (const id of ids) adj.set(id, []);
   const selfLoops: string[][] = [];
   for (const o of ops) {
-    for (const dep of o.dependsOn ?? []) {
+    for (const dep of (o.dependsOn ?? []).flat()) {
       if (!ids.has(dep)) continue;
       if (dep === o.id) selfLoops.push([o.id]);
       else adj.get(dep)!.push(o.id);

@@ -30,7 +30,7 @@ export interface SpecEndpoint {
   /** Spec path, app-root-relative, e.g. "/users/fetch". */
   path: string;
   order?: number;
-  dependsOn: string[];
+  dependsOn: (string | string[])[];
   /**
    * Output→input wiring: `"endpointId.field"`, `"$externalInput"`, or an array of
    * alternatives (first resolvable wins).

@@ -29,7 +29,7 @@ export const emulatorCss: string = String.raw`
   input{font:inherit;background:#0e1117;color:#e6e9ef;border:1px solid #2c3142;border-radius:5px;padding:.25rem .45rem}
   input:focus,textarea:focus{outline:none;border-color:#33547e}
 
-  header{padding:.85rem 1.25rem;border-bottom:1px solid #232734;display:flex;align-items:center;gap:1rem;flex-wrap:wrap;position:sticky;top:0;background:#0b0d12e6;backdrop-filter:blur(6px);z-index:10}
+  header{padding:.85rem 1.25rem;border-bottom:1px solid #232734;display:flex;align-items:center;gap:1rem;flex-wrap:wrap;position:sticky;top:0;background:#0b0d12;z-index:10}
   header h1{font-size:1.05rem;margin:0;display:flex;align-items:baseline;gap:.5rem}
   .h-sub{color:#6b7394;font-weight:400;font-size:.85rem}
   header nav{display:flex;gap:.9rem;margin-top:.15rem}
@@ -147,7 +147,8 @@ export const emulatorCss: string = String.raw`
   .var-val{color:#a5d6a7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
   .var-row.flash .var-val{animation:kflash 1.2s}
   @keyframes kflash{0%{background:#2b5e3c66}100%{background:transparent}}
-  .var-row input{flex:1;min-width:0;font-size:.74rem;font-family:ui-monospace,monospace;padding:.12rem .35rem}
+  .var-row input,.var-row select{flex:1;min-width:0;font-size:.74rem;font-family:ui-monospace,monospace;padding:.12rem .35rem}
+  .var-row select{background:#0e1117;color:#e6e9ef;border:1px solid #2c3142;border-radius:5px}
   #vars .empty{font-size:.74rem;color:#4d5468;font-style:italic}
   .input-auto{font-size:.68rem;color:#6b7394;font-family:ui-monospace,monospace;margin:-.05rem 0 .3rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #addvar{display:flex;gap:.35rem;margin-top:.5rem}
@@ -346,7 +347,15 @@ export const emulatorClientJs: string = String.raw`
   function defaultBodyObj(ep) {
     var body = {};
     ep.inputSchema.forEach(function (f) {
-      body[f.name] = ep.bind[f.name] ? "{{" + bindRefText(ep.bind[f.name]) + "}}" : f.example;
+      if (ep.bind[f.name]) {
+        body[f.name] = "{{" + bindRefText(ep.bind[f.name]) + "}}";
+      } else if (f.required) {
+        body[f.name] = f.example;
+      }
+      // unbound OPTIONAL fields are omitted: zero-value placeholders (0, {})
+      // fail the server's own validation (e.g. @IsPositive) or silently
+      // distort the request (a placeholder filter matches nothing). Type a
+      // value to opt in.
     });
     Object.keys(ep.bind).forEach(function (k) {
       if (!(k in body)) body[k] = "{{" + bindRefText(ep.bind[k]) + "}}";
@@ -358,12 +367,36 @@ export const emulatorClientJs: string = String.raw`
       ? state.bodies[ep.id]
       : JSON.stringify(defaultBodyObj(ep), null, 2);
   }
+  // The schema knows each top-level field's type — after ref substitution,
+  // coerce clean string forms to the declared type so "{{$qbId}}" arrives as
+  // a number no matter how the value got here (typed input, capture, env).
+  // Only unambiguous round-trips coerce; anything else is left for the
+  // server's validation to name precisely.
+  function coerceBySchema(ep, obj) {
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return obj;
+    ep.inputSchema.forEach(function (f) {
+      var v = obj[f.name];
+      if (typeof v !== "string") return;
+      if (f.type === "integer" || f.type === "number") {
+        if (v.trim() !== "" && !isNaN(Number(v))) obj[f.name] = Number(v);
+      } else if (f.type === "boolean") {
+        if (v === "true") obj[f.name] = true;
+        else if (v === "false") obj[f.name] = false;
+      } else if (f.type === "object" || f.type === "array") {
+        try { obj[f.name] = JSON.parse(v); } catch (e) { /* leave as-is */ }
+      }
+    });
+    return obj;
+  }
   function resolveBody(ep) {
     var parsed;
     try { parsed = JSON.parse(bodyText(ep)); }
     catch (e) { return { error: "invalid JSON — " + e.message, missing: [] }; }
     var missing = [];
-    return { value: resolveValue(parsed, missing), missing: missing };
+    return {
+      value: coerceBySchema(ep, resolveValue(parsed, missing)),
+      missing: missing,
+    };
   }
 
   function paramVal(ep, name) { return (state.paramVals[ep.id] || {})[name] || ""; }
@@ -435,21 +468,28 @@ export const emulatorClientJs: string = String.raw`
     component.forEach(function (id) { cycleMembers[id] = component; });
   });
 
+  // A single dependency is satisfied when it passed (or is off-flow, so it doesn't gate).
+  function depOk(d) {
+    var dep = byId[d];
+    if (dep && !inFlow(dep)) return true;
+    return state.status[d] === "ok";
+  }
   function ready(ep) {
+    // A dependsOn entry that's an ARRAY is an OR-group: satisfied when ANY member is — so
+    // "either enableRead or enableWrite unlocks select" is
+    // dependsOn: [["enableRead", "enableWrite"]]. (Flow branches already OR-join via inFlow.)
     return ep.dependsOn.every(function (d) {
-      // A dependency outside the active flow doesn't gate — that's the OR-join after a
-      // branch: depend on every alternative, unlock when the chosen one passes.
-      var dep = byId[d];
-      if (dep && !inFlow(dep)) return true;
-      return state.status[d] === "ok";
+      return Array.isArray(d) ? d.some(depOk) : depOk(d);
     });
   }
   function blockers(ep) {
-    return ep.dependsOn.filter(function (d) {
-      var dep = byId[d];
-      if (dep && !inFlow(dep)) return false;
-      return state.status[d] !== "ok";
+    var out = [];
+    ep.dependsOn.forEach(function (d) {
+      if (Array.isArray(d)) {
+        if (!d.some(depOk)) out.push(d.join(" | "));
+      } else if (!depOk(d)) out.push(d);
     });
+    return out;
   }
   function stepLabel(ep) {
     return "step " + (EPS.indexOf(ep) + 1) + " (" + ep.method + " " + ep.path + ")";
@@ -885,16 +925,32 @@ export const emulatorClientJs: string = String.raw`
   // ── module inputs (declared $name binds) ───────────────────────────────────
   // moduleInputs: varName -> [endpoint ids that need it], from every bind whose value is "$name".
   var moduleInputs = {};
+  var moduleInputTypes = {};   // $name -> { schemaType: true } across all its consumer fields
   EPS.forEach(function (ep) {
+    var typeOfField = {};
+    ep.inputSchema.forEach(function (f) { typeOfField[f.name] = f.type; });
     Object.keys(ep.bind).forEach(function (field) {
       var refs = Array.isArray(ep.bind[field]) ? ep.bind[field] : [ep.bind[field]];
       refs.forEach(function (ref) {
         if (ref.charAt(0) !== "$") return;
         var name = ref.slice(1);
         (moduleInputs[name] = moduleInputs[name] || []).push(ep.id);
+        var t = typeOfField[field];
+        if (t) (moduleInputTypes[name] = moduleInputTypes[name] || {})[t] = true;
       });
     });
   });
+  // The card knows each $input's consumers — so it knows the type. Render a number widget (and
+  // store a number) when every consumer that declares a type agrees it's numeric; the type is
+  // knowable, so a plain text box would be the lie. Mixed/unknown inputs stay text and lean on
+  // send-time coercion.
+  function inputKind(name) {
+    var ts = Object.keys(moduleInputTypes[name] || {});
+    if (ts.length === 0) return "text";
+    if (ts.every(function (t) { return t === "integer" || t === "number"; })) return "number";
+    if (ts.every(function (t) { return t === "boolean"; })) return "boolean";
+    return "text";
+  }
 
   var inputsEl = document.getElementById("inputs");
   function renderInputs() {
@@ -909,12 +965,28 @@ export const emulatorClientJs: string = String.raw`
       // from that producer's capture — dim "auto" note, not the amber unset treatment. Typing a
       // value overrides; clearing it returns to auto.
       var auto = !set && hasOwn(PRODUCERS, name);
+      var kind = inputKind(name);
+      var cur = hasOwn(globals.vars, name) ? globals.vars[name] : "";
+      var widget;
+      if (kind === "boolean") {
+        // A boolean $input is a 3-state select (unset / true / false) that stores a real boolean.
+        var bopt = function (v, label) {
+          return '<option value="' + v + '"' +
+            (String(cur) === v ? " selected" : "") + ">" + label + "</option>";
+        };
+        widget = '<select data-gvar="' + esc(name) + '" data-kind="boolean">' +
+          bopt("", auto ? "auto" : "—") + bopt("true", "true") + bopt("false", "false") +
+          "</select>";
+      } else {
+        widget = '<input' + (kind === "number" ? ' type="number"' : "") +
+          ' data-gvar="' + esc(name) + '" data-kind="' + kind + '" placeholder="' +
+          (auto ? "auto" : "not set") + '" value="' + esc(cur) + '">';
+      }
       return '<div class="var-row">' +
         '<span class="var-name' + (set || auto ? "" : " unset") + '" data-ref="$' + esc(name) +
         '" title="needed by ' + esc(moduleInputs[name].join(", ")) + ' — click to copy {{$' + esc(name) + '}}">' +
         esc(name) + "</span>" +
-        '<input data-gvar="' + esc(name) + '" placeholder="' + (auto ? "auto" : "not set") + '" value="' +
-        esc(hasOwn(globals.vars, name) ? globals.vars[name] : "") + '">' +
+        widget +
       "</div>" +
       (auto
         ? '<div class="input-auto" title="another module\'s endpoint outputs this field — its capture fills the input; type a value to override">auto: ' +
@@ -926,9 +998,23 @@ export const emulatorClientJs: string = String.raw`
     });
     inputsEl.querySelectorAll("input[data-gvar]").forEach(function (inp) {
       inp.addEventListener("input", function () {
-        globals.vars[inp.dataset.gvar] = inp.value;
+        var raw = inp.value;
+        // Numeric widgets store a real number into the shared scope so cross-page refs and the
+        // "Will send" preview are typed at the source (send-time coercion still backs it up).
+        globals.vars[inp.dataset.gvar] =
+          (inp.dataset.kind === "number" && raw !== "" && !isNaN(Number(raw)))
+            ? Number(raw)
+            : raw;
         saveGlobals();
         refreshRequests();   // not renderInputs — that would destroy this input mid-keystroke
+      });
+    });
+    inputsEl.querySelectorAll("select[data-gvar]").forEach(function (sel) {
+      sel.addEventListener("change", function () {
+        var v = sel.value;
+        globals.vars[sel.dataset.gvar] = v === "true" ? true : v === "false" ? false : "";
+        saveGlobals();
+        refreshRequests();
       });
     });
   }

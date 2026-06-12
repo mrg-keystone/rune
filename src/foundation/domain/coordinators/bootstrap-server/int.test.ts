@@ -436,3 +436,6 @@ Deno.test("bootstrapServer - accepts an array of modules (composed root, per-mod
 
   await server.stop();
 });
+
+// POST /docs/_run is covered comprehensively in run-endpoint.int.test.ts
+// (localhost report, 403 off-host + no-conn, seeds, forced cycle, dryRun).

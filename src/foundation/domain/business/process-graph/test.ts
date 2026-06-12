@@ -51,3 +51,14 @@ Deno.test("processOrder - unknown dependsOn ids are ignored", () => {
   assertEquals(order, ["x"]);
   assertEquals(cycles, []);
 });
+
+Deno.test("processOrder - an OR-group dependsOn orders after its members, no cycle", () => {
+  // `join` depends on (a OR b); for ordering it comes after both members, acyclically.
+  const { order, cycles } = processOrder([
+    { id: "a", order: 1 },
+    { id: "b", order: 2 },
+    { id: "join", order: 3, dependsOn: [["a", "b"]] },
+  ]);
+  assertEquals(order, ["a", "b", "join"]);
+  assertEquals(cycles, []);
+});

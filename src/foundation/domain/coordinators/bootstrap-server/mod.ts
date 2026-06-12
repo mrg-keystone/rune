@@ -9,7 +9,15 @@ import { PostmarkAlerter } from "@foundation/domain/data/postmark/mod.ts";
 import { createRequestLoggingMiddleware } from "@foundation/domain/business/request-logger/mod.ts";
 import { GLOBAL_GUARD, type HttpContext } from "#danet/core";
 import { createCredentialGuard } from "@foundation/domain/business/token-auth/mod.ts";
-import { createMintUi } from "@foundation/domain/business/mint-ui/mod.ts";
+import {
+  createMintUi,
+  isLocalRequest,
+} from "@foundation/domain/business/mint-ui/mod.ts";
+import type { Context } from "#hono";
+import {
+  exerciseEndpoints,
+  type ExerciseOptions,
+} from "@foundation/domain/coordinators/exercise-harness/mod.ts";
 import { appModule } from "@foundation/domain/business/endpoint-decorator/mod.ts";
 import { createFirebaseVerifier } from "@foundation/domain/business/firebase-auth/mod.ts";
 import {
@@ -186,6 +194,10 @@ export class BootstrapServer {
     const devStatusPath = Deno.env.get("KEEP_DEV");
 
     let docs: SwaggerDocEntry[] = [];
+    // Late-bound: the backend client exists only after init; /docs/_run answers
+    // 503 in the boot window instead of capturing a dead reference.
+    let runTarget: { backend: BackendClient; docs: SwaggerDocEntry[] } | null =
+      null;
     if (swagger) {
       const filters = typeof swagger === "object" ? swagger.filters : [];
       const builder = new SwaggerBuilder(...filters);
@@ -302,6 +314,66 @@ export class BootstrapServer {
             ),
           ),
       );
+      // Headless "Run all in order" over HTTP: a localhost-only door to exerciseEndpoints so an
+      // agent, CI, or the map UI can ask a running server "does the whole composed process work
+      // right now?" and get a machine-readable verdict. Same blast radius as a human clicking
+      // Run all, so it takes the /_mint trust posture exactly — loopback socket only, and
+      // in-process dispatch (which has no conn info) is denied. 503 until the backend exists.
+      adapter.registerRoute(
+        "post",
+        "/docs/_run",
+        (async (c: Context) => {
+          if (!isLocalRequest(c)) {
+            return c.json(
+              {
+                error: "Forbidden: /docs/_run is available on localhost only.",
+              },
+              403,
+            );
+          }
+          if (!runTarget) {
+            return c.json({ error: "Server still booting — try again." }, 503);
+          }
+          let body: Record<string, unknown> = {};
+          try {
+            body = (await c.req.json()) as Record<string, unknown>;
+          } catch {
+            body = {}; // empty/invalid body ⇒ exercise everything with defaults
+          }
+          const opts: ExerciseOptions = {
+            api: runTarget,
+            flow: typeof body.flow === "string" ? body.flow : undefined,
+            rateLimit: body.rateLimit as ExerciseOptions["rateLimit"],
+            maxIterations: typeof body.maxIterations === "number"
+              ? body.maxIterations
+              : undefined,
+            dryRun: body.dryRun === true,
+            overrides: {
+              seeds: body.seeds as Record<string, unknown> | undefined,
+              byEndpoint: body.byEndpoint as
+                | Record<string, Record<string, unknown>>
+                | undefined,
+            },
+          };
+          const report = await exerciseEndpoints(opts);
+          if (opts.dryRun) {
+            return c.json({
+              order: report.order,
+              cycles: report.cycles,
+              unresolvedInputs: report.unresolvedInputs,
+            });
+          }
+          return c.json({
+            ok: report.failed.length === 0 && report.cycles.length === 0,
+            passed: report.passed,
+            failed: report.failed,
+            optionalFailed: report.optionalFailed,
+            order: report.order,
+            cycles: report.cycles,
+            iterations: report.iterations,
+          });
+        }) as RouteHandler,
+      );
       // Public index: seeds the token from ?token into localStorage for the doc pages.
       adapter.registerRoute(
         "get",
@@ -371,6 +443,7 @@ export class BootstrapServer {
       `http://localhost:${port}`,
       internalKey,
     );
+    runTarget = { backend, docs };
 
     return new BootstrapServer(rootModule, adapter, backend, docs);
   }

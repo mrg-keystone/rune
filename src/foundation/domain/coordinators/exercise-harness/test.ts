@@ -423,3 +423,132 @@ Deno.test("exerciseEndpoints - a flow exercises one branch; OR-bind takes the su
     await server.stop();
   }
 });
+
+// ── composed-module id collisions (same operationId in two modules) ───────────
+
+class TagDto {
+  @ApiProperty()
+  tag!: string;
+}
+
+@EndpointController("alpha")
+class AlphaCatalog {
+  @Endpoint({ output: TagDto, order: 1 })
+  list(): TagDto {
+    return { tag: "a" };
+  }
+}
+
+@EndpointController("beta")
+class BetaCatalog {
+  @Endpoint({ output: TagDto, order: 1 })
+  list(): TagDto {
+    return { tag: "b" };
+  }
+}
+
+const AlphaModule = endpointModule("Alpha", [AlphaCatalog]);
+const BetaModule = endpointModule("Beta", [BetaCatalog]);
+
+Deno.test("exerciseEndpoints - same operationId across composed modules does not collide", async () => {
+  const server = await bootstrapServer("harness-app", [AlphaModule, BetaModule]);
+  try {
+    const report = await exerciseEndpoints({ api: server });
+    assertEquals(report.failed.map((r) => r.id), []);
+    // Keying results/captures by bare id would drop one `list`; both must run and be reported,
+    // each tagged with its own module.
+    const lists = report.passed.filter((r) => r.id === "list");
+    assertEquals(lists.length, 2);
+    assertEquals(new Set(lists.map((r) => r.module)).size, 2);
+    assertEquals(report.order.filter((id) => id === "list").length, 2);
+  } finally {
+    await server.stop();
+  }
+});
+
+// ── cycle-blind synthetic edges (mutual $input producers) ────────────────────
+
+class RingAIn {
+  @ApiProperty()
+  b!: string;
+}
+class RingAOut {
+  @ApiProperty()
+  a!: string;
+}
+class RingBIn {
+  @ApiProperty()
+  a!: string;
+}
+class RingBOut {
+  @ApiProperty()
+  b!: string;
+}
+
+@EndpointController("ring")
+class RingController {
+  // Each endpoint produces the field the other consumes as a $input — first-wins synthetic
+  // edges would wire alpha↔beta into a cycle.
+  @Endpoint({ input: RingAIn, output: RingAOut, order: 1, bind: { b: "$b" } })
+  alpha(_body: RingAIn): RingAOut {
+    return { a: "A" };
+  }
+
+  @Endpoint({ input: RingBIn, output: RingBOut, order: 2, bind: { a: "$a" } })
+  beta(_body: RingBIn): RingBOut {
+    return { b: "B" };
+  }
+}
+
+const RingModule = endpointModule("Ring", [RingController]);
+
+Deno.test("exerciseEndpoints - mutual $input producers don't create a cycle", async () => {
+  const server = await bootstrapServer("harness-app", RingModule);
+  try {
+    const report = await exerciseEndpoints({ api: server });
+    // The cycle-creating synthetic edge is skipped, so the order stays acyclic and both pass.
+    assertEquals(report.cycles, []);
+    assertEquals(report.failed.map((r) => r.id), []);
+  } finally {
+    await server.stop();
+  }
+});
+
+// ── string seeds coerced to the declared schema type ─────────────────────────
+
+class CountDto {
+  @ApiProperty()
+  n!: number;
+}
+class EchoDto {
+  @ApiProperty()
+  n!: number;
+}
+
+@EndpointController("counter")
+class CounterController {
+  @Endpoint({ input: CountDto, output: EchoDto, order: 1 })
+  echo(body: CountDto): EchoDto {
+    // Throws unless it received a real number — so a green run proves coercion happened.
+    if (typeof body.n !== "number") {
+      throw new Error("expected a number, got " + typeof body.n);
+    }
+    return { n: body.n };
+  }
+}
+
+const CounterModule = endpointModule("Counter", [CounterController]);
+
+Deno.test("exerciseEndpoints - string seeds are coerced to the declared schema type", async () => {
+  const server = await bootstrapServer("harness-app", CounterModule);
+  try {
+    // The seed is the STRING "42"; coercion makes it reach the handler as the number 42.
+    const report = await exerciseEndpoints({
+      api: server,
+      overrides: { seeds: { n: "42" } },
+    });
+    assertEquals(report.failed.map((r) => r.id), []);
+  } finally {
+    await server.stop();
+  }
+});
