@@ -161,3 +161,28 @@ Deno.test("POST /docs/_run - dryRun reports unresolved inputs without executing"
     await server.stop();
   }
 });
+
+Deno.test("POST /docs/_heal - localhost-only, 503 when no healer is configured", async () => {
+  const savedUrl = Deno.env.get("PRIVATE_CLAUDE_URL");
+  Deno.env.delete("PRIVATE_CLAUDE_URL");
+  const server = await bootstrapServer("run-app", ConsumerModule);
+  try {
+    const req = () =>
+      new Request("http://app/docs/_heal", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ endpoint: { id: "use" } }),
+      });
+    // deny-by-default: non-loopback and missing conn info both 403
+    assertEquals((await server.handler(req(), conn(offhost))).status, 403);
+    assertEquals((await server.handler(req())).status, 403);
+    // loopback but unconfigured → explicit 503 naming the env var
+    const res = await server.handler(req(), conn(loopback));
+    assertEquals(res.status, 503);
+    const body = await res.json();
+    assertEquals(body.error.includes("PRIVATE_CLAUDE_URL"), true);
+  } finally {
+    if (savedUrl !== undefined) Deno.env.set("PRIVATE_CLAUDE_URL", savedUrl);
+    await server.stop();
+  }
+});

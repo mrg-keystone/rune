@@ -18,6 +18,10 @@ import {
   exerciseEndpoints,
   type ExerciseOptions,
 } from "@foundation/domain/coordinators/exercise-harness/mod.ts";
+import {
+  callHealer,
+  healConfigured,
+} from "@foundation/domain/business/heal/mod.ts";
 import { appModule } from "@foundation/domain/business/endpoint-decorator/mod.ts";
 import { createFirebaseVerifier } from "@foundation/domain/business/firebase-auth/mod.ts";
 import {
@@ -372,6 +376,57 @@ export class BootstrapServer {
             cycles: report.cycles,
             iterations: report.iterations,
           });
+        }) as RouteHandler,
+      );
+      // Self-healing bridge: POST /docs/_heal forwards an emulator failure
+      // bundle (plus the whole composed process graph) to the configured
+      // private Claude service and returns its structured verdict. The
+      // emulator's RULES run client-side first; this is the long tail.
+      // Localhost-only — the bundle carries session data and the upstream
+      // call spends the operator's Claude plan.
+      adapter.registerRoute(
+        "post",
+        "/docs/_heal",
+        (async (c: Context) => {
+          if (!isLocalRequest(c)) {
+            return new Response(
+              "Forbidden: /docs/_heal is available on localhost only.",
+              { status: 403 },
+            );
+          }
+          if (!healConfigured()) {
+            return Response.json({
+              error:
+                "healer not configured — set PRIVATE_CLAUDE_URL (and PRIVATE_CLAUDE_TOKEN) on the server",
+            }, { status: 503 });
+          }
+          let bundle: Record<string, unknown> = {};
+          try {
+            bundle = await c.req.json();
+          } catch {
+            // empty body → heal with graph context only
+          }
+          const graph = docs.map((d) => ({
+            module: d.path,
+            endpoints: endpointsFromDoc(d.doc).map((ep) => ({
+              id: ep.id,
+              method: ep.method,
+              path: ep.path,
+              order: ep.order,
+              dependsOn: ep.dependsOn,
+              bind: ep.bind,
+              flows: ep.flows,
+              optional: ep.optional,
+              inputFields: ep.inputFields,
+              outputFields: ep.outputFields,
+            })),
+          }));
+          try {
+            return Response.json(await callHealer(bundle, graph));
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            return Response.json({ error: msg }, { status: 502 });
+          }
         }) as RouteHandler,
       );
       // Public index: seeds the token from ?token into localStorage for the doc pages.
