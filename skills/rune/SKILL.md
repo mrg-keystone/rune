@@ -243,6 +243,20 @@ output (typing a value still overrides), the headless runner falls back from
 `overrides.seeds` to the producer's capture, and the stub evaporates. No glue code,
 no config — the shared field name *is* the contract.
 
+**Heal-rules (the cake's self-healer).** When a project's endpoints declare
+fault slugs (the lowercase-hyphenated names indented under boundary steps),
+`rune sync` also emits a starter **`fixtures/heal-rules.json`** — keep's cake
+turns endpoint failures into one-click fixes from it, keyed on the failed
+response's slug. rune scaffolds one entry per slug: a `run-step` suggestion when
+the slug names a missing precondition matching another endpoint (e.g.
+`not-enabled` → run the `enable` endpoint), otherwise a `TODO` note for a human
+or LLM to enrich. It's **merge-don't-clobber**: re-syncs add new slugs, keep
+your edits byte-for-byte, and never delete a slug the spec dropped (they're
+reported as stale instead) — so hand-written rules and keep's future learned
+rules survive. `timeout`/`unauthorized` are left to keep's generic tier. The
+dir obeys `KEEP_FIXTURES_DIR` (default `fixtures/`, beside `cake.json`). Edit
+the *content* of each rule freely; let sync own the *set* of slugs.
+
 In the cake, request bodies hold `{{step.field}}` references resolved at send
 time (so hand edits are never overwritten); `{{name}}` reads a shared environment
 variable, `{{$name}}` a declared module input, and `{{module:step.field}}` another
@@ -378,6 +392,8 @@ This is one repeating cycle — **write → check → generate → fill in → v
    `mod.ts` and `config.ts` (DEV-OWNED, created once — keep's `bootstrapServer`
    wiring and env/config loading; tune name/port/options freely). Start the app
    with `deno run -A bootstrap/mod.ts` — no hand-written bootstrapping needed.
+   When endpoints declare fault slugs it also scaffolds **`fixtures/heal-rules.json`**
+   (MERGE-OWNED — new slugs added, your edits kept; see *Heal-rules* above).
 3. **Fill in the bodies.** Generated files:
    - business features & data adapters → **plain concrete classes** (`mod.ts`),
      stubbed with `throw new Error("not implemented")`, plus **one test stub per

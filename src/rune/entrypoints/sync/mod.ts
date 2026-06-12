@@ -10,6 +10,13 @@ import {
   planStubs,
   renderStubsModule,
 } from "@rune/domain/business/rune-stubs/mod.ts";
+import {
+  type HealRules,
+  mergeHealRules,
+  planHealRules,
+  readHealRules,
+  renderHealRules,
+} from "@rune/domain/business/rune-heal/mod.ts";
 import { resolveRoot } from "@rune/entrypoints/spec-root.ts";
 
 const RED = "\x1b[31m";
@@ -234,6 +241,13 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
     // created once.
     const bootNotes = await ensureBootstrap(root, ioErrors, written);
     for (const n of bootNotes) console.log(`\n  ${CYAN}${n}${RESET}`);
+
+    // Emit/merge the starter heal-rules file for keep's cake self-healer, keyed
+    // on the fault slugs the project's endpoints declare. Merge-don't-clobber,
+    // so human/LLM enrichment (and keep's future "Ask Claude" learned rules)
+    // survive re-syncs.
+    const healNotes = await ensureHealRules(root, ioErrors, written);
+    for (const n of healNotes) console.log(`\n  ${CYAN}${n}${RESET}`);
   }
 
   report(
@@ -613,6 +627,90 @@ async function ensureGhostStubs(
     }
   }
   return true;
+}
+
+// ---- heal-rules (keep cake self-healer) ------------------------------------
+//
+// A keep app's cake turns endpoint failures into one-click fixes via a
+// per-project rules file: fixtures/heal-rules.json, keyed on the fault slug
+// (the failed response body's `message`). rune knows every endpoint's slugs
+// from the spec, so it scaffolds the file — one entry per slug, pre-filling a
+// `run-step` where the slug names an obvious precondition, a TODO note
+// otherwise. The dir mirrors keep's cake config (fixtures/cake.json) and obeys
+// the same KEEP_FIXTURES_DIR override.
+
+function fixturesDir(): string {
+  const env = Deno.env.get("KEEP_FIXTURES_DIR");
+  return env && env.trim() ? env.trim() : "fixtures";
+}
+
+/** Reconcile fixtures/heal-rules.json with the project's endpoint fault slugs.
+ * Creates it when endpoints declare slugs, merges new slugs into an existing
+ * file without ever clobbering human/LLM edits, and reports slugs the spec no
+ * longer declares (kept, never auto-deleted). Returns report notes; never
+ * throws. */
+export async function ensureHealRules(
+  root: string,
+  ioErrors: string[],
+  written?: string[],
+): Promise<string[]> {
+  const notes: string[] = [];
+  const dir = fixturesDir();
+  const path = join(root, dir, "heal-rules.json");
+  const existingRaw = await readMaybe(path);
+
+  const { scaffold, slugs } = planHealRules(await collectProjectSpecs(root));
+
+  // No endpoint declares a slug and there's no file yet → nothing to do.
+  if (slugs.length === 0 && existingRaw === null) return notes;
+
+  // Parse an existing file leniently; on bad JSON or a non-heal-rules shape,
+  // leave it untouched rather than overwrite hand-authored content.
+  let existing: HealRules | null = null;
+  if (existingRaw !== null) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(existingRaw);
+    } catch {
+      notes.push(`${dir}/heal-rules.json is not valid JSON — left untouched`);
+      return notes;
+    }
+    existing = readHealRules(parsed);
+    if (existing === null) {
+      notes.push(
+        `${dir}/heal-rules.json is not a heal-rules document — left untouched`,
+      );
+      return notes;
+    }
+  }
+
+  const { result, added, stale, changed } = mergeHealRules(existing, scaffold);
+  const staleNote = stale.length > 0
+    ? `${dir}/heal-rules.json: ${stale.length} slug(s) no longer declared by any endpoint (kept — prune by hand): ${stale.join(", ")}`
+    : null;
+
+  // No new slugs (and no creation) → leave the file as-is, preserving any human
+  // formatting; only surface stale slugs.
+  if (!changed) {
+    if (staleNote) notes.push(staleNote);
+    return notes;
+  }
+
+  const content = renderHealRules(result);
+  try {
+    await Deno.mkdir(dirname(path), { recursive: true });
+    await Deno.writeTextFile(path, content);
+    written?.push(path);
+    notes.push(
+      existingRaw === null
+        ? `created ${dir}/heal-rules.json (${slugs.length} slug scaffold(s) — enrich each entry's actions/why for keep's cake healer)`
+        : `updated ${dir}/heal-rules.json (added ${added.length} new slug(s): ${added.join(", ")})`,
+    );
+    if (staleNote) notes.push(staleNote);
+  } catch (e) {
+    ioErrors.push(`${dir}/heal-rules.json: ${errMessage(e)}`);
+  }
+  return notes;
 }
 
 /** Every project spec (specs/<n>.rune, src/<m>/spec.rune, src/<m>/<m>.rune)

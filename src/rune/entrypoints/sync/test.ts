@@ -2,6 +2,7 @@ import { assertEquals, assertStringIncludes } from "#std/assert";
 import { join } from "#std/path";
 import {
   ensureBootstrap,
+  ensureHealRules,
   renderAppRegistry,
   renderMain,
   scanSurfaceModules,
@@ -305,3 +306,155 @@ async function exists(path: string): Promise<boolean> {
     return false;
   }
 }
+
+// ---- ensureHealRules --------------------------------------------------------
+
+// A keep-app spec with two endpoints: `enable` is the precondition, `write`
+// declares the `not-enabled` (precondition) + `quota-exceeded` (no-signal) slugs.
+const TABLES_SPEC = `[MOD] tables
+
+[ENT] http.enable(EnableDto): TableDto
+[ENT] http.write(WriteDto): RowDto
+
+[REQ] table.enable(EnableDto): TableDto
+    [NEW] table
+    db:table.save(TableDto): void
+      timeout
+    table.toDto(): TableDto
+
+[REQ] table.write(WriteDto): RowDto
+    [NEW] row
+    db:row.append(WriteDto): RowDto
+      not-enabled
+      quota-exceeded
+    row.toDto(): RowDto
+
+[DTO] EnableDto: name
+    the table to track
+[DTO] TableDto: tableId
+    a tracked table
+[DTO] WriteDto: tableId, payload
+    a row to write
+[DTO] RowDto: rowId
+    a written row
+
+[TYP] name: string
+    a table name
+[TYP] tableId: string
+    a table id
+[TYP] payload: string
+    row contents
+[TYP] rowId: string
+    a row id
+`;
+
+Deno.test("ensureHealRules — scaffolds fixtures/heal-rules.json from endpoint slugs", async () => {
+  const root = await tempProject();
+  try {
+    await addSpec(root, "tables", TABLES_SPEC);
+    const notes = await ensureHealRules(root, []);
+    assertEquals(notes.some((n) => n.includes("created fixtures/heal-rules.json")), true);
+    const rules = JSON.parse(
+      await Deno.readTextFile(join(root, "fixtures", "heal-rules.json")),
+    );
+    assertEquals(rules.v, 1);
+    // `timeout` is keep's reserved generic — excluded.
+    assertEquals(Object.keys(rules.slugs).sort(), ["not-enabled", "quota-exceeded"]);
+    // `not-enabled` pre-fills a run-step matching the enable endpoint.
+    assertEquals(rules.slugs["not-enabled"][0].kind, "run-step");
+    assertEquals(rules.slugs["not-enabled"][0].match, "/enable/i");
+    // `quota-exceeded` has no signal → a TODO note.
+    assertEquals(rules.slugs["quota-exceeded"][0].kind, "note");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("ensureHealRules — no endpoints / no slugs → no file", async () => {
+  const root = await tempProject();
+  try {
+    // A spec with a [REQ] but no [ENT] → no endpoint, no heal file.
+    await addSpec(
+      root,
+      "lib",
+      "[REQ] util.do(InDto): OutDto\n    [NEW] out\n    db:out.save(OutDto): void\n      boom-failure\n    out.toDto(): OutDto\n\n[DTO] InDto: x\n    in\n[DTO] OutDto: y\n    out\n\n[TYP] x: string\n    x\n[TYP] y: string\n    y\n",
+    );
+    const notes = await ensureHealRules(root, []);
+    assertEquals(notes, []);
+    assertEquals(await exists(join(root, "fixtures", "heal-rules.json")), false);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("ensureHealRules — merge keeps human edits, appends new, reports stale", async () => {
+  const root = await tempProject();
+  try {
+    await addSpec(root, "tables", TABLES_SPEC);
+    await ensureHealRules(root, []);
+    const path = join(root, "fixtures", "heal-rules.json");
+
+    // Human curates `not-enabled` and adds a slug the spec doesn't declare.
+    const curated = {
+      v: 1,
+      slugs: {
+        "not-enabled": [{ kind: "run-step", target: "enable", why: "HUMAN" }],
+        "quota-exceeded": JSON.parse(await Deno.readTextFile(path)).slugs["quota-exceeded"],
+        "hand-added": [{ kind: "note", label: "mine" }],
+      },
+    };
+    await Deno.writeTextFile(path, JSON.stringify(curated, null, 2) + "\n");
+
+    // Add a new fault to the spec, re-run.
+    await addSpec(
+      root,
+      "tables",
+      TABLES_SPEC.replace("      quota-exceeded\n", "      quota-exceeded\n      payload-too-large\n"),
+    );
+    const notes = await ensureHealRules(root, []);
+
+    const rules = JSON.parse(await Deno.readTextFile(path));
+    // human edit preserved verbatim
+    assertEquals(rules.slugs["not-enabled"], [{ kind: "run-step", target: "enable", why: "HUMAN" }]);
+    // new spec slug appended
+    assertEquals("payload-too-large" in rules.slugs, true);
+    // hand-added slug not in the spec → kept and reported stale
+    assertEquals("hand-added" in rules.slugs, true);
+    assertEquals(notes.some((n) => n.includes("added 1 new slug(s): payload-too-large")), true);
+    assertEquals(notes.some((n) => n.includes("no longer declared") && n.includes("hand-added")), true);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("ensureHealRules — a non-heal-rules file is left untouched", async () => {
+  const root = await tempProject();
+  try {
+    await addSpec(root, "tables", TABLES_SPEC);
+    const dir = join(root, "fixtures");
+    await Deno.mkdir(dir, { recursive: true });
+    const path = join(dir, "heal-rules.json");
+    await Deno.writeTextFile(path, '{ "unrelated": true }\n');
+    const notes = await ensureHealRules(root, []);
+    assertEquals(await Deno.readTextFile(path), '{ "unrelated": true }\n');
+    assertEquals(notes.some((n) => n.includes("not a heal-rules document")), true);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("ensureHealRules — honors KEEP_FIXTURES_DIR override", async () => {
+  const root = await tempProject();
+  const prev = Deno.env.get("KEEP_FIXTURES_DIR");
+  Deno.env.set("KEEP_FIXTURES_DIR", "keep-fixtures");
+  try {
+    await addSpec(root, "tables", TABLES_SPEC);
+    await ensureHealRules(root, []);
+    assertEquals(await exists(join(root, "keep-fixtures", "heal-rules.json")), true);
+    assertEquals(await exists(join(root, "fixtures", "heal-rules.json")), false);
+  } finally {
+    if (prev === undefined) Deno.env.delete("KEEP_FIXTURES_DIR");
+    else Deno.env.set("KEEP_FIXTURES_DIR", prev);
+    await Deno.remove(root, { recursive: true });
+  }
+});

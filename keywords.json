@@ -1274,6 +1274,21 @@
       }
     },
     "fixtures/": {
+      "$desc": "Test fixtures and keep cake artifacts (cake.json, heal-rules.json)",
+      "cake": {
+        "ext": [
+          ".json"
+        ],
+        "desc": "keep cake config artifact",
+        "optional": true
+      },
+      "heal-rules": {
+        "ext": [
+          ".json"
+        ],
+        "desc": "keep cake self-heal rules — rune-generated starter, merge-owned",
+        "optional": true
+      },
       "<category>/": {
         "$ignore": "*"
       }
