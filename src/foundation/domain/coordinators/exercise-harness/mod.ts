@@ -21,7 +21,7 @@ import {
   createLimiter,
   type RateLimitOptions,
 } from "@foundation/domain/business/rate-limiter/mod.ts";
-import { signToken } from "@foundation/domain/business/token/mod.ts";
+import { createInfraClient } from "@foundation/domain/business/infra-client/mod.ts";
 
 /** The relevant slice of a `bootstrapServer(...)` return. */
 export interface ExerciseTarget {
@@ -31,14 +31,10 @@ export interface ExerciseTarget {
 
 export type ExerciseAuth =
   | { kind: "in-process" }
+  /** A ready credential — a session bearer or opaque manual token — sent as `Authorization`. */
   | { kind: "token"; token: string }
-  | {
-    kind: "mint";
-    signingKey: string;
-    source: string;
-    appName: string;
-    roles?: string[];
-  };
+  /** An opaque manual token exchanged at infra for a session bearer before the run. */
+  | { kind: "exchange"; opaqueToken: string; infraBaseUrl: string };
 
 export interface SeedOverrides {
   /** Literal values injected into any endpoint's request by field name. */
@@ -273,12 +269,10 @@ async function buildTransport(
   const auth = opts.overrides?.auth ?? { kind: "in-process" };
   const headers: Record<string, string> = {};
   if (auth.kind === "token") headers.authorization = `Bearer ${auth.token}`;
-  else if (auth.kind === "mint") {
-    const token = await signToken(
-      { source: auth.source, appName: auth.appName, roles: auth.roles },
-      auth.signingKey,
-    );
-    headers.authorization = `Bearer ${token}`;
+  else if (auth.kind === "exchange") {
+    const bearer = await createInfraClient({ baseUrl: auth.infraBaseUrl })
+      .exchange(auth.opaqueToken);
+    headers.authorization = `Bearer ${bearer}`;
   }
 
   if (opts.baseUrl) {

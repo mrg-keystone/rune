@@ -544,6 +544,22 @@ request fire fire-and-forget.
 > complete off the response path (event loop on a long-running server, or
 > `waitUntil` on serverless) — ask and it's a small switch.
 
+#### Shipping to Datadog — environment gating
+
+Having `DD_API_KEY` set means you *have* credentials, not that every run should
+*ship*. Shipping is gated on environment so the key can live everywhere (a
+deploy "just works") without local dev polluting production logs:
+
+- **On Deno Deploy** (`DENO_DEPLOY=1`, set automatically) → ships, tagged
+  `env:production`.
+- **Locally, by default** → console only, even with the key present.
+- **Locally with `KEEP_DD_LOCAL=1`** → ships, tagged `env:local` and prefixed
+  `[LOCAL]` in the message, so it stays segmented from production in Datadog.
+
+The `env` value rides on every entry as an `env:` Datadog tag (the reserved
+environment facet). The site is `us5.datadoghq.com`. `KEEP_DD_LOCAL` gates both
+logs and [traces](#shipping-to-an-apm-datadog-over-otlp) the same way.
+
 ### `embed(api, { at })`
 
 One-call Fresh 2 integration: returns a middleware that exposes the token-gated
@@ -842,6 +858,106 @@ survive the reload. This is the channel
 [`rune dev`](https://github.com/mrg-keystone/rune) drives — its watcher
 checks/re-syncs the spec on save, restarts the app under `KEEP_DEV`, and the
 open docs pages pick up the new boot by themselves.
+
+### Request tracing — `/docs/_trace`, Deno KV, and Datadog APM
+
+Every inbound request is captured as a **trace**: a tree of timed **spans**.
+The root span is the whole request (opened automatically by the logging
+middleware); each in-process `backend.fetch` sub-call becomes a span; and you
+wrap your own hot functions so they show up as their own segment. A span that
+throws is recorded as the trace's **crash point**. The same instrumentation
+feeds two outputs — a zero-config local waterfall **and** your APM.
+
+#### Instrumenting
+
+```typescript
+import { span, Traced, traceUser } from "@mrg-keystone/keep";
+
+class Checkout {
+  async run(cart: Cart) {
+    traceUser(cart.memberId);                       // label this trace by user
+    const total = await span("priceCart", () => priceCart(cart)); // inline span
+    await span("chargeCard", () => charge(total));
+    return total;
+  }
+}
+
+class Pricing {
+  @Traced()                                          // whole-method span "Pricing.price"
+  async price(items: Item[]) { /* … */ }
+}
+```
+
+`span(name, fn, meta?)` times `fn` as a child of the current span and is a
+**pass-through outside a request**, so it's always safe to leave in. `@Traced()`
+is the method-decorator form. `traceUser(id)` labels the trace with your own
+identity; absent that, the trace is labeled with the verified token identity
+(the logger `source`). The request root and `backend.fetch` sub-calls are
+captured automatically — no annotation needed.
+
+#### The waterfall — `/docs/_trace`
+
+`/docs/_trace` renders recent requests as bars; expand one for the full
+waterfall — every span positioned by start time, sized by duration, coloured by
+kind (request / backend / your function), with a ✖ on the span that crashed.
+A filter bar narrows by **route**, **method**, **status** (ok / crashed) and
+**user** (selecting a user re-queries server-side); each row carries a clickable
+user chip. The page polls the **localhost-only** `/docs/_traces` JSON route
+(traces carry route paths and error messages, so the data is never exposed to
+the network; the page shell loads publicly like the other docs pages).
+
+#### Storage — in-memory ring or Deno KV
+
+By default the last **200** traces live in an in-memory ring buffer (size with
+`KEEP_TRACE_BUFFER`, disable capture with `KEEP_TRACE=off`). Set
+**`KEEP_TRACE_KV`** (`1`/`true` → the default KV location, or a path) to persist
+to **Deno KV** instead, so the UI survives restarts and looks past the in-memory
+window. Traces are stored time-ordered **and** indexed by user, so the
+newest-first list and `?user=` lookups are fast indexed scans; every key carries
+a TTL (`KEEP_TRACE_TTL_DAYS`, default 7) so storage stays bounded. On Deno Deploy
+`KEEP_TRACE_KV=1` uses the hosted KV automatically. (Requires `--unstable-kv`;
+without it, capture degrades to the in-memory ring with a one-time warning.)
+
+#### Shipping to an APM (Datadog) over OTLP
+
+Set **`KEEP_TRACE_OTLP_URL`** to an OTLP/HTTP endpoint — a Datadog Agent or an
+OpenTelemetry Collector — and each finished trace is serialised to OTLP/JSON and
+**POSTed at request end**. There is no OpenTelemetry SDK and no extra
+dependency: the whole tree is already in memory, so it's just `JSON.stringify` +
+one `fetch`. The POST is **fire-and-forget but flushed** — its promise rides the
+same `pending` list the logs use, so `settle()` awaits it right before the
+response returns (the logger pattern, reused). `/v1/traces` is appended to the
+URL if absent.
+
+- **Gating mirrors the logs** (see [Logging](#logging)): ships from **Deno
+  Deploy automatically** (`DENO_DEPLOY=1`), and from **local only with
+  `KEEP_DD_LOCAL=1`**. Traces are tagged `service.name` = your app and
+  `deployment.environment` = `production`/`local`.
+- **Guard header:** set **`KEEP_TRACE_OTLP_TOKEN`** and every POST carries
+  `X-Keep-Token: <token>`, so the OTLP endpoint can be exposed publicly behind a
+  reverse proxy that only routes requests bearing the secret.
+
+```bash
+KEEP_TRACE_OTLP_URL=https://otlp.example.com   # → POSTs to /v1/traces
+KEEP_TRACE_OTLP_TOKEN=<shared-secret>          # sent as X-Keep-Token
+# locally, also: KEEP_DD_LOCAL=1
+```
+
+The Datadog Agent's OTLP HTTP receiver accepts JSON natively (it's the
+OpenTelemetry Collector receiver; `application/json` → JSON, dispatched by
+`Content-Type`). A working Agent + Traefik deployment, including the secret-guard
+routing and a verification runbook, is documented in
+[`docs/datadog-agent.md`](docs/datadog-agent.md).
+
+| Env var | Effect |
+| --- | ------ |
+| `KEEP_TRACE` | `off` disables trace capture entirely |
+| `KEEP_TRACE_BUFFER` | in-memory ring size (default 200) |
+| `KEEP_TRACE_KV` | `1`/`true`/`<path>` → persist traces to Deno KV (needs `--unstable-kv`) |
+| `KEEP_TRACE_TTL_DAYS` | Deno KV retention in days (default 7) |
+| `KEEP_TRACE_OTLP_URL` | OTLP/HTTP endpoint to ship traces to (Agent/Collector) |
+| `KEEP_TRACE_OTLP_TOKEN` | shared secret sent as `X-Keep-Token` on each OTLP POST |
+| `KEEP_DD_LOCAL` | ship logs **and** traces to Datadog from a local (non-Deploy) run |
 
 ### `exerciseEndpoints(opts)` — headless runner
 

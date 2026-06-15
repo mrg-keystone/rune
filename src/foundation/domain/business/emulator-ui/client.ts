@@ -252,6 +252,8 @@ export const emulatorClientJs: string = String.raw`
   document.getElementById("link-swagger").href = pagePath + "/swagger";
   // The sibling system map: /docs/<m> -> /docs/_map (the prefix-mounted form holds too).
   document.getElementById("link-map").href = pagePath.replace(/\/[^/]+$/, "/_map");
+  // The sibling request-trace waterfall: /docs/<m> -> /docs/_trace.
+  document.getElementById("link-trace").href = pagePath.replace(/\/[^/]+$/, "/_trace");
   var jsonLink = document.getElementById("link-json");
   jsonLink.href = pagePath + "/json";
   // The /json endpoint is token-gated for non-loopback callers; carry the stored token along.

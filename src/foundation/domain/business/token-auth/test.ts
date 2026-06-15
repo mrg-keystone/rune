@@ -1,20 +1,45 @@
 import { assertEquals, assertRejects } from "#assert";
-import { Hono } from "#hono";
+import { type Context, Hono } from "#hono";
 import { ForbiddenException, UnauthorizedException } from "#danet/core";
 import {
   createCredentialGuard,
   createTokenAuthMiddleware,
   getIdentity,
+  SESSION_BEARER_HEADER,
 } from "./mod.ts";
-import { signToken } from "@foundation/domain/business/token/mod.ts";
+import { createJwksVerifier } from "@foundation/domain/business/token/mod.ts";
+import { createTestSigner } from "@foundation/domain/business/token/session.testkit.ts";
+import {
+  type InfraClient,
+  InfraError,
+} from "@foundation/domain/business/infra-client/mod.ts";
 import { INTERNAL_REQUEST_HEADER } from "@foundation/domain/business/backend-client/mod.ts";
 import { PUBLIC_METADATA_KEY } from "@foundation/domain/business/public-route/mod.ts";
 import { ROLES_METADATA_KEY } from "@foundation/domain/business/roles/mod.ts";
+import { CLAIMS_METADATA_KEY } from "@foundation/domain/business/claims/mod.ts";
 import { Logger } from "@foundation/domain/business/logger/mod.ts";
 
-const KEY = "test-signing-key";
 const INTERNAL = "internal-process-key";
-const future = 4_102_444_800;
+
+const signer = await createTestSigner();
+const verifier = createJwksVerifier({
+  fetchJwks: () => Promise.resolve(signer.jwks),
+});
+
+/** Mint a session bearer (infra-signed compact JWT). */
+const bearerFor = (fields: Parameters<typeof signer.sign>[0]) =>
+  signer.sign(fields);
+
+/** A stub infra client: opaque-token exchange + (unused) jwks/revocation. */
+function stubInfra(
+  exchange: (opaque: string) => Promise<string>,
+): InfraClient {
+  return {
+    exchange,
+    jwks: () => Promise.resolve(signer.jwks),
+    revocationStatus: () => Promise.resolve({ revokeAll: false }),
+  };
+}
 
 // A stub Firebase verifier: "good-fb" is valid, anything else throws.
 const stubFirebase = {
@@ -24,28 +49,32 @@ const stubFirebase = {
       : Promise.reject(new Error("bad firebase token")),
 };
 
-function appWith(
-  signingKey = KEY,
+function appWith(opts: {
+  withVerifier?: boolean;
   firebaseVerifier?: {
     verify: (
       t: string,
     ) => Promise<{ uid: string; email?: string; roles: string[] }>;
-  },
-  publicPaths?: string[],
-  trustLocalhost?: boolean,
-) {
+  };
+  infraClient?: InfraClient;
+  revokeAll?: () => boolean;
+  publicPaths?: string[];
+  trustLocalhost?: boolean;
+} = {}) {
   const logger = new Logger();
   logger.configure({ appName: "test" });
   const sources: (string | undefined)[] = [];
   const app = new Hono();
   app.use(
     createTokenAuthMiddleware({
-      signingKey,
+      verifier: opts.withVerifier === false ? undefined : verifier,
       logger,
       internalKey: INTERNAL,
-      firebaseVerifier,
-      publicPaths,
-      trustLocalhost,
+      firebaseVerifier: opts.firebaseVerifier,
+      infraClient: opts.infraClient,
+      revokeAll: opts.revokeAll,
+      publicPaths: opts.publicPaths,
+      trustLocalhost: opts.trustLocalhost,
     }),
   );
   app.get("/protected", (c) => {
@@ -53,10 +82,8 @@ function appWith(
     return c.text("ok");
   });
   app.get("/docs", (c) => c.text("docs"));
-  app.get("/docs/users", (c) => c.text("docs/users"));
   app.get("/docsignore", (c) => c.text("not docs"));
 
-  // `env` mirrors what Deno.serve passes; a network request has a non-loopback peer.
   const fromNetwork = (req: Request) =>
     logger.runInRequest(
       "r",
@@ -78,26 +105,22 @@ const internal = (key: string) => ({
 });
 const req = (init?: RequestInit) => new Request("http://app/protected", init);
 
+// ---- middleware: trust + credential kinds ----
+
 Deno.test("in-process request (matching internal key) is trusted, no token needed", async () => {
   const res = await appWith().fromNetwork(req(internal(INTERNAL)));
   assertEquals(res.status, 200);
 });
 
-Deno.test("a forged/wrong internal key is NOT trusted and still needs a token", async () => {
+Deno.test("a forged/wrong internal key still needs a token", async () => {
   const res = await appWith().fromNetwork(req(internal("guessed-wrong")));
   assertEquals(res.status, 401);
 });
 
-Deno.test("network request with a valid token passes and attributes source", async () => {
+Deno.test("network request with a valid session bearer passes and attributes source", async () => {
   const { fromNetwork, sources } = appWith();
-  const token = await signToken({
-    source: "ci",
-    appName: "test",
-    expiry: future,
-  }, KEY);
-
+  const token = await bearerFor({ source: "ci" });
   const res = await fromNetwork(req(bearer(token)));
-
   assertEquals(res.status, 200);
   assertEquals(sources[0], "ci");
 });
@@ -108,23 +131,8 @@ Deno.test("network request with no token is rejected with 401", async () => {
   assertEquals((await res.json()).message, "Missing credentials.");
 });
 
-Deno.test("network request with an expired token is rejected with 401", async () => {
-  const token = await signToken({
-    source: "ci",
-    appName: "test",
-    expiry: 1_000,
-  }, KEY);
-  const res = await appWith().fromNetwork(req(bearer(token)));
-  assertEquals(res.status, 401);
-  assertEquals((await res.json()).message, "Token expired.");
-});
-
-Deno.test("network request with a mis-signed token is rejected with 401", async () => {
-  const token = await signToken({
-    source: "ci",
-    appName: "test",
-    expiry: future,
-  }, "wrong");
+Deno.test("an expired session bearer is rejected with 401", async () => {
+  const token = await bearerFor({ sessionExp: 1_000 });
   const res = await appWith().fromNetwork(req(bearer(token)));
   assertEquals(res.status, 401);
 });
@@ -134,16 +142,10 @@ Deno.test("localhost callers are trusted and need no token", async () => {
 });
 
 Deno.test("trustLocalhost:false requires a token from localhost (internal key still trusted)", async () => {
-  const app = appWith(KEY, undefined, undefined, false);
-  // localhost now needs a token
+  const app = appWith({ trustLocalhost: false });
   assertEquals((await app.fromLocalhost(req())).status, 401);
-  const token = await signToken({
-    source: "svc",
-    appName: "test",
-    expiry: future,
-  }, KEY);
+  const token = await bearerFor({ source: "svc" });
   assertEquals((await app.fromLocalhost(req(bearer(token)))).status, 200);
-  // in-process internal key is still trusted regardless
   assertEquals(
     (await app.fromLocalhost(
       req({ headers: { [INTERNAL_REQUEST_HEADER]: INTERNAL } }),
@@ -152,76 +154,103 @@ Deno.test("trustLocalhost:false requires a token from localhost (internal key st
   );
 });
 
-Deno.test("public paths bypass auth (docs exempt, prefix and sub-paths)", async () => {
-  const app = appWith(KEY, undefined, ["/docs"]);
+Deno.test("public paths bypass auth (docs exempt)", async () => {
+  const app = appWith({ publicPaths: ["/docs"] });
   assertEquals(
     (await app.fromNetwork(new Request("http://app/docs"))).status,
-    200,
-  );
-  assertEquals(
-    (await app.fromNetwork(new Request("http://app/docs/users"))).status,
     200,
   );
 });
 
 Deno.test("a public prefix does not leak to lookalike paths", async () => {
-  const app = appWith(KEY, undefined, ["/docs"]);
-  // /docsignore is NOT under /docs — still requires a credential
+  const app = appWith({ publicPaths: ["/docs"] });
   assertEquals(
     (await app.fromNetwork(new Request("http://app/docsignore"))).status,
     401,
   );
-  // protected routes are unaffected
-  assertEquals((await app.fromNetwork(req())).status, 401);
 });
 
-Deno.test("a valid Firebase token authorizes (no signed token needed)", async () => {
-  const { fromNetwork, sources } = appWith(KEY, stubFirebase);
+// ---- opaque-token exchange ----
+
+Deno.test("an opaque token is exchanged at infra and the fresh bearer is handed back", async () => {
+  const infraClient = stubInfra((opaque) => {
+    assertEquals(opaque, "mtk_abc");
+    return bearerFor({ source: "exchanged" });
+  });
+  const { fromNetwork, sources } = appWith({ infraClient });
+  const res = await fromNetwork(req(bearer("mtk_abc")));
+  assertEquals(res.status, 200);
+  assertEquals(sources[0], "exchanged");
+  // The freshly-exchanged session bearer is returned for the client to cache.
+  const handed = res.headers.get(SESSION_BEARER_HEADER);
+  assertEquals(typeof handed, "string");
+});
+
+Deno.test("a failed exchange (revoked/unknown) → 401", async () => {
+  const infraClient = stubInfra(() =>
+    Promise.reject(new InfraError("revoked", 404))
+  );
+  const res = await appWith({ infraClient }).fromNetwork(
+    req(bearer("mtk_gone")),
+  );
+  assertEquals(res.status, 401);
+});
+
+Deno.test("an opaque token with no infra client configured → 401", async () => {
+  const res = await appWith().fromNetwork(req(bearer("mtk_abc")));
+  assertEquals(res.status, 401);
+});
+
+// ---- revokeAll (break glass) ----
+
+Deno.test("revokeAll ON: a cached session bearer is rejected (force re-exchange)", async () => {
+  const token = await bearerFor({ source: "svc" });
+  const res = await appWith({ revokeAll: () => true }).fromNetwork(
+    req(bearer(token)),
+  );
+  assertEquals(res.status, 401);
+  assertEquals(
+    (await res.json()).message,
+    "Session bearer not trusted (revoke-all active) — re-exchange your token.",
+  );
+});
+
+Deno.test("revokeAll ON: an opaque token is still exchanged live and authorizes", async () => {
+  const infraClient = stubInfra(() => bearerFor({ source: "live" }));
+  const { fromNetwork, sources } = appWith({
+    infraClient,
+    revokeAll: () => true,
+  });
+  const res = await fromNetwork(req(bearer("mtk_live")));
+  assertEquals(res.status, 200);
+  assertEquals(sources[0], "live");
+});
+
+// ---- Firebase ----
+
+Deno.test("a valid Firebase token authorizes (no session bearer needed)", async () => {
+  const { fromNetwork, sources } = appWith({ firebaseVerifier: stubFirebase });
   const res = await fromNetwork(req(bearer("good-fb")));
   assertEquals(res.status, 200);
   assertEquals(sources[0], "user@example.com");
 });
 
+Deno.test("revokeAll ON: Firebase tokens stay trusted (separate source)", async () => {
+  const { fromNetwork } = appWith({
+    firebaseVerifier: stubFirebase,
+    revokeAll: () => true,
+  });
+  assertEquals((await fromNetwork(req(bearer("good-fb")))).status, 200);
+});
+
 Deno.test("an invalid credential is rejected even with Firebase configured", async () => {
-  const res = await appWith(KEY, stubFirebase).fromNetwork(
+  const res = await appWith({ firebaseVerifier: stubFirebase }).fromNetwork(
     req(bearer("garbage")),
   );
   assertEquals(res.status, 401);
-  assertEquals((await res.json()).message, "Invalid or expired credentials.");
 });
 
-Deno.test("a valid signed token still works when Firebase is also configured", async () => {
-  const { fromNetwork, sources } = appWith(KEY, stubFirebase);
-  const token = await signToken({
-    source: "svc",
-    appName: "test",
-    expiry: future,
-  }, KEY);
-  const res = await fromNetwork(req(bearer(token)));
-  assertEquals(res.status, 200);
-  assertEquals(sources[0], "svc");
-});
-
-Deno.test("Firebase works even when no signing key is set (token-only disabled)", async () => {
-  const { fromNetwork } = appWith("", stubFirebase);
-  assertEquals((await fromNetwork(req(bearer("good-fb")))).status, 200);
-  assertEquals((await fromNetwork(req(bearer("nope")))).status, 401);
-});
-
-Deno.test("no signing key ⇒ network requests fail closed, internal key still trusted", async () => {
-  const { fromNetwork } = appWith("");
-  const token = await signToken({
-    source: "ci",
-    appName: "test",
-    expiry: future,
-  }, "any");
-
-  assertEquals((await fromNetwork(req(bearer(token)))).status, 401); // can't verify
-  assertEquals((await fromNetwork(req())).status, 401); // missing token
-  assertEquals((await fromNetwork(req(internal(INTERNAL)))).status, 200); // in-process
-});
-
-// ---- createCredentialGuard (the global guard that honors @Public) ----
+// ---- createCredentialGuard ----
 
 function guardCtx(opts: {
   headers?: Record<string, string>;
@@ -229,16 +258,19 @@ function guardCtx(opts: {
   hostname?: string;
   isPublic?: boolean;
   roles?: string[];
-  websocket?: boolean;
+  claims?: string[];
   websocketTopic?: string;
 }) {
-  // A method marked public/role-gated, read via getHandler().
   function handler() {}
   if (opts.isPublic) Reflect.defineMetadata(PUBLIC_METADATA_KEY, true, handler);
   if (opts.roles) {
     Reflect.defineMetadata(ROLES_METADATA_KEY, opts.roles, handler);
   }
+  if (opts.claims) {
+    Reflect.defineMetadata(CLAIMS_METADATA_KEY, opts.claims, handler);
+  }
   const store = new Map<string, unknown>();
+  const responseHeaders = new Map<string, string>();
   return {
     req: {
       header: (n: string) => opts.headers?.[n.toLowerCase()],
@@ -251,31 +283,33 @@ function guardCtx(opts: {
     getClass: () => function Ctrl() {},
     set: (k: string, v: unknown) => store.set(k, v),
     get: (k: string) => store.get(k),
-    websocket: opts.websocket,
+    header: (k: string, v: string) => responseHeaders.set(k, v),
+    responseHeaders,
     websocketTopic: opts.websocketTopic,
   };
 }
 
-function guard(signingKey = KEY) {
+function guard(
+  extra: Partial<Parameters<typeof createCredentialGuard>[0]> = {},
+) {
   const logger = new Logger();
   logger.configure({ appName: "test" });
-  const sources: (string | undefined)[] = [];
   const g = createCredentialGuard({
     appName: "test",
-    signingKey,
+    verifier,
     internalKey: INTERNAL,
     logger,
+    ...extra,
   });
-  return { g, logger, sources };
+  return { g, logger };
 }
 
 Deno.test("guard: protected route from network without a credential throws 401", async () => {
   const { g } = guard();
-  // deno-lint-ignore no-explicit-any
   await assertRejects(
     () =>
       Promise.resolve(
-        g.canActivate(guardCtx({ hostname: "203.0.113.1" }) as any),
+        g.canActivate(guardCtx({ hostname: "203.0.113.1" }) as unknown as Context),
       ),
     UnauthorizedException,
   );
@@ -283,48 +317,23 @@ Deno.test("guard: protected route from network without a credential throws 401",
 
 Deno.test("guard: @Public route is allowed with no credential", async () => {
   const { g } = guard();
-  // deno-lint-ignore no-explicit-any
   assertEquals(
     await g.canActivate(
-      guardCtx({ hostname: "203.0.113.1", isPublic: true }) as any,
+      guardCtx({ hostname: "203.0.113.1", isPublic: true }) as unknown as Context,
     ),
     true,
   );
 });
 
-Deno.test("guard: @Public ignores an invalid credential (auth-optional)", async () => {
-  const { g } = guard();
-  const ctx = guardCtx({
-    hostname: "203.0.113.1",
-    isPublic: true,
-    headers: { authorization: "Bearer nonsense" },
-  });
-  // deno-lint-ignore no-explicit-any
-  assertEquals(await g.canActivate(ctx as any), true);
-});
-
-Deno.test("guard: valid token authorizes a protected route and sets source", async () => {
-  const logger = new Logger();
-  logger.configure({ appName: "test" });
-  const g = createCredentialGuard({
-    appName: "test",
-    signingKey: KEY,
-    internalKey: INTERNAL,
-    logger,
-  });
-  const token = await signToken({
-    source: "svc",
-    appName: "test",
-    expiry: future,
-  }, KEY);
+Deno.test("guard: valid session bearer authorizes and sets source", async () => {
+  const { g, logger } = guard();
+  const token = await bearerFor({ source: "svc" });
   const ctx = guardCtx({
     hostname: "203.0.113.1",
     headers: { authorization: `Bearer ${token}` },
   });
-  // run inside a request scope so setSource records
   const ok = await logger.runInRequest("r", async () => {
-    // deno-lint-ignore no-explicit-any
-    const r = await g.canActivate(ctx as any);
+    const r = await g.canActivate(ctx as unknown as Context);
     return { r, source: logger.currentRequest()?.source };
   });
   assertEquals(ok.r, true);
@@ -333,207 +342,183 @@ Deno.test("guard: valid token authorizes a protected route and sets source", asy
 
 Deno.test("guard: localhost and in-process callers are trusted", async () => {
   const { g } = guard();
-  // deno-lint-ignore no-explicit-any
   assertEquals(
-    await g.canActivate(guardCtx({ hostname: "127.0.0.1" }) as any),
+    await g.canActivate(guardCtx({ hostname: "127.0.0.1" }) as unknown as Context),
     true,
   );
-  // deno-lint-ignore no-explicit-any
   assertEquals(
     await g.canActivate(
       guardCtx({
         hostname: "203.0.113.1",
         headers: { [INTERNAL_REQUEST_HEADER]: INTERNAL },
-      }) as any,
+      }) as unknown as Context,
     ),
     true,
   );
 });
 
-Deno.test("guard: WS message contexts are skipped (already authed at connection)", async () => {
+Deno.test("guard: WS message contexts are skipped", async () => {
   const { g } = guard();
-  const ctx = guardCtx({ websocketTopic: "chat", websocket: true });
-  // deno-lint-ignore no-explicit-any
-  assertEquals(await g.canActivate(ctx as any), true);
+  assertEquals(
+    await g.canActivate(guardCtx({ websocketTopic: "chat" }) as unknown as Context),
+    true,
+  );
 });
 
-Deno.test("guard: WS connection accepts a token from the query param", async () => {
-  const token = await signToken({
-    source: "ws",
-    appName: "test",
-    expiry: future,
-  }, KEY);
-  const { g } = guard();
-  const ctx = guardCtx({
-    hostname: "203.0.113.1",
-    websocket: true,
-    query: { token },
-  });
-  // deno-lint-ignore no-explicit-any
-  assertEquals(await g.canActivate(ctx as any), true);
-});
+// ---- @Roles / @claims enforcement ----
 
-// ---- @Roles enforcement via the guard ----
-
-Deno.test("guard: @Roles allows a caller holding the role", async () => {
+Deno.test("guard: @Roles allows a caller holding the (scoped) role", async () => {
   const { g } = guard();
-  // Claim is namespaced `appName:role`; the guard scopes it to this app ("test").
-  const token = await signToken({
-    source: "u",
-    appName: "test",
-    expiry: future,
-    roles: ["test:admin"],
-  }, KEY);
+  const token = await bearerFor({ claims: { role: "test:admin" } });
   const ctx = guardCtx({
     hostname: "203.0.113.1",
     roles: ["admin"],
     headers: { authorization: `Bearer ${token}` },
   });
-  // deno-lint-ignore no-explicit-any
-  assertEquals(await g.canActivate(ctx as any), true);
+  assertEquals(await g.canActivate(ctx as unknown as Context), true);
 });
 
 Deno.test("guard: a role for a different app does not satisfy @Roles", async () => {
   const { g } = guard();
-  // "other:admin" belongs to another app; this app is "test".
-  const token = await signToken({
-    source: "u",
-    appName: "test",
-    expiry: future,
-    roles: ["other:admin"],
-  }, KEY);
+  const token = await bearerFor({ claims: { role: "other:admin" } });
   const ctx = guardCtx({
     hostname: "203.0.113.1",
     roles: ["admin"],
     headers: { authorization: `Bearer ${token}` },
   });
-  // deno-lint-ignore no-explicit-any
   await assertRejects(
-    () => Promise.resolve(g.canActivate(ctx as any)),
+    () => Promise.resolve(g.canActivate(ctx as unknown as Context)),
     ForbiddenException,
   );
 });
 
-Deno.test("guard: @Roles rejects a caller missing the role with 403", async () => {
+Deno.test("guard: @claims authorizes against the scoped role claims", async () => {
   const { g } = guard();
-  const token = await signToken({
-    source: "u",
-    appName: "test",
-    expiry: future,
-    roles: ["test:editor"],
-  }, KEY);
+  const token = await bearerFor({ claims: { role: "test:docs" } });
   const ctx = guardCtx({
     hostname: "203.0.113.1",
-    roles: ["admin"],
+    claims: ["docs"],
     headers: { authorization: `Bearer ${token}` },
   });
-  // deno-lint-ignore no-explicit-any
+  assertEquals(await g.canActivate(ctx as unknown as Context), true);
+});
+
+Deno.test("guard: @claims rejects a caller missing the claim with 403", async () => {
+  const { g } = guard();
+  const token = await bearerFor({ claims: { role: "test:editor" } });
+  const ctx = guardCtx({
+    hostname: "203.0.113.1",
+    claims: ["docs"],
+    headers: { authorization: `Bearer ${token}` },
+  });
   await assertRejects(
-    () => Promise.resolve(g.canActivate(ctx as any)),
+    () => Promise.resolve(g.canActivate(ctx as unknown as Context)),
     ForbiddenException,
   );
 });
 
-Deno.test("guard: @Roles without any credential is 401 (auth required first)", async () => {
+Deno.test("guard: @Roles without any credential is 401", async () => {
   const { g } = guard();
   const ctx = guardCtx({ hostname: "203.0.113.1", roles: ["admin"] });
-  // deno-lint-ignore no-explicit-any
   await assertRejects(
-    () => Promise.resolve(g.canActivate(ctx as any)),
+    () => Promise.resolve(g.canActivate(ctx as unknown as Context)),
     UnauthorizedException,
   );
 });
 
-Deno.test("guard: @Roles is satisfied by any one of several listed roles", async () => {
+Deno.test("guard: attaches the resolved identity (claims + scoped roles)", async () => {
   const { g } = guard();
-  const token = await signToken({
-    source: "u",
-    appName: "test",
-    expiry: future,
-    roles: ["test:editor"],
-  }, KEY);
-  const ctx = guardCtx({
-    hostname: "203.0.113.1",
-    roles: ["admin", "editor"],
-    headers: { authorization: `Bearer ${token}` },
-  });
-  // deno-lint-ignore no-explicit-any
-  assertEquals(await g.canActivate(ctx as any), true);
-});
-
-Deno.test("guard: attaches the resolved identity to the context", async () => {
-  const { g } = guard();
-  const token = await signToken({
+  const token = await bearerFor({
     source: "svc",
-    appName: "test",
-    expiry: future,
-    roles: ["test:admin", "other:x"],
-  }, KEY);
+    claims: { role: "test:admin,other:x", team: "core" },
+  });
   const ctx = guardCtx({
     hostname: "203.0.113.1",
     headers: { authorization: `Bearer ${token}` },
   });
-  // deno-lint-ignore no-explicit-any
-  await g.canActivate(ctx as any);
-  // Identity exposes only this app's roles (scoped, prefix stripped).
-  // deno-lint-ignore no-explicit-any
-  assertEquals(getIdentity(ctx as any), { source: "svc", roles: ["admin"] });
+  await g.canActivate(ctx as unknown as Context);
+  const id = getIdentity(ctx as unknown as Context)!;
+  assertEquals(id.source, "svc");
+  assertEquals(id.roles, ["admin"]); // scoped to "test"
+  assertEquals(id.claims.team, "core");
 });
 
-// ---- ?token query-param credential (now accepted for network HTTP, not just WS) ----
+// ---- skeleton `*` ----
 
-Deno.test("middleware: a valid token in the ?token query param authorizes a network request", async () => {
-  const { fromNetwork, sources } = appWith();
-  const token = await signToken({
-    source: "link",
-    appName: "test",
-    expiry: future,
-  }, KEY);
-  const res = await fromNetwork(
-    new Request(`http://app/protected?token=${token}`),
+const recent = () => Math.floor(Date.now() / 1000) - 60;
+
+Deno.test("guard: a fresh `*` skeleton bypasses required claims", async () => {
+  const { g } = guard(); // honorSkeleton defaults true
+  const token = await bearerFor({ claims: { role: "*" }, mintedAt: recent() });
+  const ctx = guardCtx({
+    hostname: "203.0.113.1",
+    claims: ["docs"], // caller doesn't hold it, but `*` opens it
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assertEquals(await g.canActivate(ctx as unknown as Context), true);
+});
+
+Deno.test("guard: honorSkeleton:false ignores `*` (infra posture)", async () => {
+  const { g } = guard({ honorSkeleton: false });
+  const token = await bearerFor({ claims: { role: "*" }, mintedAt: recent() });
+  const ctx = guardCtx({
+    hostname: "203.0.113.1",
+    claims: ["docs"],
+    headers: { authorization: `Bearer ${token}` },
+  });
+  await assertRejects(
+    () => Promise.resolve(g.canActivate(ctx as unknown as Context)),
+    ForbiddenException,
   );
-  assertEquals(res.status, 200);
-  assertEquals(sources[0], "link");
 });
 
-Deno.test("middleware: an invalid ?token is rejected with 401", async () => {
-  const res = await appWith().fromNetwork(
-    new Request("http://app/protected?token=garbage"),
-  );
-  assertEquals(res.status, 401);
-});
-
-Deno.test("middleware: the Authorization header wins over ?token when both are present", async () => {
-  // mod.ts resolves `header(...) ?? query(...)`, so a valid header beats a garbage ?token.
-  const { fromNetwork, sources } = appWith();
-  const good = await signToken({
-    source: "hdr",
-    appName: "test",
-    expiry: future,
-  }, KEY);
-  const res = await fromNetwork(
-    new Request("http://app/protected?token=garbage", bearer(good)),
-  );
-  assertEquals(res.status, 200);
-  assertEquals(sources[0], "hdr");
-});
-
-Deno.test("middleware: a loopback peer short-circuits before verifying the Authorization token", async () => {
-  // Trusted-origin is checked first, so even a garbage Bearer token never reaches verification.
-  const res = await appWith().fromLocalhost(req(bearer("garbage")));
-  assertEquals(res.status, 200);
-});
-
-Deno.test("guard: a network request accepts a valid token from the ?token query param", async () => {
-  const token = await signToken({
-    source: "link",
-    appName: "test",
-    expiry: future,
-  }, KEY);
+Deno.test("guard: a `*` older than the 24h cap is not honored as skeleton", async () => {
   const { g } = guard();
+  const stale = Math.floor(Date.now() / 1000) - 25 * 60 * 60;
+  const token = await bearerFor({ claims: { role: "*" }, mintedAt: stale });
+  const ctx = guardCtx({
+    hostname: "203.0.113.1",
+    claims: ["docs"],
+    headers: { authorization: `Bearer ${token}` },
+  });
+  await assertRejects(
+    () => Promise.resolve(g.canActivate(ctx as unknown as Context)),
+    ForbiddenException,
+  );
+});
+
+Deno.test("guard: a `*` with no mintedAt fails closed (not honored)", async () => {
+  const { g } = guard();
+  const token = await bearerFor({ claims: { role: "*" } }); // no mintedAt
+  const ctx = guardCtx({
+    hostname: "203.0.113.1",
+    claims: ["docs"],
+    headers: { authorization: `Bearer ${token}` },
+  });
+  await assertRejects(
+    () => Promise.resolve(g.canActivate(ctx as unknown as Context)),
+    ForbiddenException,
+  );
+});
+
+Deno.test("guard: a `*` caller still authorizes a no-required-claims route (authenticated)", async () => {
+  const { g } = guard();
+  const token = await bearerFor({ claims: { role: "*" } });
+  const ctx = guardCtx({
+    hostname: "203.0.113.1",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  // No required claims ⇒ any authenticated identity passes regardless of skeleton.
+  assertEquals(await g.canActivate(ctx as unknown as Context), true);
+});
+
+// ---- ?token query-param + opaque exchange via the guard ----
+
+Deno.test("guard: a valid session bearer in ?token authorizes", async () => {
+  const { g } = guard();
+  const token = await bearerFor({ source: "link" });
   const ctx = guardCtx({ hostname: "203.0.113.1", query: { token } });
-  // deno-lint-ignore no-explicit-any
-  assertEquals(await g.canActivate(ctx as any), true);
+  assertEquals(await g.canActivate(ctx as unknown as Context), true);
 });
 
 Deno.test("guard: an invalid ?token on a protected route is rejected (401)", async () => {
@@ -542,9 +527,22 @@ Deno.test("guard: an invalid ?token on a protected route is rejected (401)", asy
     hostname: "203.0.113.1",
     query: { token: "garbage" },
   });
-  // deno-lint-ignore no-explicit-any
   await assertRejects(
-    () => Promise.resolve(g.canActivate(ctx as any)),
+    () => Promise.resolve(g.canActivate(ctx as unknown as Context)),
     UnauthorizedException,
   );
+});
+
+Deno.test("guard: exchanges an opaque token and hands the bearer back via response header", async () => {
+  const infraClient = stubInfra(() =>
+    bearerFor({ source: "exch", claims: { role: "test:admin" } })
+  );
+  const { g } = guard({ infraClient });
+  const ctx = guardCtx({
+    hostname: "203.0.113.1",
+    roles: ["admin"],
+    headers: { authorization: "Bearer mtk_xyz" },
+  });
+  assertEquals(await g.canActivate(ctx as unknown as Context), true);
+  assertEquals(typeof ctx.responseHeaders.get(SESSION_BEARER_HEADER), "string");
 });

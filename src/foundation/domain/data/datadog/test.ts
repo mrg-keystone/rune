@@ -32,6 +32,59 @@ Deno.test("DatadogTransport - send POSTs one entry as an array with the api key 
   assertEquals(body[0].ddsource, "danet");
 });
 
+Deno.test("DatadogTransport - default env is production: no prefix, env tag present", async () => {
+  const { fn, calls } = stubFetch();
+  const dd = new DatadogTransport({
+    apiKey: "K",
+    service: "svc",
+    transport: fn,
+  });
+
+  await dd.send({ status: "info", message: "hi", service: "svc" });
+
+  const body = JSON.parse(calls[0].init?.body as string);
+  assertEquals(body[0].message, "hi", "production messages are not prefixed");
+  assertEquals(body[0].env, "production");
+  assertEquals(body[0].ddtags, "env:production");
+});
+
+Deno.test("DatadogTransport - local env tags env:local and prefixes [LOCAL]", async () => {
+  const { fn, calls } = stubFetch();
+  const dd = new DatadogTransport({
+    apiKey: "K",
+    service: "svc",
+    env: "local",
+    transport: fn,
+  });
+
+  await dd.send({ status: "info", message: "hi", service: "svc" });
+
+  const body = JSON.parse(calls[0].init?.body as string);
+  assertEquals(body[0].message, "[LOCAL] hi");
+  assertEquals(body[0].env, "local");
+  assertEquals(body[0].ddtags, "env:local");
+});
+
+Deno.test("DatadogTransport - env tag is appended to existing ddtags", async () => {
+  const { fn, calls } = stubFetch();
+  const dd = new DatadogTransport({
+    apiKey: "K",
+    service: "svc",
+    env: "local",
+    transport: fn,
+  });
+
+  await dd.send({
+    status: "info",
+    message: "hi",
+    service: "svc",
+    ddtags: "team:payments",
+  });
+
+  const body = JSON.parse(calls[0].init?.body as string);
+  assertEquals(body[0].ddtags, "team:payments,env:local");
+});
+
 Deno.test("DatadogTransport - honors a custom site", async () => {
   const { fn, calls } = stubFetch();
   const dd = new DatadogTransport({

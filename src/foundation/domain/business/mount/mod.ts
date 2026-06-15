@@ -71,7 +71,7 @@ export interface EmbedContext {
  *
  * Requests under the prefix are rebased with {@linkcode withBasePath} and dispatched to
  * `api.handler` with Fresh's conn info forwarded — so loopback detection (localhost trust,
- * `/_mint`) keeps working without the caller having to remember `ctx.info`. All other
+ * `/_token`) keeps working without the caller having to remember `ctx.info`. All other
  * requests get `ctx.state.api = api.backend` (the token-free in-process client) and fall
  * through to the next handler. Register it before `.fsRoutes()`; Fresh's builder is
  * order-sensitive.

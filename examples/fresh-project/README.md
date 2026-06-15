@@ -32,30 +32,35 @@ Pages to open:
 
 ### The token flow (browser)
 
-1. Gate the API: run
-   `MANUAL_KEY=dev-secret TRUST_LOCALHOST=false deno task dev`.
-2. `/probe` → _fetch_ → **401** (no token).
-3. Open `/probe?token=<TOKEN>` — `client.ts` saves it to `localStorage` and
-   strips it from the URL. _fetch_ → **200**. Reload `/probe` → still 200 (token
-   persists). A 401 (e.g. expired) clears it.
+Auth is the infra-centralized model: **infra** mints opaque tokens (`mtk_…`) and
+signs short-lived session bearers; **keep** verifies those bearers offline against
+infra's JWKS and exchanges opaque tokens at `POST /api/_token`. keep never mints.
 
-Mint a **short-lived** `<TOKEN>` locally (same `MANUAL_KEY` the server runs
-with). Keep link tokens short — they ride in a URL until the browser moves them
-to a header:
+1. Gate the API: run `INFRA_BASE_URL=<infra> TRUST_LOCALHOST=false deno task dev`.
+2. `/probe` → _fetch_ → **401** (no token).
+3. Open `/probe?token=<SESSION_BEARER>` — `client.ts` saves it to `localStorage`
+   and strips it from the URL. _fetch_ → **200**. Reload `/probe` → still 200
+   (token persists). A 401 (e.g. the bearer lapsed) clears it.
+
+Get a `<SESSION_BEARER>` by exchanging an opaque manual token (minted in infra's
+Tokens UI) at the exchange endpoint — keep returns the bearer to cache and re-send:
 
 ```sh
-MANUAL_KEY=dev-secret deno run -A - <<'EOF'
-import { signToken } from "@mrg-keystone/keep";
-const expiry = Math.floor(Date.now() / 1000) + 3600; // 1 hour
-console.log(await signToken({ source: "demo", appName: "fresh-project", expiry }, Deno.env.get("MANUAL_KEY")));
-EOF
+curl -s -X POST http://localhost:8173/api/_token \
+  -H 'content-type: application/json' \
+  -d '{"token":"mtk_<your-opaque-token>"}'
+# → { "bearer": "<SESSION_BEARER>", "source": "…" }
 ```
+
+Keep link tokens short — a bearer rides in a URL until the browser moves it to a
+header. The client re-exchanges (calls `/api/_token` again) when the bearer lapses.
 
 > **Develop with the gate ON.** `deno task dev` trusts `localhost`, so `/api`
 > accepts everything from your browser and you never actually exercise auth. To
 > see the real gated behavior, run
-> `MANUAL_KEY=dev-secret TRUST_LOCALHOST=false deno task dev` (then localhost
-> needs a token, just like production). The smoketest already runs gated.
+> `INFRA_BASE_URL=<infra> TRUST_LOCALHOST=false deno task dev` (then localhost
+> needs a token, just like production). The smoketest already runs gated (it
+> stands up a stub infra).
 
 ## How it's wired (3 pieces)
 

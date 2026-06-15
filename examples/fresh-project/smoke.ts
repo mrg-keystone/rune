@@ -1,4 +1,4 @@
-import { signToken } from "@mrg-keystone/keep";
+import { exportSPKI, generateKeyPair, type KeyLike, SignJWT } from "npm:jose@5";
 
 /**
  * One-command smoketest for the Keep ↔ Fresh integration. Boots the real Fresh dev server
@@ -6,10 +6,52 @@ import { signToken } from "@mrg-keystone/keep";
  *
  * Keep is consumed via Deno `links` (deno.json `"links": ["../.."]`) — NOT a vendor symlink — so
  * this tests your LOCAL Keep through the actual Vite SSR pipeline.
+ *
+ * Auth is the infra-centralized model: infra mints + signs; keep verifies offline against infra's
+ * JWKS and exchanges opaque tokens. Here a tiny in-process stub stands in for infra — it publishes
+ * a JWKS, signs session bearers, and exchanges opaque `mtk_…` tokens — so the smoke test exercises
+ * the real verify / exchange / poll paths end-to-end.
  */
-const KEY = "dev-secret";
 const PORT = 8173;
+const INFRA_PORT = 8174;
 const BASE = `http://127.0.0.1:${PORT}`;
+const INFRA_BASE_URL = `http://127.0.0.1:${INFRA_PORT}`;
+const KID = "infra-dev-2026";
+
+// Stub infra signer: an RS256 keypair published as a JWKS (SPKI PEM).
+const { privateKey, publicKey } = await generateKeyPair("RS256", {
+  extractable: true,
+});
+const jwks = {
+  keys: [{ kid: KID, alg: "RS256", publicKey: await exportSPKI(publicKey as KeyLike) }],
+};
+
+/** Mint a session bearer the keep server will verify offline against the stub JWKS. */
+async function sign(): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  return await new SignJWT({
+    iss: "infra",
+    creator: "smoke",
+    source: "smoke",
+    claims: {},
+    sessionExp: now + 3600,
+  })
+    .setProtectedHeader({ alg: "RS256", kid: KID })
+    .setIssuer("infra")
+    .setExpirationTime(now + 3600)
+    .sign(privateKey as KeyLike);
+}
+
+// The stub infra HTTP service (JWKS + exchange + revocation poll).
+const infra = Deno.serve({ port: INFRA_PORT, onListen: () => {} }, async (req) => {
+  const { pathname } = new URL(req.url);
+  if (pathname === "/keys/jwks") return Response.json(jwks);
+  if (pathname === "/revocation/status") return Response.json({ revokeAll: false });
+  if (pathname === "/manualToken/exchange") {
+    return Response.json({ bearer: await sign() });
+  }
+  return new Response("not found", { status: 404 });
+});
 
 const dev = new Deno.Command("deno", {
   args: [
@@ -20,7 +62,11 @@ const dev = new Deno.Command("deno", {
     String(PORT),
     "--strictPort",
   ],
-  env: { ...Deno.env.toObject(), MANUAL_KEY: KEY, TRUST_LOCALHOST: "false" },
+  env: {
+    ...Deno.env.toObject(),
+    INFRA_BASE_URL,
+    TRUST_LOCALHOST: "false",
+  },
   stdout: "null",
   stderr: "null",
 }).spawn();
@@ -65,10 +111,7 @@ try {
     console.error("dev server did not come up");
     Deno.exit(1);
   }
-  const token = await signToken(
-    { source: "smoke", appName: "fresh-project" },
-    KEY,
-  );
+  const token = await sign();
 
   await check("SSR /users (in-process, no token)", "/users", 200);
   await check("/api/users (network, no token)", "/api/users", 401);
@@ -89,6 +132,29 @@ try {
   await check("/api/users (forged internal header)", "/api/users", 401, {
     headers: { "x-danet-internal": "anything" },
   });
+
+  // OAuth-style exchange: POST an opaque manual token to /api/_token → a session bearer.
+  await check("/api/_token (exchange opaque mtk_)", "/api/_token", 200, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token: "mtk_demo" }),
+  });
+  // The exchanged bearer then authorizes a network call.
+  let exchanged = "";
+  try {
+    const res = await fetch(`${BASE}/api/_token`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "mtk_demo" }),
+    });
+    exchanged = (await res.json()).bearer ?? "";
+  } catch { /* counted below */ }
+  await check(
+    "/api/users (exchanged session bearer)",
+    "/api/users",
+    200,
+    { headers: { Authorization: `Bearer ${exchanged}` } },
+  );
 
   // Swagger docs, embedded under the mount: shells are public, the spec is gated.
   await check("/api/docs (public index shell)", "/api/docs", 200);
@@ -118,5 +184,6 @@ try {
     dev.kill("SIGTERM");
   } catch { /* already gone */ }
   await dev.status;
+  await infra.shutdown();
 }
 Deno.exit(failed ? 1 : 0);

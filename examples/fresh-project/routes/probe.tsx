@@ -16,7 +16,7 @@ export default define.page(function Probe() {
           Run the dev server gated, so localhost needs a token like production:
           {" "}
           <code>
-            MANUAL_KEY=dev-secret TRUST_LOCALHOST=false deno task dev
+            INFRA_BASE_URL=&lt;infra&gt; TRUST_LOCALHOST=false deno task dev
           </code>.
         </li>
         <li>

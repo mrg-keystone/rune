@@ -9,10 +9,12 @@
 import type { Context } from "#hono";
 import type { Logger } from "@foundation/domain/business/logger/mod.ts";
 import type { FirebaseVerifier } from "@foundation/domain/business/firebase-auth/mod.ts";
+import type { SessionVerifier } from "@foundation/domain/business/token/mod.ts";
+import type { InfraClient } from "@foundation/domain/business/infra-client/mod.ts";
 import {
   extractBearer,
   isLoopbackRequest,
-  validateCredential,
+  resolveNetworkCredential,
 } from "@foundation/domain/business/token-auth/mod.ts";
 
 const STORAGE_KEY = "danet_docs_token";
@@ -21,8 +23,11 @@ const SWAGGER_UI_VERSION = "5";
 export interface DocsJsonHandlerOptions {
   /** The serialized OpenAPI document to serve. */
   specJson: string;
-  signingKey: string;
+  /** Offline verifier for infra session bearers (JWKS). */
+  verifier?: SessionVerifier;
   firebaseVerifier?: FirebaseVerifier;
+  /** infra client so a pasted opaque token (`mtk_…`) can be exchanged to view the spec. */
+  infraClient?: InfraClient;
   logger: Logger;
   /** Whether genuine localhost callers are served without a token. Defaults to true. */
   trustLocalhost?: boolean;
@@ -31,9 +36,9 @@ export interface DocsJsonHandlerOptions {
 /**
  * Builds the handler for a gated `/docs/<module>/json` endpoint. The OpenAPI spec is the API
  * surface, so this is deliberately strict: only a **genuine loopback** caller (the dev machine)
- * or a valid signed/Firebase token (`Authorization: Bearer` or `?token`) is served. It does NOT
- * honor the in-process trust marker — so routing docs through `backend.fetch` cannot expose the
- * spec — and the network `handler` strips that marker anyway.
+ * or a valid session/Firebase/opaque credential (`Authorization: Bearer` or `?token`) is served.
+ * It does NOT honor the in-process trust marker — so routing docs through `backend.fetch` cannot
+ * expose the spec — and the network `handler` strips that marker anyway.
  */
 export function createDocsJsonHandler(
   opts: DocsJsonHandlerOptions,
@@ -49,19 +54,21 @@ export function createDocsJsonHandler(
 
     const credential = extractBearer(c.req.header("authorization")) ??
       c.req.query("token");
-    const identity = credential
-      ? await validateCredential(credential, {
-        signingKey: opts.signingKey,
+    const outcome = credential
+      ? await resolveNetworkCredential(credential, {
+        verifier: opts.verifier,
         firebaseVerifier: opts.firebaseVerifier,
+        infraClient: opts.infraClient,
+        revokeAll: false,
       })
-      : null;
-    if (!identity) {
+      : { error: "invalid" as const };
+    if ("error" in outcome) {
       return c.json({
         error: "unauthorized",
         message: "Invalid or missing docs token.",
       }, 401);
     }
-    opts.logger.setSource(identity.source);
+    opts.logger.setSource(outcome.resolved.source);
     return json();
   };
 }

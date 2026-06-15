@@ -6,9 +6,16 @@ import {
   injectDocsScript,
   swaggerShellHtml,
 } from "./mod.ts";
-import { signToken } from "@foundation/domain/business/token/mod.ts";
+import { createJwksVerifier } from "@foundation/domain/business/token/mod.ts";
+import { createTestSigner } from "@foundation/domain/business/token/session.testkit.ts";
 import { INTERNAL_REQUEST_HEADER } from "@foundation/domain/business/backend-client/mod.ts";
 import { Logger } from "@foundation/domain/business/logger/mod.ts";
+
+const signer = await createTestSigner();
+const verifier = createJwksVerifier({
+  fetchJwks: () => Promise.resolve(signer.jwks),
+});
+const bearerFor = () => signer.sign({ source: "docs" });
 
 Deno.test("docsSeedScript seeds from ?token, stores, strips, and exposes helpers", () => {
   const js = docsSeedScript();
@@ -36,7 +43,6 @@ const SPEC = JSON.stringify({
   openapi: "3.0.0",
   info: { title: "t", version: "1" },
 });
-const KEY = "docs-signing-key";
 const INTERNAL = "internal-key";
 
 function jsonApp(trustLocalhost?: boolean) {
@@ -47,7 +53,7 @@ function jsonApp(trustLocalhost?: boolean) {
     "/docs/app/json",
     createDocsJsonHandler({
       specJson: SPEC,
-      signingKey: KEY,
+      verifier,
       logger,
       trustLocalhost,
     }),
@@ -87,11 +93,7 @@ Deno.test("docs json: network callers without a token get 401", async () => {
 Deno.test("docs json: trustLocalhost:false requires a token from localhost too", async () => {
   const app = jsonApp(false);
   assertEquals((await app.at("127.0.0.1")).status, 401);
-  const token = await signToken({
-    source: "docs",
-    appName: "test",
-    expiry: 4_102_444_800,
-  }, KEY);
+  const token = await bearerFor();
   assertEquals(
     (await app.at("127.0.0.1", undefined, `?token=${token}`)).status,
     200,
@@ -99,22 +101,14 @@ Deno.test("docs json: trustLocalhost:false requires a token from localhost too",
 });
 
 Deno.test("docs json: network callers authorize with a ?token", async () => {
-  const token = await signToken({
-    source: "docs",
-    appName: "test",
-    expiry: 4_102_444_800,
-  }, KEY);
+  const token = await bearerFor();
   const res = await jsonApp().at("203.0.113.4", undefined, `?token=${token}`);
   assertEquals(res.status, 200);
   assertEquals((await res.json()).openapi, "3.0.0");
 });
 
 Deno.test("docs json: network callers authorize with an Authorization header", async () => {
-  const token = await signToken({
-    source: "docs",
-    appName: "test",
-    expiry: 4_102_444_800,
-  }, KEY);
+  const token = await bearerFor();
   const res = await jsonApp().at("203.0.113.4", {
     headers: { authorization: `Bearer ${token}` },
   });

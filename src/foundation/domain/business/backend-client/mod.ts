@@ -1,4 +1,5 @@
 import type { FetchHandler } from "@types";
+import { tracer } from "@foundation/domain/business/tracer/mod.ts";
 
 const DEFAULT_BASE_URL = "http://localhost";
 
@@ -34,7 +35,23 @@ export class BackendClient {
     const base = input instanceof Request
       ? (init ? new Request(input, init) : input)
       : new Request(this.resolve(input), init);
-    return Promise.resolve(this.handler(this.stamp(base)));
+    // When called from inside a request handler, this sub-call becomes a "backend" span in that
+    // request's trace; outside a trace `span` is a pass-through, so direct (test/SSR) use is
+    // unaffected. The nested handler's own spans nest under this one.
+    const path = safePath(base.url);
+    return tracer.span(
+      `${base.method} ${path}`,
+      async () => {
+        const res = await this.handler(this.stamp(base));
+        tracer.annotateCurrent({
+          method: base.method,
+          path,
+          status: res.status,
+        });
+        return res;
+      },
+      { kind: "backend" },
+    );
   };
 
   /** Tags the request as in-process so the auth middleware skips the token requirement. */
@@ -47,6 +64,15 @@ export class BackendClient {
 
   private resolve(input: string | URL): string {
     return new URL(input, this.baseUrl).toString();
+  }
+}
+
+/** Best-effort pathname for the span label; never throws on an odd URL. */
+function safePath(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return url;
   }
 }
 

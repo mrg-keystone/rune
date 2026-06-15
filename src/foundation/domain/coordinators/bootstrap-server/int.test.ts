@@ -1,11 +1,43 @@
 import "#reflect-metadata";
 import { assertEquals, assertExists, assertStringIncludes } from "#assert";
 import { bootstrapServer } from "./mod.ts";
-import { signToken } from "@foundation/domain/business/token/mod.ts";
+import {
+  createTestSigner,
+  type TestSigner,
+} from "@foundation/domain/business/token/session.testkit.ts";
 import { Public } from "@foundation/domain/business/public-route/mod.ts";
 import { INTERNAL_REQUEST_HEADER } from "@foundation/domain/business/backend-client/mod.ts";
 import { Controller, Get, Module } from "#danet/core";
 import { endpointModule } from "@foundation/domain/business/endpoint-decorator/mod.ts";
+
+// A test signer stands in for infra; a stub HTTP server publishes its JWKS, exchanges opaque
+// tokens for freshly-signed session bearers, and answers the revocation poll. Pointing keep at it
+// via INFRA_BASE_URL exercises the real verify / exchange / poll paths without a live infra.
+const signer = await createTestSigner();
+const sessionBearer = (source = "svc") => signer.sign({ source, claims: {} });
+
+function startStubInfra(
+  s: TestSigner,
+): { url: string; stop: () => Promise<void> } {
+  const server = Deno.serve(
+    { port: 0, onListen: () => {} },
+    async (req) => {
+      const { pathname } = new URL(req.url);
+      if (pathname === "/keys/jwks") return Response.json(s.jwks);
+      if (pathname === "/revocation/status") {
+        return Response.json({ revokeAll: false });
+      }
+      if (pathname === "/manualToken/exchange") {
+        return Response.json({
+          bearer: await s.sign({ source: "exchanged", claims: {} }),
+        });
+      }
+      return new Response("not found", { status: 404 });
+    },
+  );
+  const { port } = server.addr as Deno.NetAddr;
+  return { url: `http://127.0.0.1:${port}`, stop: () => server.shutdown() };
+}
 
 @Controller("health")
 class HealthController {
@@ -78,7 +110,8 @@ Deno.test("bootstrapServer - enables swagger by default", async () => {
 });
 
 Deno.test("global guard: deny-by-default for controllers, @Public exempts", async () => {
-  Deno.env.set("MANUAL_KEY", "guard-test-key");
+  const infra = startStubInfra(signer);
+  Deno.env.set("INFRA_BASE_URL", infra.url);
   try {
     const port = portCounter++;
     const server = await bootstrapServer("test-app", GuardModule, {
@@ -104,11 +137,8 @@ Deno.test("global guard: deny-by-default for controllers, @Public exempts", asyn
     assertEquals(open.status, 200);
     assertEquals((await open.json()).open, true);
 
-    // Protected controller with a valid token → 200.
-    const token = await signToken(
-      { source: "svc", appName: "test-app", expiry: 4_102_444_800 },
-      "guard-test-key",
-    );
+    // Protected controller with a valid session bearer → 200.
+    const token = await sessionBearer();
     const ok = await net("/secret", {
       headers: { authorization: `Bearer ${token}` },
     });
@@ -122,65 +152,90 @@ Deno.test("global guard: deny-by-default for controllers, @Public exempts", asyn
       loopback as any,
     );
     assertEquals(local.status, 200);
+    await server.stop();
   } finally {
-    Deno.env.delete("MANUAL_KEY");
+    Deno.env.delete("INFRA_BASE_URL");
+    await infra.stop();
   }
 });
 
 Deno.test("a forged in-process header on a network request cannot bypass auth (stripped)", async () => {
-  Deno.env.set("MANUAL_KEY", "strip-test-key");
-  try {
-    const port = portCounter++;
-    const server = await bootstrapServer("test-app", GuardModule, {
-      port,
-      swagger: false,
-    });
-    const remote = {
-      remoteAddr: { transport: "tcp", hostname: "203.0.113.5", port: 1 },
-    };
-
-    // Attacker (or a mis-mounted proxy) sends the in-process trust header over the network.
-    const res = await server.handler(
-      new Request("http://app/secret", {
-        headers: { [INTERNAL_REQUEST_HEADER]: "anything" },
-      }),
-      // deno-lint-ignore no-explicit-any
-      remote as any,
-    );
-    // The network handler strips it, so it's treated as an unauthenticated network request.
-    assertEquals(res.status, 401);
-  } finally {
-    Deno.env.delete("MANUAL_KEY");
-  }
-});
-
-Deno.test("mounted handler: /_mint reachable from localhost when conn info is forwarded", async () => {
   const port = portCounter++;
-  const server = await bootstrapServer("test-app", AppModule, { port });
-
-  // Reporter's topology: another listener dispatches through the returned handler.
-  // Forwarding `info` (as Deno.serve provides it) keeps loopback detection working.
-  const loopback = {
-    remoteAddr: { transport: "tcp", hostname: "127.0.0.1", port: 1 },
-  };
+  const server = await bootstrapServer("test-app", GuardModule, {
+    port,
+    swagger: false,
+  });
   const remote = {
     remoteAddr: { transport: "tcp", hostname: "203.0.113.5", port: 1 },
   };
-  const mintReq = () => new Request("http://app/_mint");
 
-  // deno-lint-ignore no-explicit-any
-  const local = await server.handler(mintReq(), loopback as any);
-  assertEquals(local.status, 200);
-  assertStringIncludes(await local.text(), "Mint access token");
+  // Attacker (or a mis-mounted proxy) sends the in-process trust header over the network.
+  const res = await server.handler(
+    new Request("http://app/secret", {
+      headers: { [INTERNAL_REQUEST_HEADER]: "anything" },
+    }),
+    // deno-lint-ignore no-explicit-any
+    remote as any,
+  );
+  // The network handler strips it, so it's treated as an unauthenticated network request.
+  assertEquals(res.status, 401);
+});
 
-  // A non-loopback caller is forbidden by the mint guard (not a 401 from token auth).
-  // deno-lint-ignore no-explicit-any
-  const offhost = await server.handler(mintReq(), remote as any);
-  assertEquals(offhost.status, 403);
+Deno.test("/_token: exchanges an opaque manual token for a session bearer", async () => {
+  const infra = startStubInfra(signer);
+  Deno.env.set("INFRA_BASE_URL", infra.url);
+  try {
+    const port = portCounter++;
+    const server = await bootstrapServer("test-app", AppModule, {
+      port,
+      swagger: false,
+    });
+    const exchange = (body: unknown) =>
+      server.handler(
+        new Request("http://app/_token", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+
+    // A valid opaque token returns a signed bearer the client can cache.
+    const ok = await exchange({ token: "mtk_abc" });
+    assertEquals(ok.status, 200);
+    const { bearer } = await ok.json();
+    assertEquals(typeof bearer, "string");
+
+    // A non-opaque token is rejected with 400 (only opaque tokens are exchanged).
+    const bad = await exchange({ token: "not-opaque" });
+    assertEquals(bad.status, 400);
+    await server.stop();
+  } finally {
+    Deno.env.delete("INFRA_BASE_URL");
+    await infra.stop();
+  }
+});
+
+Deno.test("/_token: 503 when no infra is configured", async () => {
+  const port = portCounter++;
+  const server = await bootstrapServer("test-app", AppModule, {
+    port,
+    swagger: false,
+  });
+  const res = await server.handler(
+    new Request("http://app/_token", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "mtk_abc" }),
+    }),
+  );
+  assertEquals(res.status, 503);
+  await res.body?.cancel();
+  await server.stop();
 });
 
 Deno.test("docs: shell is public, spec /json is token-gated (seeded via ?token)", async () => {
-  Deno.env.set("MANUAL_KEY", "docs-test-key");
+  const infra = startStubInfra(signer);
+  Deno.env.set("INFRA_BASE_URL", infra.url);
   try {
     const port = portCounter++;
     const server = await bootstrapServer("test-app", AppModule, { port });
@@ -201,16 +256,15 @@ Deno.test("docs: shell is public, spec /json is token-gated (seeded via ?token)"
     // The spec is gated: no token → 401.
     assertEquals((await call("/docs/app/json")).status, 401);
 
-    // With a valid signed token in the query, the spec is served.
-    const token = await signToken(
-      { source: "docs", appName: "test-app", expiry: 4_102_444_800 },
-      "docs-test-key",
-    );
+    // With a valid session bearer in the query, the spec is served.
+    const token = await sessionBearer("docs");
     const ok = await call(`/docs/app/json?token=${token}`);
     assertEquals(ok.status, 200);
     assertEquals((await ok.json()).openapi !== undefined || true, true);
+    await server.stop();
   } finally {
-    Deno.env.delete("MANUAL_KEY");
+    Deno.env.delete("INFRA_BASE_URL");
+    await infra.stop();
   }
 });
 
@@ -372,28 +426,23 @@ Deno.test("422 filter control: a plain Error still maps to danet's 500", async (
 });
 
 Deno.test("422 filter control: the auth 401 path is untouched", async () => {
-  Deno.env.set("MANUAL_KEY", "filter-control-key");
-  try {
-    const port = portCounter++;
-    const server = await bootstrapServer("test-app", GuardModule, {
-      port,
-      swagger: false,
-    });
-    const remote = {
-      remoteAddr: { transport: "tcp", hostname: "203.0.113.5", port: 1 },
-    };
+  const port = portCounter++;
+  const server = await bootstrapServer("test-app", GuardModule, {
+    port,
+    swagger: false,
+  });
+  const remote = {
+    remoteAddr: { transport: "tcp", hostname: "203.0.113.5", port: 1 },
+  };
 
-    // Network caller without a credential: still 401, not intercepted.
-    const res = await server.handler(
-      new Request("http://app/secret"),
-      // deno-lint-ignore no-explicit-any
-      remote as any,
-    );
-    assertEquals(res.status, 401);
-    await res.body?.cancel();
-  } finally {
-    Deno.env.delete("MANUAL_KEY");
-  }
+  // Network caller without a credential: still 401, not intercepted.
+  const res = await server.handler(
+    new Request("http://app/secret"),
+    // deno-lint-ignore no-explicit-any
+    remote as any,
+  );
+  assertEquals(res.status, 401);
+  await res.body?.cancel();
 });
 
 @Controller("alpha")

@@ -1,6 +1,8 @@
 import type { Context, MiddlewareHandler } from "#hono";
 import type { Logger } from "@foundation/domain/business/logger/mod.ts";
 import { INTERNAL_REQUEST_HEADER } from "@foundation/domain/business/backend-client/mod.ts";
+import { tracer } from "@foundation/domain/business/tracer/mod.ts";
+import { traceShipper } from "@foundation/domain/business/tracer/ship.ts";
 
 const REQUEST_ID_HEADERS = ["x-request-id", "x-correlation-id"];
 // Redact credentials so they never land in logs — including the process-private in-process key,
@@ -45,7 +47,30 @@ export function createRequestLoggingMiddleware(
       });
 
       try {
-        await next();
+        // Open a trace for the whole request so `/docs/_trace` can render its waterfall. Skip
+        // the framework's own tooling routes (`/docs/*`, `/_token`…) — they'd just be noise — and
+        // skip when a trace is already open: an in-process `backend.fetch` re-enters this
+        // middleware, and its work already nests under the parent's backend span.
+        if (tracer.enabled && shouldTrace(route) && !tracer.current()) {
+          await tracer.trace(
+            { requestId, method, route },
+            () => next(),
+            (t) => {
+              t.status = c.res.status;
+              if (c.res.status >= 400) t.ok = false;
+              // Label the trace by user: the app's explicit `traceUser()` wins; otherwise fall
+              // back to the verified token identity the auth guard recorded on the request.
+              if (!t.user) t.user = logger.currentRequest()?.source;
+              // Fire-and-forget the trace to the OTLP endpoint (a Datadog Agent), and register
+              // the promise so settle() awaits it in the same flush as the logs, right before the
+              // response returns. No-op (null) when shipping is disabled.
+              const shipped = traceShipper.ship(t);
+              if (shipped) logger.currentRequest()?.pending.push(shipped);
+            },
+          );
+        } else {
+          await next();
+        }
       } finally {
         const status = c.res.status;
         const level = status >= 500 ? "error" : status >= 400 ? "warn" : "info";
@@ -61,6 +86,15 @@ export function createRequestLoggingMiddleware(
       }
     });
   };
+}
+
+/**
+ * Framework tooling routes (`/docs/*`, `/_token`…) and browser-chrome noise (`/favicon.ico`)
+ * carry no app logic worth tracing — keep the buffer to real traffic.
+ */
+function shouldTrace(route: string): boolean {
+  return !(route === "/docs" || route.startsWith("/docs/") ||
+    route.startsWith("/_") || route === "/favicon.ico");
 }
 
 function resolveRequestId(c: Context): string {

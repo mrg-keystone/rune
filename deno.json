@@ -5,14 +5,17 @@
   "license": "MIT",
   "exports": {
     ".": "./src/bootstrap/mod.ts",
-    "./assert": "./src/assert/mod.ts"
+    "./assert": "./src/assert/mod.ts",
+    "./vite": "./src/vite/dev-reconnect.ts"
   },
   "publish": {
     "exclude": [
       "**/*.test.ts",
       "**/test.ts",
+      "**/*.testkit.ts",
       "**/switch-probe.ts",
       "context.md",
+      "docs/",
       "**/*.png",
       "e2e/",
       "examples/",

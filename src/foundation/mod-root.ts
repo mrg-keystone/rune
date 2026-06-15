@@ -23,18 +23,48 @@ export type {
   RequestContext,
 } from "@foundation/domain/business/logger/mod.ts";
 export {
-  signToken,
+  MemoryTraceSink,
+  span,
+  Traced,
+  Tracer,
+  tracer,
+  traceUser,
+} from "@foundation/domain/business/tracer/mod.ts";
+export type {
+  Span,
+  Trace,
+  TraceSink,
+} from "@foundation/domain/business/tracer/mod.ts";
+export {
+  createKvTraceSink,
+  KvTraceSink,
+} from "@foundation/domain/business/tracer/kv-store.ts";
+export { traceShipper } from "@foundation/domain/business/tracer/ship.ts";
+export { traceShellHtml } from "@foundation/domain/business/trace-ui/mod.ts";
+export {
+  createJwksVerifier,
   TokenError,
   verifyToken,
 } from "@foundation/domain/business/token/mod.ts";
-export type { TokenPayload } from "@foundation/domain/business/token/mod.ts";
+export type {
+  InfraJwk,
+  InfraJwks,
+  JwksVerifierOptions,
+  SessionBearerPayload,
+  SessionVerifier,
+} from "@foundation/domain/business/token/mod.ts";
+export {
+  createInfraClient,
+  InfraError,
+} from "@foundation/domain/business/infra-client/mod.ts";
+export type {
+  InfraClient,
+  InfraClientConfig,
+  RevocationStatus,
+} from "@foundation/domain/business/infra-client/mod.ts";
 export { createTokenAuthMiddleware } from "@foundation/domain/business/token-auth/mod.ts";
 export type { TokenAuthConfig } from "@foundation/domain/business/token-auth/mod.ts";
-export {
-  createMintUi,
-  isLocalRequest,
-} from "@foundation/domain/business/mint-ui/mod.ts";
-export type { MintUiConfig } from "@foundation/domain/business/mint-ui/mod.ts";
+export { isLocalRequest } from "@foundation/domain/business/localhost/mod.ts";
 export { embed, withBasePath } from "@foundation/domain/business/mount/mod.ts";
 export type {
   EmbedContext,
@@ -53,16 +83,29 @@ export {
   ROLES_METADATA_KEY,
 } from "@foundation/domain/business/roles/mod.ts";
 export {
+  claims,
+  CLAIMS_METADATA_KEY,
+  requiredClaims,
+} from "@foundation/domain/business/claims/mod.ts";
+export {
   createCredentialGuard,
+  DEFAULT_SKELETON_MAX_AGE_SECONDS,
   getIdentity,
   IDENTITY_CONTEXT_KEY,
   isLoopbackRequest,
+  isOpaqueToken,
+  resolveNetworkCredential,
+  rolesFromClaims,
   scopeRoles,
+  SESSION_BEARER_CONTEXT_KEY,
+  SESSION_BEARER_HEADER,
+  validateCredential,
 } from "@foundation/domain/business/token-auth/mod.ts";
 export type {
   CredentialGuardConfig,
   DanetGuard,
   Identity,
+  ResolvedCredential,
 } from "@foundation/domain/business/token-auth/mod.ts";
 export {
   createFirebaseVerifier,

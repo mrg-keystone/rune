@@ -297,6 +297,7 @@ export function mapShellHtml(
     <h1>${escapeHtml(appName)} <span class="h-sub">system map</span></h1>
     <nav>
       <a id="link-index" href="#">Docs index &#8599;</a>
+      <a id="link-trace" href="#">Traces &#8599;</a>
     </nav>
   </div>
   <div class="bar">

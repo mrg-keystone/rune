@@ -18,6 +18,13 @@ export interface DatadogOptions {
   site?: string;
   /** `ddsource` tag for the entries. Defaults to "danet". */
   source?: string;
+  /**
+   * Deployment environment ("production", "local", "staging"…). Stamped on every shipped entry as
+   * the `env` attribute and an `env:<env>` Datadog tag so production and local traffic are
+   * segmented; non-production entries also get an `[ENV]` message prefix (e.g. `[LOCAL]`) so
+   * they're obvious in the raw log stream. Defaults to "production".
+   */
+  env?: string;
   /** Injectable fetch, for tests. Defaults to the global `fetch`. */
   transport?: typeof fetch;
 }
@@ -32,6 +39,7 @@ export class DatadogTransport {
   private readonly headers: HeadersInit;
   private readonly source: string;
   private readonly service: string;
+  private readonly env: string;
   private readonly fetchFn: typeof fetch;
 
   constructor(opts: DatadogOptions) {
@@ -43,11 +51,17 @@ export class DatadogTransport {
     };
     this.source = opts.source ?? "danet";
     this.service = opts.service;
+    this.env = opts.env ?? "production";
     this.fetchFn = opts.transport ?? fetch;
   }
 
   /** POSTs one entry. Rejects on a network error or non-2xx response. */
   async send(entry: DatadogEntry): Promise<void> {
+    const isProd = this.env === "production";
+    const existingTags = typeof entry.ddtags === "string" ? entry.ddtags : "";
+    const ddtags = existingTags
+      ? `${existingTags},env:${this.env}`
+      : `env:${this.env}`;
     const res = await this.fetchFn(this.endpoint, {
       method: "POST",
       headers: this.headers,
@@ -55,6 +69,13 @@ export class DatadogTransport {
         ...entry,
         ddsource: entry.ddsource ?? this.source,
         service: entry.service ?? this.service,
+        // `env` attribute + `env:` tag segment production from local in Datadog; non-prod also
+        // gets a visible `[ENV]` prefix in the raw message.
+        env: this.env,
+        ddtags,
+        message: isProd
+          ? entry.message
+          : `[${this.env.toUpperCase()}] ${entry.message}`,
       }]),
     });
     if (!res.ok) {

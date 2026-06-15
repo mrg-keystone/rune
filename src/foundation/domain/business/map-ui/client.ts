@@ -91,6 +91,8 @@ export const mapClientJs: string = String.raw`
   var prefix = pagePath.replace(/\/docs\/_map$/, "");
   var indexLink = document.getElementById("link-index");
   if (indexLink) indexLink.href = prefix + "/docs";
+  var traceLink = document.getElementById("link-trace");
+  if (traceLink) traceLink.href = prefix + "/docs/_trace";
 
   function esc(s) {
     return String(s).replace(/[&<>"]/g, function (c) {

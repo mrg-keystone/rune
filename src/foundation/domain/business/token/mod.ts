@@ -1,26 +1,37 @@
 /**
- * Signed access tokens. A token binds an `expiry` and `appName` (plus `source`) under an
- * HMAC-SHA256 signature keyed by the app's secret signing key (an env variable), so neither
- * the claims nor the expiry can be altered without invalidating the signature.
+ * Session-bearer verification.
  *
- * The wire format is a compact JWT (`base64url(header).base64url(payload).base64url(sig)`,
- * `alg: HS256`), so the tokens interoperate with standard JWT tooling.
+ * keep no longer MINTS tokens — infra does. infra holds the private key, mints opaque manual
+ * tokens (`mtk_…`), and at each exchange signs a short-lived (~1h) **session bearer**: a compact
+ * JWT carrying `{ iss:"infra", creator, source, claims, sessionExp }`, with the signing key's
+ * `kid` in the header. keep only ever VERIFIES that bearer, **offline**, against infra's published
+ * public keys (JWKS) — no shared secret, no minting, nothing to leak.
+ *
+ * The verification is JWKS-/`alg`-driven: the algorithm is taken from the matched JWK, so keep
+ * works whether infra signs with RS256 or EdDSA (Ed25519). Selecting the key by `kid` means infra
+ * can rotate its active key with zero downtime — bearers signed by a still-published previous key
+ * keep verifying.
  */
 
-/** The claims carried by a token. `expiry` is a Unix epoch in SECONDS. */
-export interface TokenPayload {
-  /** Who the token was minted for — used for log attribution on the receiving app. */
+import { importJWK, importSPKI, type JWTPayload, jwtVerify } from "#jose";
+
+/** The decoded, verified session bearer — the 1h credential keep authorizes requests from. */
+export interface SessionBearerPayload {
+  /** Always `"infra"` — the issuer keep trusts. */
+  iss: string;
+  /** The userId the token authenticates as (replaces the old identity-by-`source`). */
+  creator: string;
+  /** Attribution label recorded in this app's logs. */
   source: string;
-  /** Unix epoch (seconds) after which the token is rejected. Omit for a token that never
-   *  expires (no `exp` claim). */
-  expiry?: number;
-  /** The app the token grants access to. */
-  appName: string;
-  /** Roles granted to this token — checked by `@Roles`. Optional. */
-  roles?: string[];
+  /** The verified claim map. The `role` claim is a comma-separated list of `appName:role`. */
+  claims: Record<string, string>;
+  /** Unix epoch SECONDS after which this offline-valid session bearer lapses (~1h out). */
+  sessionExp: number;
+  /** Unix epoch SECONDS when the original opaque token was minted — gates the `*` 24h skeleton cap. */
+  mintedAt?: number;
 }
 
-/** Thrown by `verifyToken` when a token is malformed, mis-signed, or expired. */
+/** Thrown when a session bearer is malformed, mis-signed, expired, or fails its claim checks. */
 export class TokenError extends Error {
   constructor(message: string) {
     super(message);
@@ -28,148 +39,194 @@ export class TokenError extends Error {
   }
 }
 
-const HEADER = { alg: "HS256", typ: "JWT" } as const;
-const encoder = new TextEncoder();
+/** One public verification key as published by infra's `keys.jwks` (`JwkKeyDto`). */
+export interface InfraJwk {
+  /** Identifier of the signing key — the bearer's header `kid` selects it. */
+  kid: string;
+  /** Signing algorithm the key material is for (e.g. `RS256`, `EdDSA`). */
+  alg: string;
+  /** Public key material — SPKI PEM, or a JSON-encoded JWK. */
+  publicKey: string;
+}
 
-/** Signs `payload` with `key` (the secret signing key) and returns a compact JWT. */
-export async function signToken(
-  payload: TokenPayload,
-  key: string,
-): Promise<string> {
-  assertKey(key);
-  assertPayload(payload);
+/** infra's published key set (`JwksDto`). */
+export interface InfraJwks {
+  keys: InfraJwk[];
+}
 
-  const signingInput = `${encodeSegment(HEADER)}.${
-    encodeSegment(toClaims(payload))
-  }`;
-  const signature = await hmac(signingInput, key);
-  return `${signingInput}.${base64UrlEncode(signature)}`;
+/** Verifies a session bearer offline against infra's JWKS. */
+export interface SessionVerifier {
+  verify(bearer: string, now?: number): Promise<SessionBearerPayload>;
+}
+
+export interface JwksVerifierOptions {
+  /** Fetches infra's current JWKS. Typically `infraClient.jwks`. */
+  fetchJwks: () => Promise<InfraJwks>;
+  /** How long a fetched JWKS is trusted before refetching. Default 600s (10m). */
+  cacheTtlSeconds?: number;
+  /** The expected `iss` claim. Default `"infra"`. */
+  issuer?: string;
+  /** Test/extension seam: import a JWK's public key into a `CryptoKey`. */
+  importKey?: (jwk: InfraJwk) => Promise<CryptoKey>;
+  /** Test seam for the wall clock (ms). Defaults to `Date.now`. */
+  now?: () => number;
+}
+
+const DEFAULT_JWKS_TTL_SECONDS = 600;
+
+/**
+ * Builds a JWKS-backed session-bearer verifier. The fetched key set is cached for
+ * `cacheTtlSeconds`; an unknown `kid` triggers a single forced refresh (keys may have rotated).
+ */
+export function createJwksVerifier(opts: JwksVerifierOptions): SessionVerifier {
+  const issuer = opts.issuer ?? "infra";
+  const ttlMs = (opts.cacheTtlSeconds ?? DEFAULT_JWKS_TTL_SECONDS) * 1000;
+  const nowMs = opts.now ?? (() => Date.now());
+  const importKey = opts.importKey ?? defaultImportKey;
+
+  let cache: { keys: Map<string, InfraJwk>; expiresAt: number } | undefined;
+
+  async function load(force: boolean): Promise<Map<string, InfraJwk>> {
+    if (!force && cache && cache.expiresAt > nowMs()) return cache.keys;
+    let jwks: InfraJwks;
+    try {
+      jwks = await opts.fetchJwks();
+    } catch (err) {
+      throw new TokenError(
+        `Could not fetch infra JWKS: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    const keys = new Map<string, InfraJwk>();
+    for (const k of jwks?.keys ?? []) {
+      if (k && typeof k.kid === "string") keys.set(k.kid, k);
+    }
+    cache = { keys, expiresAt: nowMs() + ttlMs };
+    return keys;
+  }
+
+  async function keyFor(kid: string): Promise<CryptoKey> {
+    let keys = await load(false);
+    let jwk = keys.get(kid);
+    if (!jwk) {
+      // Unknown kid may mean the keys rotated since we cached them — refresh once.
+      keys = await load(true);
+      jwk = keys.get(kid);
+    }
+    if (!jwk) throw new TokenError("No matching infra signing key for token.");
+    return importKey(jwk);
+  }
+
+  return {
+    async verify(
+      bearer: string,
+      now: number = Math.floor(nowMs() / 1000),
+    ): Promise<SessionBearerPayload> {
+      let payload: JWTPayload;
+      try {
+        const verified = await jwtVerify(
+          bearer,
+          (header) => {
+            if (!header.kid) throw new TokenError("Token has no key id.");
+            return keyFor(header.kid);
+          },
+          { issuer },
+        );
+        payload = verified.payload;
+      } catch (err) {
+        if (err instanceof TokenError) throw err;
+        throw new TokenError(
+          err instanceof Error ? err.message : "Invalid session bearer.",
+        );
+      }
+      return toSessionPayload(payload, now);
+    },
+  };
 }
 
 /**
- * Verifies a token's signature against `key` and checks it has not expired (`expiry > now`,
- * where `now` is a Unix epoch in seconds, defaulting to the current time). Returns the
- * decoded payload, or throws `TokenError`.
+ * Verifies a session bearer with a {@link SessionVerifier} (offline, against infra's JWKS).
+ * Re-keyed from the old HS256 `verifyToken(token, key)`: there is no shared secret in keep now.
  */
-export async function verifyToken(
-  token: string,
-  key: string,
-  now: number = Math.floor(Date.now() / 1000),
-): Promise<TokenPayload> {
-  assertKey(key);
-
-  const parts = token.split(".");
-  if (parts.length !== 3) {
-    throw new TokenError("Malformed token: expected three segments.");
-  }
-  const [headerSeg, payloadSeg, signatureSeg] = parts;
-
-  const expected = await hmac(`${headerSeg}.${payloadSeg}`, key);
-  const provided = base64UrlDecode(signatureSeg);
-  if (!timingSafeEqual(expected, provided)) {
-    throw new TokenError("Invalid signature.");
-  }
-
-  const claims = decodeSegment(payloadSeg);
-  const payload = fromClaims(claims);
-  if (payload.expiry !== undefined && payload.expiry <= now) {
-    throw new TokenError("Token expired.");
-  }
-  return payload;
+export function verifyToken(
+  bearer: string,
+  verifier: SessionVerifier,
+  now?: number,
+): Promise<SessionBearerPayload> {
+  return verifier.verify(bearer, now);
 }
 
-function toClaims(p: TokenPayload): Record<string, unknown> {
-  const claims: Record<string, unknown> = {
-    source: p.source,
-    appName: p.appName,
+/** Validates and narrows a verified JWT payload into a {@link SessionBearerPayload}. */
+function toSessionPayload(
+  payload: JWTPayload,
+  now: number,
+): SessionBearerPayload {
+  const creator = payload.creator;
+  const source = payload.source;
+  if (typeof creator !== "string" || creator === "") {
+    throw new TokenError("Session bearer missing `creator`.");
+  }
+  if (typeof source !== "string" || source === "") {
+    throw new TokenError("Session bearer missing `source`.");
+  }
+  // `sessionExp` is keep's own lifetime field (Unix seconds); `exp` (which jose already enforced)
+  // may mirror it. Accept either, prefer the explicit `sessionExp`.
+  const rawExp = typeof payload.sessionExp === "number"
+    ? payload.sessionExp
+    : payload.exp;
+  if (typeof rawExp !== "number") {
+    throw new TokenError("Session bearer missing `sessionExp`.");
+  }
+  if (rawExp <= now) throw new TokenError("Session bearer expired.");
+
+  const claims = normalizeClaims(payload.claims);
+  const mintedAt = typeof payload.mintedAt === "number"
+    ? payload.mintedAt
+    : isoToEpochSeconds(claims.mintedAt ?? claims.createdAt);
+
+  return {
+    iss: typeof payload.iss === "string" ? payload.iss : "infra",
+    creator,
+    source,
+    claims,
+    sessionExp: rawExp,
+    ...(mintedAt !== undefined ? { mintedAt } : {}),
   };
-  if (typeof p.expiry === "number") claims.exp = p.expiry; // omitted ⇒ never expires
-  if (p.roles && p.roles.length) claims.roles = p.roles;
-  return claims;
 }
 
-function fromClaims(claims: Record<string, unknown>): TokenPayload {
-  const { source, appName, exp, roles } = claims;
-  if (typeof source !== "string" || typeof appName !== "string") {
-    throw new TokenError("Malformed token: missing or invalid claims.");
-  }
-  if (exp !== undefined && typeof exp !== "number") {
-    throw new TokenError("Malformed token: invalid `exp`.");
-  }
-  const payload: TokenPayload = { source, appName };
-  if (typeof exp === "number") payload.expiry = exp;
-  if (Array.isArray(roles)) {
-    payload.roles = roles.filter((r): r is string => typeof r === "string");
-  }
-  return payload;
-}
-
-function assertKey(key: string) {
-  if (!key) throw new TokenError("A signing key is required.");
-}
-
-function assertPayload(p: TokenPayload) {
-  if (!p.source) throw new TokenError("`source` is required.");
-  if (!p.appName) throw new TokenError("`appName` is required.");
-  if (p.expiry !== undefined && !Number.isInteger(p.expiry)) {
-    throw new TokenError("`expiry` must be a Unix epoch in seconds.");
-  }
-}
-
-async function hmac(data: string, key: string): Promise<Uint8Array> {
-  const cryptoKey = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(key),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const sig = await crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(data));
-  return new Uint8Array(sig);
-}
-
-/** Constant-time comparison so signature checks don't leak timing information. */
-function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
-  return diff === 0;
-}
-
-function encodeSegment(value: unknown): string {
-  return base64UrlEncode(encoder.encode(JSON.stringify(value)));
-}
-
-function decodeSegment(segment: string): Record<string, unknown> {
-  try {
-    const json = new TextDecoder().decode(base64UrlDecode(segment));
-    const parsed = JSON.parse(json);
-    if (parsed === null || typeof parsed !== "object") {
-      throw new TokenError("Malformed token: payload is not an object.");
+/** Coerces the bearer's `claims` to a string→string map (claim values are string-encoded). */
+function normalizeClaims(raw: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (v === null || v === undefined) continue;
+      out[k] = typeof v === "string" ? v : String(v);
     }
-    return parsed as Record<string, unknown>;
-  } catch (err) {
-    if (err instanceof TokenError) throw err;
-    throw new TokenError("Malformed token: undecodable payload.");
   }
+  return out;
 }
 
-function base64UrlEncode(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(
-    /=+$/,
-    "",
-  );
+/** Parses an ISO-8601 (or epoch-seconds string) into Unix seconds, or undefined. */
+function isoToEpochSeconds(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const ms = Date.parse(value);
+  if (!Number.isNaN(ms)) return Math.floor(ms / 1000);
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.floor(n) : undefined;
 }
 
-function base64UrlDecode(segment: string): Uint8Array {
-  const padded = segment.replace(/-/g, "+").replace(/_/g, "/").padEnd(
-    Math.ceil(segment.length / 4) * 4,
-    "=",
-  );
-  const binary = atob(padded);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
+/** Imports a JWK's `publicKey` — SPKI PEM first, then a JSON-encoded JWK — for its `alg`. */
+async function defaultImportKey(jwk: InfraJwk): Promise<CryptoKey> {
+  const material = jwk.publicKey?.trim() ?? "";
+  if (material.startsWith("-----BEGIN")) {
+    return await importSPKI(material, jwk.alg) as CryptoKey;
+  }
+  try {
+    const parsed = JSON.parse(material);
+    return await importJWK(parsed, jwk.alg) as CryptoKey;
+  } catch {
+    // Not JSON — fall back to treating it as bare SPKI material.
+    return await importSPKI(material, jwk.alg) as CryptoKey;
+  }
 }

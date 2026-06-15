@@ -1,98 +1,102 @@
 import { assertEquals, assertRejects } from "#assert";
-import {
-  signToken,
-  TokenError,
-  type TokenPayload,
-  verifyToken,
-} from "./mod.ts";
+import { createJwksVerifier, TokenError, verifyToken } from "./mod.ts";
+import { createTestSigner } from "./session.testkit.ts";
 
-const KEY = "super-secret-signing-key";
-const future = 4_102_444_800; // 2100-01-01
-const payload: TokenPayload = {
-  source: "ci-runner",
-  expiry: future,
-  appName: "billing",
-};
+const signer = await createTestSigner();
 
-Deno.test("signToken → verifyToken round-trips the payload", async () => {
-  const token = await signToken(payload, KEY);
-  assertEquals(await verifyToken(token, KEY), payload);
+/** A verifier over the test signer's JWKS, with a fetch counter to assert caching. */
+function makeVerifier(opts?: { cacheTtlSeconds?: number }) {
+  let fetches = 0;
+  const verifier = createJwksVerifier({
+    fetchJwks: () => {
+      fetches++;
+      return Promise.resolve(signer.jwks);
+    },
+    cacheTtlSeconds: opts?.cacheTtlSeconds,
+  });
+  return { verifier, fetches: () => fetches };
+}
+
+Deno.test("verifies a well-formed session bearer and returns the payload", async () => {
+  const { verifier } = makeVerifier();
+  const bearer = await signer.sign({
+    creator: "user-7",
+    source: "ci",
+    claims: { role: "billing:admin", team: "core" },
+  });
+  const payload = await verifyToken(bearer, verifier);
+  assertEquals(payload.iss, "infra");
+  assertEquals(payload.creator, "user-7");
+  assertEquals(payload.source, "ci");
+  assertEquals(payload.claims, { role: "billing:admin", team: "core" });
 });
 
-Deno.test("signToken → verifyToken round-trips roles", async () => {
-  const withRoles = { ...payload, roles: ["admin", "editor"] };
-  const token = await signToken(withRoles, KEY);
-  assertEquals(await verifyToken(token, KEY), withRoles);
+Deno.test("rejects an expired session bearer", async () => {
+  const { verifier } = makeVerifier();
+  const bearer = await signer.sign({ sessionExp: 1_000 }); // 1970
+  await assertRejects(() => verifyToken(bearer, verifier), TokenError);
 });
 
-Deno.test("a token with no expiry never expires", async () => {
-  const token = await signToken(
-    { source: "ci-runner", appName: "billing" },
-    KEY,
-  );
-  // Verify far in the future — still valid because there's no `exp` claim.
-  const verified = await verifyToken(token, KEY, 10_000_000_000);
-  assertEquals(verified, { source: "ci-runner", appName: "billing" });
-  assertEquals(verified.expiry, undefined);
-});
-
-Deno.test("verifyToken rejects a token signed with a different key", async () => {
-  const token = await signToken(payload, KEY);
+Deno.test("rejects a bearer whose kid is not in the JWKS", async () => {
+  const { verifier } = makeVerifier();
+  const bearer = await signer.sign({ kid: signer.unknownKid });
   await assertRejects(
-    () => verifyToken(token, "other-key"),
+    () => verifyToken(bearer, verifier),
     TokenError,
-    "Invalid signature",
+    "No matching infra signing key",
   );
 });
 
-Deno.test("verifyToken rejects a tampered payload", async () => {
-  const token = await signToken(payload, KEY);
-  const [header, , sig] = token.split(".");
-  const forged = `${header}.${
-    btoa('{"source":"evil","appName":"billing","exp":4102444800}')
-  }.${sig}`;
-  await assertRejects(() => verifyToken(forged, KEY), TokenError);
+Deno.test("rejects a bearer with the wrong issuer", async () => {
+  const { verifier } = makeVerifier();
+  const bearer = await signer.sign({ iss: "evil" });
+  await assertRejects(() => verifyToken(bearer, verifier), TokenError);
 });
 
-Deno.test("verifyToken rejects an expired token", async () => {
-  const expired = { ...payload, expiry: 1_000 }; // 1970
-  const token = await signToken(expired, KEY);
-  await assertRejects(() => verifyToken(token, KEY), TokenError, "expired");
+Deno.test("rejects a bearer signed by a different key", async () => {
+  const other = await createTestSigner("infra-test-2026"); // same kid, different key
+  const { verifier } = makeVerifier();
+  const bearer = await other.sign({});
+  await assertRejects(() => verifyToken(bearer, verifier), TokenError);
 });
 
-Deno.test("verifyToken honours the injected `now`", async () => {
-  const token = await signToken({ ...payload, expiry: 2_000 }, KEY);
-  assertEquals((await verifyToken(token, KEY, 1_999)).source, "ci-runner");
+Deno.test("rejects a malformed bearer", async () => {
+  const { verifier } = makeVerifier();
+  await assertRejects(() => verifyToken("not.a.jwt", verifier), TokenError);
+  await assertRejects(() => verifyToken("garbage", verifier), TokenError);
+});
+
+Deno.test("surfaces a missing-creator bearer as a TokenError", async () => {
+  const { verifier } = makeVerifier();
+  // Sign with creator explicitly blanked.
+  const bearer = await signer.sign({ creator: "" });
   await assertRejects(
-    () => verifyToken(token, KEY, 2_000),
+    () => verifyToken(bearer, verifier),
     TokenError,
-    "expired",
+    "creator",
   );
 });
 
-Deno.test("verifyToken rejects a malformed token", async () => {
-  await assertRejects(() => verifyToken("not.a.jwt.token", KEY), TokenError);
-  await assertRejects(() => verifyToken("onlyonesegment", KEY), TokenError);
+Deno.test("carries mintedAt when present (for the * 24h cap)", async () => {
+  const { verifier } = makeVerifier();
+  const mintedAt = Math.floor(Date.now() / 1000) - 100;
+  const bearer = await signer.sign({ mintedAt });
+  const payload = await verifyToken(bearer, verifier);
+  assertEquals(payload.mintedAt, mintedAt);
 });
 
-Deno.test("signToken requires source, appName, and an integer expiry", async () => {
-  await assertRejects(
-    () => signToken({ ...payload, source: "" }, KEY),
-    TokenError,
-    "source",
-  );
-  await assertRejects(
-    () => signToken({ ...payload, appName: "" }, KEY),
-    TokenError,
-    "appName",
-  );
-  await assertRejects(
-    () => signToken({ ...payload, expiry: 1.5 }, KEY),
-    TokenError,
-    "expiry",
-  );
+Deno.test("caches the JWKS across verifications within the TTL", async () => {
+  const { verifier, fetches } = makeVerifier({ cacheTtlSeconds: 600 });
+  await verifyToken(await signer.sign({}), verifier);
+  await verifyToken(await signer.sign({}), verifier);
+  assertEquals(fetches(), 1); // one fetch, then served from cache
 });
 
-Deno.test("signToken requires a key", async () => {
-  await assertRejects(() => signToken(payload, ""), TokenError, "signing key");
+Deno.test("an unknown kid forces a single JWKS refresh", async () => {
+  // First call caches; a bearer with an unknown kid triggers exactly one forced refresh.
+  const { verifier, fetches } = makeVerifier({ cacheTtlSeconds: 600 });
+  await verifyToken(await signer.sign({}), verifier); // fetch #1
+  const bad = await signer.sign({ kid: signer.unknownKid });
+  await assertRejects(() => verifyToken(bad, verifier), TokenError); // fetch #2 (refresh)
+  assertEquals(fetches(), 2);
 });

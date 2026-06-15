@@ -112,6 +112,7 @@ export function emulatorShellHtml(
       <a id="link-swagger" href="#">Swagger UI &#8599;</a>
       <a id="link-json" href="#">OpenAPI JSON &#8599;</a>
       <a id="link-map" href="#">System map &#8599;</a>
+      <a id="link-trace" href="#">Traces &#8599;</a>
     </nav>
   </div>
   <div class="bar">

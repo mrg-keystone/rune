@@ -3,7 +3,12 @@ import "#reflect-metadata";
 /**
  * Restricts a controller or route handler to callers holding **at least one** of the listed
  * roles. Roles come from the verified credential — Firebase custom claims (`roles`/`role`) or a
- * signed token's `roles` — and are enforced by the global credential guard *after* authentication.
+ * session bearer's comma-separated `role` claim — and are enforced by the global credential guard
+ * *after* authentication.
+ *
+ * `@Roles` is the **role-claim sugar** over `@claims`: the guard treats `@Roles("admin")` and
+ * `@claims(["admin"])` identically (ANY-of against the caller's app-scoped role claims), and unions
+ * both when present. It is kept as a convenience for the common role case.
  *
  * `@Roles` implies authentication: a role-gated route always requires a valid credential (so it
  * overrides `@Public`). Trusted origins (in-process / localhost) bypass it, like all auth.
