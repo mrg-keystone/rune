@@ -664,6 +664,46 @@ Deno.test("planManifest — mod-root re-exports each REQ verb", () => {
   assertEquals(modRoot!.content.includes("export { get }"), true);
 });
 
+// Bug report 2026-06-14 (Datrix) #3: two [REQ]s with different nouns but the
+// SAME verb both re-exported `resolve` from mod-root.ts -> TS2300 duplicate
+// identifier. The colliding re-exports must be noun-qualified; unique verbs
+// stay bare.
+Deno.test("planManifest — mod-root disambiguates same-verb REQs across nouns", () => {
+  const rune = `[MOD] acc
+
+[REQ] access.resolve(InDto): OutDto
+    [NEW] access
+    access.run(InDto): OutDto
+    access.toDto(): OutDto
+
+[REQ] rules.resolve(InDto): OutDto
+    [NEW] rules
+    rules.run(InDto): OutDto
+    rules.toDto(): OutDto
+
+[REQ] audit.scan(InDto): OutDto
+    [NEW] audit
+    audit.run(InDto): OutDto
+    audit.toDto(): OutDto
+
+[TYP] id: string
+    an id
+[DTO] InDto: id
+    in
+[DTO] OutDto: id
+    out`;
+  const plan = planManifest("specs/acc.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const c = plan.toRegenerate.find((f) => f.path === "src/acc/mod-root.ts")!.content;
+  // colliding verb -> noun-qualified alias
+  assertStringIncludes(c, "export { resolve as accessResolve } from \"./domain/coordinators/access-resolve/mod.ts\";");
+  assertStringIncludes(c, "export { resolve as rulesResolve } from \"./domain/coordinators/rules-resolve/mod.ts\";");
+  // a unique verb is untouched (no needless alias)
+  assertStringIncludes(c, "export { scan } from \"./domain/coordinators/audit-scan/mod.ts\";");
+  // never a bare duplicate
+  assertEquals(c.includes("export { resolve } from"), false);
+});
+
 Deno.test("planManifest — missing [MOD] yields error", () => {
   const rune = `[REQ] x.y(InDto): OutDto
     a::b(c): d`;
@@ -753,6 +793,95 @@ Deno.test("planManifest — a property naming a DTO verbatim nests it", () => {
     "  @ValidateNested()\n  @Type(() => PaymentDto)\n  PaymentDto!: PaymentDto;",
   );
   assertStringIncludes(dto.content, 'import { PaymentDto } from "@/src/pay/dto/payment.ts";');
+});
+
+// ---- regression: an exact [TYP] field must win over a same-stem [DTO] ----
+
+// Bug report 2026-06-14 (Datrix): a [DTO] field whose name collides with the
+// stem of an existing [DTO] (field `principal` <-> `PrincipalDto`) was generated
+// as that nested DTO instead of resolving to its declared [TYP]. When the
+// colliding DTO is the field's own container the result is self-referential
+// (`PrincipalDto.principal!: PrincipalDto`) -> infinite @ValidateNested chain,
+// green `deno check`, runtime 422. An exact `[TYP] <field>` must take precedence
+// over the pascal+Dto convention.
+Deno.test("planManifest — exact [TYP] beats a same-stem [DTO] (no self-nesting)", () => {
+  const rune = `[MOD] demo
+
+[REQ] access.resolve(PrincipalDto): OkDto
+    [NEW] access
+    access.run(PrincipalDto): OkDto
+    access.toDto(): OkDto
+
+[TYP] principal: string
+    the console user id
+[TYP] role: string
+    one role the principal holds
+[TYP] ok: boolean
+    whether it resolved
+[DTO] PrincipalDto: principal, role(s)
+    a console user and the roles they hold
+[DTO] OkDto: ok
+    the result
+
+[NON] access
+    the resolver`;
+  const plan = planManifest("specs/demo.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const dto = plan.toCreate.find((f) => f.path === "src/demo/dto/principal.ts");
+  if (!dto) throw new Error("no principal.ts generated");
+  const c = dto.content;
+  // `principal` is declared `[TYP] principal: string` -> primitive, validated.
+  assertStringIncludes(c, "  @IsString()\n  principal!: string;");
+  // It must NOT nest itself (the bug).
+  assertEquals(c.includes("@Type(() => PrincipalDto)"), false);
+  assertEquals(c.includes("principal!: PrincipalDto"), false);
+});
+
+// A [TYP] field (scalar and (s)-array) must beat a same-stem [DTO], while a
+// genuinely-nested field (no [TYP], resolved by the pascal+Dto convention) in
+// the SAME class still nests — the fix is precedence, not a blanket disable.
+Deno.test("planManifest — [TYP] fields and a convention-nested field coexist", () => {
+  const rune = `[MOD] cfg
+
+[REQ] config.read(ScopeDto): OkDto
+    [NEW] config
+    config.run(ScopeDto): OkDto
+    config.toDto(): OkDto
+
+[TYP] scope: string
+    the scope name
+[TYP] role: string
+    a role the scope grants
+[TYP] ok: boolean
+    result
+[DTO] RoleDto: ok
+    a same-stem [DTO] for the role field
+[DTO] ScopeDto: scope, role(s), detail
+    colliding scalar + colliding array + a genuine nested field
+[DTO] DetailDto: ok
+    a nested detail
+[DTO] OkDto: ok
+    result
+
+[NON] config
+    cfg`;
+  const plan = planManifest("specs/cfg.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const dto = plan.toCreate.find((f) => f.path === "src/cfg/dto/scope.ts");
+  if (!dto) throw new Error("no scope.ts generated");
+  const c = dto.content;
+  // scalar collision: scope -> [TYP] string (not the self-named ScopeDto).
+  assertStringIncludes(c, "  @IsString()\n  scope!: string;");
+  // (s)-array collision: role(s) -> string[] (not RoleDto[]).
+  assertStringIncludes(
+    c,
+    "  @IsArray()\n  @IsString({ each: true })\n  roles!: string[];",
+  );
+  // genuine nesting still works: detail has no [TYP] -> DetailDto by convention.
+  assertStringIncludes(c, "  @ValidateNested()\n  @Type(() => DetailDto)\n  detail!: DetailDto;");
+  // neither colliding [DTO] was nested.
+  assertEquals(c.includes("@Type(() => ScopeDto)"), false);
+  assertEquals(c.includes("@Type(() => RoleDto)"), false);
 });
 
 // ---- [TYP] constraint modifiers -> class-validator decorators ----
@@ -981,6 +1110,50 @@ Deno.test("planManifest — coordinator weave: primitive and opaque read seams",
   );
   // the core signature collapses the alias to its primitive.
   assertStringIncludes(c, "counterNext: string, geoLookup: GeoPoint");
+});
+
+// Bug report 2026-06-14 (Datrix) #2: a [REQ] whose noun has no instance steps
+// (boundary-only / [RET] / pure namespace) still imported + `new`ed a
+// business/<noun>/mod.ts that codegen never generates (business modules come
+// only from instance steps) -> TS2307. The import + `new` must track the nouns
+// that actually have instance steps, not the REQ noun unconditionally.
+Deno.test("planManifest — boundary-only REQ noun emits no business import or `new`", () => {
+  const rune = `[MOD] eng
+
+[REQ] cache.read(InDto): OutDto
+    db:store.fetch(InDto): OutDto
+    [RET] OutDto
+
+[REQ] report.build(InDto): OutDto
+    [NEW] report
+    report.compose(InDto): OutDto
+    report.toDto(): OutDto
+
+[TYP] id: string
+    an id
+[DTO] InDto: id
+    in
+[DTO] OutDto: id
+    out`;
+  const plan = planManifest("specs/eng.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const paths = plan.toCreate.map((f) => f.path);
+  // codegen does NOT generate a business module for the namespace noun…
+  assertEquals(paths.includes("src/eng/domain/business/cache/mod.ts"), false);
+  // …so its coordinator must not import or instantiate one.
+  const cache = plan.toCreate.find((f) => f.path.endsWith("cache-read/mod.ts"))!.content;
+  assertEquals(cache.includes("domain/business/cache/mod.ts"), false);
+  assertEquals(cache.includes("new Cache()"), false);
+  assertEquals(/import \{ Cache \}/.test(cache), false);
+  // the core still builds from inputs/reads.
+  assertStringIncludes(cache, "  const out = readCore(validInput, storeFetch);");
+  assertStringIncludes(cache, "  // TODO: run the pure steps on the inputs, build the dtos");
+
+  // a sibling REQ WITH an instance step DOES generate + use its business class.
+  assertEquals(paths.includes("src/eng/domain/business/report/mod.ts"), true);
+  const report = plan.toCreate.find((f) => f.path.endsWith("report-build/mod.ts"))!.content;
+  assertStringIncludes(report, 'import { Report } from "@/src/eng/domain/business/report/mod.ts";');
+  assertStringIncludes(report, "  const report = new Report();");
 });
 
 Deno.test("planManifest — :core DTOs import from src/core/dto in coordinator + controller", () => {

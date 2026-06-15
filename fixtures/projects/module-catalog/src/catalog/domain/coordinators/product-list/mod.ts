@@ -4,7 +4,6 @@
 import { ListDto } from "@/src/catalog/dto/list.ts";
 import { ProductsDto } from "@/src/catalog/dto/products.ts";
 import { assert } from "#assert";
-import { Product } from "@/src/catalog/domain/business/product/mod.ts";
 import { Product as ProductData } from "@/src/catalog/domain/data/product/mod.ts";
 
 // Coordinator for [REQ] product.list(ListDto): ProductsDto.
@@ -13,7 +12,7 @@ export async function list(input: ListDto): Promise<ProductsDto> {
   const productData = new ProductData();
 
   // reads — load inputs through the data adapters (validated at the seam)
-  const productQuery = assert(ProductsDto, await productData.query(undefined as never), "product.query");
+  const productQuery = assert(ProductsDto, await productData.query(validInput), "product.query");
 
   // core — pure business logic, no I/O
   const out = listCore(validInput, productQuery);
@@ -24,7 +23,6 @@ export async function list(input: ListDto): Promise<ProductsDto> {
 // Pure business logic for product.list — no I/O. Takes the
 // request input and the dtos the reads loaded; returns the result.
 function listCore(input: ListDto, productQuery: ProductsDto): { result: ProductsDto } {
-  const product = new Product();
-  // TODO: run the pure steps on product, build the dtos
+  // TODO: run the pure steps on the inputs, build the dtos
   throw new Error("not implemented");
 }

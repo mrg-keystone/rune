@@ -4,7 +4,6 @@
 import { IssueDto } from "@/src/billing/dto/issue.ts";
 import { InvoiceDto } from "@/src/billing/dto/invoice.ts";
 import { assert } from "#assert";
-import { Invoice } from "@/src/billing/domain/business/invoice/mod.ts";
 import { Invoice as InvoiceData } from "@/src/billing/domain/data/invoice/mod.ts";
 
 // Coordinator for [REQ] invoice.issue(IssueDto): InvoiceDto.
@@ -13,7 +12,7 @@ export async function issue(input: IssueDto): Promise<InvoiceDto> {
   const invoiceData = new InvoiceData();
 
   // reads — load inputs through the data adapters (validated at the seam)
-  const invoiceSave = assert(InvoiceDto, await invoiceData.save(undefined as never), "invoice.save");
+  const invoiceSave = assert(InvoiceDto, await invoiceData.save(validInput), "invoice.save");
 
   // core — pure business logic, no I/O
   const out = issueCore(validInput, invoiceSave);
@@ -24,7 +23,6 @@ export async function issue(input: IssueDto): Promise<InvoiceDto> {
 // Pure business logic for invoice.issue — no I/O. Takes the
 // request input and the dtos the reads loaded; returns the result.
 function issueCore(input: IssueDto, invoiceSave: InvoiceDto): { result: InvoiceDto } {
-  const invoice = new Invoice();
-  // TODO: run the pure steps on invoice, build the dtos
+  // TODO: run the pure steps on the inputs, build the dtos
   throw new Error("not implemented");
 }

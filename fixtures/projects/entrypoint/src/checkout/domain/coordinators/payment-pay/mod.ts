@@ -4,7 +4,6 @@
 import { PayDto } from "@/src/checkout/dto/pay.ts";
 import { ReceiptDto } from "@/src/checkout/dto/receipt.ts";
 import { assert } from "#assert";
-import { Payment } from "@/src/checkout/domain/business/payment/mod.ts";
 import { Payment as PaymentData } from "@/src/checkout/domain/data/payment/mod.ts";
 
 // Coordinator for [REQ] payment.pay(PayDto): ReceiptDto.
@@ -13,7 +12,7 @@ export async function pay(input: PayDto): Promise<ReceiptDto> {
   const paymentData = new PaymentData();
 
   // reads — load inputs through the data adapters (validated at the seam)
-  const paymentCharge = assert(ReceiptDto, await paymentData.charge(undefined as never), "payment.charge");
+  const paymentCharge = assert(ReceiptDto, await paymentData.charge(validInput), "payment.charge");
 
   // core — pure business logic, no I/O
   const out = payCore(validInput, paymentCharge);
@@ -24,7 +23,6 @@ export async function pay(input: PayDto): Promise<ReceiptDto> {
 // Pure business logic for payment.pay — no I/O. Takes the
 // request input and the dtos the reads loaded; returns the result.
 function payCore(input: PayDto, paymentCharge: ReceiptDto): { result: ReceiptDto } {
-  const payment = new Payment();
-  // TODO: run the pure steps on payment, build the dtos
+  // TODO: run the pure steps on the inputs, build the dtos
   throw new Error("not implemented");
 }

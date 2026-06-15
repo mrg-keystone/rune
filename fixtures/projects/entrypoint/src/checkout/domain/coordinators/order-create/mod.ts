@@ -4,7 +4,6 @@
 import { NewOrderDto } from "@/src/checkout/dto/new-order.ts";
 import { OrderDto } from "@/src/checkout/dto/order.ts";
 import { assert } from "#assert";
-import { Order } from "@/src/checkout/domain/business/order/mod.ts";
 import { Order as OrderData } from "@/src/checkout/domain/data/order/mod.ts";
 
 // Coordinator for [REQ] order.create(NewOrderDto): OrderDto.
@@ -24,7 +23,6 @@ export async function create(input: NewOrderDto): Promise<OrderDto> {
 // Pure business logic for order.create — no I/O. Takes the
 // request input; returns the dtos the writes consume plus the result.
 function createCore(input: NewOrderDto): { save: OrderDto; result: OrderDto } {
-  const order = new Order();
-  // TODO: run the pure steps on order, build the dtos
+  // TODO: run the pure steps on the inputs, build the dtos
   throw new Error("not implemented");
 }

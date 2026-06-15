@@ -11,6 +11,7 @@ import {
   type PlyNode,
   type ReqNode,
   type StepLike,
+  type StepNode,
   type TypNode,
 } from "@rune/domain/business/rune-parse/mod.ts";
 import {
@@ -520,19 +521,23 @@ function exampleLiteral(value: string, typeName: string | undefined): string {
   return JSON.stringify(value);
 }
 
-// Resolve a [DTO] property's base name to a nested DTO class, mirroring the
-// parser's resolution (rune-parse): the name IS a DTO verbatim, the
-// `pascal(name)+"Dto"` convention names one, or its [TYP] aliases one.
+// Resolve a [DTO] property's base name to a nested DTO class. Precedence: the
+// name IS a DTO verbatim; then an exact `[TYP] <name>` is AUTHORITATIVE — it
+// resolves through its declared type (which only names a DTO when the [TYP]
+// aliases one; a primitive [TYP] yields `undefined`, so the field is NOT
+// nested); only with no `[TYP]` do we fall back to the `pascal(name)+"Dto"`
+// convention. Without this order a field whose name collides with a same-stem
+// [DTO] (e.g. `principal` <-> `PrincipalDto`) was wrongly nested — often
+// self-referentially — instead of taking its declared [TYP] primitive.
 function nestedDtoFor(
   base: string,
   types: TypeContext,
 ): DtoNode | undefined {
   const verbatim = types.dtoByName.get(base);
   if (verbatim) return verbatim;
-  const byConvention = types.dtoByName.get(`${toPascal(base)}Dto`);
-  if (byConvention) return byConvention;
   const typ = types.typMap.get(base);
-  return typ ? types.dtoByName.get(typ.typeName) : undefined;
+  if (typ) return types.dtoByName.get(typ.typeName);
+  return types.dtoByName.get(`${toPascal(base)}Dto`);
 }
 
 // The isCore-aware directory a DTO class is generated into.
@@ -800,6 +805,25 @@ function renderCoordinator(
   const sends = boundaries.filter((s) => s.output === "");
   const boundaryNouns = [...new Set(boundaries.map((s) => s.noun))];
 
+  // Business classes are generated ONLY for nouns that appear as untagged
+  // instance steps (addBusinessFeature, walkStepsForFiles) and aren't [PLY]
+  // dispatch nouns (those get an abstract base, not a concrete class). So the
+  // core may only `new` those nouns — instantiating req.noun unconditionally
+  // imported a never-generated business/<noun>/mod.ts for boundary-only / [RET]
+  // / pure-namespace REQs (TS2307).
+  const polyNouns = new Set(
+    req.steps.filter((s) => s.kind === "ply").map((s) => s.noun),
+  );
+  const instanceNouns = [
+    ...new Set(
+      req.steps
+        .filter((s): s is StepNode =>
+          s.kind === "step" && !polyNouns.has(s.noun)
+        )
+        .map((s) => s.noun),
+    ),
+  ];
+
   const readVars = reads.map((r) => ({
     name: camel(`${r.noun}-${r.verb}`),
     type: r.output,
@@ -857,11 +881,13 @@ function renderCoordinator(
     L.push(`import { ${d.type} } from "@/${d.dir}/${d.file}.ts";`);
   }
   if (usesAssert) L.push(`import { assert } from "#assert";`);
-  L.push(
-    `import { ${toPascal(req.noun)} } from "@/src/${module}/domain/business/${
-      applyCase(req.noun, "kebab")
-    }/mod.ts";`,
-  );
+  for (const n of instanceNouns) {
+    L.push(
+      `import { ${toPascal(n)} } from "@/src/${module}/domain/business/${
+        applyCase(n, "kebab")
+      }/mod.ts";`,
+    );
+  }
   for (const n of boundaryNouns) {
     L.push(
       `import { ${toPascal(n)} as ${toPascal(n)}Data } from "@/src/${module}/domain/data/${
@@ -956,8 +982,13 @@ function renderCoordinator(
   L.push(`// Pure business logic for ${req.noun}.${req.verb} — no I/O. Takes the`);
   L.push(`// request input${takesReads}; returns ${returnsClause}.`);
   L.push(`function ${req.verb}Core(${coreParams}): { ${ret} } {`);
-  L.push(`  const ${camel(req.noun)} = new ${toPascal(req.noun)}();`);
-  L.push(`  // TODO: run the pure steps on ${camel(req.noun)}, build the dtos`);
+  for (const n of instanceNouns) {
+    L.push(`  const ${camel(n)} = new ${toPascal(n)}();`);
+  }
+  const todoNouns = instanceNouns.length
+    ? instanceNouns.map((n) => camel(n)).join(", ")
+    : "the inputs";
+  L.push(`  // TODO: run the pure steps on ${todoNouns}, build the dtos`);
   L.push(`  throw new Error("not implemented");`);
   L.push("}");
   L.push("");
@@ -1277,14 +1308,24 @@ function addModRoot(
   reqs: ReqNode[],
   runePath: string,
 ): void {
+  // Each coordinator exports a function named after its verb, so two [REQ]s
+  // sharing a verb (access.resolve + rules.resolve) would re-export `resolve`
+  // twice → TS2300. Qualify the colliding re-exports with the noun
+  // (`resolve as accessResolve`); verbs that are unique in the module stay bare.
+  const verbCounts = new Map<string, number>();
+  for (const r of reqs) verbCounts.set(r.verb, (verbCounts.get(r.verb) ?? 0) + 1);
   emit(
     "mod-root",
     `src/${module}/mod-root.ts`,
     render(tpl("mod-root"), {
-      reqs: reqs.map((r) => ({
-        verb: r.verb,
-        processFile: processName(r.noun, r.verb),
-      })),
+      reqs: reqs.map((r) => {
+        const collides = (verbCounts.get(r.verb) ?? 0) > 1;
+        const exported = collides ? camel(`${r.noun}-${r.verb}`) : r.verb;
+        return {
+          binding: exported === r.verb ? r.verb : `${r.verb} as ${exported}`,
+          processFile: processName(r.noun, r.verb),
+        };
+      }),
       module,
       runePath,
     }),
@@ -1470,7 +1511,7 @@ Deno.test("{{this}}", async () => {
 const MOD_ROOT_TPL = `${REGEN_HEADER}
 // Public API surface for module "{{module}}".
 {{#each reqs}}
-${"export"} { {{this.verb}} } from "./domain/coordinators/{{this.processFile}}/mod.ts";
+${"export"} { {{this.binding}} } from "./domain/coordinators/{{this.processFile}}/mod.ts";
 {{/each}}
 `;
 
