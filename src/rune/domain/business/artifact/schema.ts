@@ -27,6 +27,7 @@ export const FOLLOWS = [
   "identifier",
   "case",
   "value",
+  "service",
   "none",
 ] as const;
 

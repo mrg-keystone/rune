@@ -1,5 +1,6 @@
 {
   "module": "billing",
+  "moduleDescription": null,
   "reqs": [
     {
       "noun": "invoice",
@@ -9,7 +10,7 @@
       "steps": [
         {
           "kind": "boundary",
-          "tag": "db",
+          "service": "db",
           "noun": "invoice",
           "verb": "save",
           "params": [
@@ -84,5 +85,6 @@
     }
   ],
   "nons": [],
+  "srvs": [],
   "errors": []
 }

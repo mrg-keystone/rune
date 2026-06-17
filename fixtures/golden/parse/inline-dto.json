@@ -1,5 +1,6 @@
 {
   "module": null,
+  "moduleDescription": null,
   "reqs": [
     {
       "noun": "search",
@@ -9,7 +10,7 @@
       "steps": [
         {
           "kind": "boundary",
-          "tag": "db",
+          "service": "db",
           "noun": "index",
           "verb": "query",
           "params": [
@@ -74,5 +75,6 @@
     }
   ],
   "nons": [],
+  "srvs": [],
   "errors": []
 }

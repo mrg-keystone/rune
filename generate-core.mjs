@@ -31,6 +31,10 @@ function lineRuleBody(tag) {
       return `seq(${t}, field("name", $.identifier))`;
     case "value":
       return `seq(${t}, choice(prec(2, $.dto_reference), $.type_name))`;
+    case "service":
+      // [SRV] <transport>:<name>: <ENV, ENV2> — the spec body is consumed as one
+      // token (highlighting only; the TS parser does the real structural parse).
+      return `seq(${t}, $.srv_spec)`;
     case "none":
       return `${t}`;
     default:
@@ -222,6 +226,9 @@ ${tagRules}
       seq($.boundary_prefix, $.signature, ":", $.return_type),
 
     boundary_prefix: ($) => choice(${boundaryChoice}),
+
+    // [SRV] body: <transport>:<name>: <ENV, ...> consumed as one line token.
+    srv_spec: ($) => token(/[^\\n]+/),
 
     dto_def_name: ($) => /[A-Za-z_][A-Za-z0-9_]*Dto/,
 

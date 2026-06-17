@@ -63,6 +63,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "srv_line"
+        },
+        {
+          "type": "SYMBOL",
           "name": "boundary_line"
         },
         {
@@ -534,6 +538,23 @@
             "type": "SYMBOL",
             "name": "identifier"
           }
+        }
+      ]
+    },
+    "srv_tag": {
+      "type": "STRING",
+      "value": "[SRV]"
+    },
+    "srv_line": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "srv_tag"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "srv_spec"
         }
       ]
     },
@@ -1052,6 +1073,13 @@
           "value": "lg:"
         }
       ]
+    },
+    "srv_spec": {
+      "type": "TOKEN",
+      "content": {
+        "type": "PATTERN",
+        "value": "[^\\n]+"
+      }
     },
     "dto_def_name": {
       "type": "PATTERN",

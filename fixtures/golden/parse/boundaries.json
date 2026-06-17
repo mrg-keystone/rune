@@ -1,5 +1,6 @@
 {
   "module": null,
+  "moduleDescription": null,
   "reqs": [
     {
       "noun": "sync",
@@ -9,7 +10,7 @@
       "steps": [
         {
           "kind": "boundary",
-          "tag": "db",
+          "service": "db",
           "noun": "store",
           "verb": "read",
           "params": [
@@ -24,7 +25,7 @@
         },
         {
           "kind": "boundary",
-          "tag": "fs",
+          "service": "fs",
           "noun": "disk",
           "verb": "load",
           "params": [
@@ -39,7 +40,7 @@
         },
         {
           "kind": "boundary",
-          "tag": "mq",
+          "service": "mq",
           "noun": "queue",
           "verb": "publish",
           "params": [
@@ -54,7 +55,7 @@
         },
         {
           "kind": "boundary",
-          "tag": "ex",
+          "service": "ex",
           "noun": "api",
           "verb": "fetch",
           "params": [
@@ -70,7 +71,7 @@
         },
         {
           "kind": "boundary",
-          "tag": "os",
+          "service": "os",
           "noun": "blob",
           "verb": "put",
           "params": [
@@ -85,7 +86,7 @@
         },
         {
           "kind": "boundary",
-          "tag": "lg",
+          "service": "lg",
           "noun": "audit",
           "verb": "write",
           "params": [
@@ -157,5 +158,6 @@
     }
   ],
   "nons": [],
+  "srvs": [],
   "errors": []
 }

@@ -1,5 +1,6 @@
 {
   "module": null,
+  "moduleDescription": null,
   "reqs": [],
   "ents": [],
   "dtos": [
@@ -48,5 +49,6 @@
     }
   ],
   "nons": [],
+  "srvs": [],
   "errors": []
 }

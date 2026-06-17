@@ -1,5 +1,6 @@
 {
   "module": "checkout",
+  "moduleDescription": null,
   "reqs": [
     {
       "noun": "order",
@@ -9,7 +10,7 @@
       "steps": [
         {
           "kind": "boundary",
-          "tag": "db",
+          "service": "db",
           "noun": "order",
           "verb": "save",
           "params": [
@@ -38,7 +39,7 @@
       "steps": [
         {
           "kind": "boundary",
-          "tag": "db",
+          "service": "db",
           "noun": "payment",
           "verb": "charge",
           "params": [
@@ -147,5 +148,6 @@
     }
   ],
   "nons": [],
+  "srvs": [],
   "errors": []
 }

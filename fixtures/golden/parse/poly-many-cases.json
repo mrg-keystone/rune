@@ -1,5 +1,6 @@
 {
   "module": null,
+  "moduleDescription": null,
   "reqs": [
     {
       "noun": "notify",
@@ -27,7 +28,7 @@
               "steps": [
                 {
                   "kind": "boundary",
-                  "tag": "ex",
+                  "service": "ex",
                   "noun": "smtp",
                   "verb": "send",
                   "params": [
@@ -49,7 +50,7 @@
               "steps": [
                 {
                   "kind": "boundary",
-                  "tag": "ex",
+                  "service": "ex",
                   "noun": "carrier",
                   "verb": "send",
                   "params": [
@@ -71,7 +72,7 @@
               "steps": [
                 {
                   "kind": "boundary",
-                  "tag": "ex",
+                  "service": "ex",
                   "noun": "push",
                   "verb": "send",
                   "params": [
@@ -148,5 +149,6 @@
       "line": 14
     }
   ],
+  "srvs": [],
   "errors": []
 }

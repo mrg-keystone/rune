@@ -14,6 +14,7 @@
 (typ_tag) @rune.tag
 (dto_tag) @rune.tag
 (non_tag) @rune.tag
+(srv_tag) @rune.tag
 
 ; Nouns: subjects (before . or ::) and declared names
 (req_line (identifier) @rune.noun)

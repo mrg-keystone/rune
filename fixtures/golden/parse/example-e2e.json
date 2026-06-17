@@ -1,5 +1,6 @@
 {
   "module": null,
+  "moduleDescription": null,
   "reqs": [
     {
       "noun": "recording",
@@ -49,7 +50,7 @@
               "steps": [
                 {
                   "kind": "boundary",
-                  "tag": "ex",
+                  "service": "ex",
                   "noun": "provider",
                   "verb": "search",
                   "params": [
@@ -66,7 +67,7 @@
                 },
                 {
                   "kind": "boundary",
-                  "tag": "ex",
+                  "service": "ex",
                   "noun": "provider",
                   "verb": "download",
                   "params": [
@@ -88,7 +89,7 @@
               "steps": [
                 {
                   "kind": "boundary",
-                  "tag": "ex",
+                  "service": "ex",
                   "noun": "provider",
                   "verb": "search",
                   "params": [
@@ -105,7 +106,7 @@
                 },
                 {
                   "kind": "boundary",
-                  "tag": "ex",
+                  "service": "ex",
                   "noun": "provider",
                   "verb": "download",
                   "params": [
@@ -142,7 +143,7 @@
         },
         {
           "kind": "boundary",
-          "tag": "db",
+          "service": "db",
           "noun": "metadata",
           "verb": "set",
           "params": [
@@ -164,7 +165,7 @@
         },
         {
           "kind": "boundary",
-          "tag": "os",
+          "service": "os",
           "noun": "storage",
           "verb": "save",
           "params": [
@@ -230,7 +231,7 @@
         },
         {
           "kind": "boundary",
-          "tag": "os",
+          "service": "os",
           "noun": "storage",
           "verb": "load",
           "params": [
@@ -252,7 +253,7 @@
         },
         {
           "kind": "boundary",
-          "tag": "db",
+          "service": "db",
           "noun": "metadata",
           "verb": "get",
           "params": [
@@ -324,7 +325,7 @@
         },
         {
           "kind": "boundary",
-          "tag": "db",
+          "service": "db",
           "noun": "metadata",
           "verb": "get",
           "params": [
@@ -341,7 +342,7 @@
         },
         {
           "kind": "boundary",
-          "tag": "db",
+          "service": "db",
           "noun": "metadata",
           "verb": "set",
           "params": [
@@ -500,5 +501,6 @@
       "line": 63
     }
   ],
+  "srvs": [],
   "errors": []
 }

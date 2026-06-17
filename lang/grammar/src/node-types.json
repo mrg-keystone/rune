@@ -563,6 +563,10 @@
           "named": true
         },
         {
+          "type": "srv_line",
+          "named": true
+        },
+        {
           "type": "step_line",
           "named": true
         },
@@ -572,6 +576,25 @@
         },
         {
           "type": "typ_line",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "srv_line",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "srv_spec",
+          "named": true
+        },
+        {
+          "type": "srv_tag",
           "named": true
         }
       ]
@@ -859,6 +882,14 @@
   },
   {
     "type": "ret_tag",
+    "named": true
+  },
+  {
+    "type": "srv_spec",
+    "named": true
+  },
+  {
+    "type": "srv_tag",
     "named": true
   },
   {

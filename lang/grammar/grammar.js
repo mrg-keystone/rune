@@ -26,6 +26,7 @@ module.exports = grammar({
         $.typ_line,
         $.dto_line,
         $.non_line,
+        $.srv_line,
         $.boundary_line,
         $.step_line,
         $.fault_line,
@@ -74,6 +75,10 @@ module.exports = grammar({
     // [NON] Noun declaration (indent 0)
     non_tag: ($) => token(seq("[NON", optional(seq(":", /[^\]\s]+/)), "]")),
     non_line: ($) => seq($.non_tag, field("name", $.identifier)),
+
+    // [SRV] Service declaration (indent 0)
+    srv_tag: ($) => "[SRV]",
+    srv_line: ($) => seq($.srv_tag, $.srv_spec),
     // ---- end generated keyword rules ----------------------------------
 
     comment: ($) => token(seq("//", /.*/)),
@@ -162,6 +167,9 @@ module.exports = grammar({
       seq($.boundary_prefix, $.signature, ":", $.return_type),
 
     boundary_prefix: ($) => choice("db:", "fs:", "mq:", "ex:", "os:", "lg:"),
+
+    // [SRV] body: <transport>:<name>: <ENV, ...> consumed as one line token.
+    srv_spec: ($) => token(/[^\n]+/),
 
     dto_def_name: ($) => /[A-Za-z_][A-Za-z0-9_]*Dto/,
 

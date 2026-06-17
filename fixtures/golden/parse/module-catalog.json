@@ -1,5 +1,6 @@
 {
   "module": "catalog",
+  "moduleDescription": null,
   "reqs": [
     {
       "noun": "product",
@@ -9,7 +10,7 @@
       "steps": [
         {
           "kind": "boundary",
-          "tag": "db",
+          "service": "db",
           "noun": "product",
           "verb": "query",
           "params": [
@@ -73,5 +74,6 @@
     }
   ],
   "nons": [],
+  "srvs": [],
   "errors": []
 }

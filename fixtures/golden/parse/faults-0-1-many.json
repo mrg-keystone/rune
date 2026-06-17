@@ -1,5 +1,6 @@
 {
   "module": null,
+  "moduleDescription": null,
   "reqs": [
     {
       "noun": "payment",
@@ -21,7 +22,7 @@
         },
         {
           "kind": "boundary",
-          "tag": "ex",
+          "service": "ex",
           "noun": "gateway",
           "verb": "authorize",
           "params": [
@@ -36,7 +37,7 @@
         },
         {
           "kind": "boundary",
-          "tag": "db",
+          "service": "db",
           "noun": "ledger",
           "verb": "record",
           "params": [
@@ -118,5 +119,6 @@
       "line": 8
     }
   ],
+  "srvs": [],
   "errors": []
 }
