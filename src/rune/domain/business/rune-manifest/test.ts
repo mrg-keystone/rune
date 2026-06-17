@@ -1489,3 +1489,45 @@ Deno.test("planManifest — coordinator carries spec-line provenance + JSDoc", (
   assertStringIncludes(coord.content, "@returns OrderDto");
   assertStringIncludes(coord.content, "@throws timeout — raised by order.save");
 });
+
+Deno.test("planManifest — mod-root front-door doc + [MOD] desc + glossary (E10/E46)", () => {
+  const rune = `[MOD] checkout: takes an order.
+
+[REQ] order.create(NewOrderDto): OrderDto
+    [NEW] order
+    order.fill(item): order
+    firebase:order.save(OrderDto): void
+    [RET] OrderDto
+
+[DTO] NewOrderDto: item
+    a new order
+[DTO] OrderDto: id, item
+    a created order
+[TYP] item: string
+    the item to order
+[TYP] id: string
+    the order id
+[NON] order
+    a created order in flight
+
+[SRV] sk:firebase: FIREBASE_API_KEY, FIREBASE_PROJECT_ID
+    Firebase callable`;
+  const plan = planManifest("checkout.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const mr = [...plan.toCreate, ...plan.toRegenerate].find((f) =>
+    f.path.endsWith("mod-root.ts")
+  )!;
+  assertStringIncludes(mr.content, "// takes an order.");
+  assertStringIncludes(mr.content, "// Domain nouns (from [NON]):");
+  assertStringIncludes(mr.content, "//   order: a created order in flight");
+  assertStringIncludes(mr.content, "// Type vocabulary (from [TYP]):");
+  assertStringIncludes(mr.content, "//   item: string — the item to order");
+  assertStringIncludes(mr.content, "// Backing services (from [SRV]):");
+  assertStringIncludes(mr.content, "//   firebase (sk): FIREBASE_API_KEY, FIREBASE_PROJECT_ID");
+  // int-test carries the recipe with spec-line provenance (E33/E36)
+  const it = [...plan.toCreate, ...plan.toRegenerate].find((f) =>
+    f.path.endsWith("order-create/int.test.ts")
+  )!;
+  assertStringIncludes(it.content, "// Recipe (from [REQ] order.create @ checkout.rune:3):");
+  assertStringIncludes(it.content, "//   2. order.fill(item): order");
+});

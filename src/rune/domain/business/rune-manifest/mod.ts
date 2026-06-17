@@ -250,7 +250,18 @@ export function planManifest(
       addEntrypointSurface(emit, module, surface, ents, ast.reqs, entProcess, runePath, types);
     }
   }
-  if (ast.reqs.length > 0) addModRoot(emit, module, ast.reqs, runePath);
+  if (ast.reqs.length > 0) {
+    addModRoot(
+      emit,
+      module,
+      ast.reqs,
+      runePath,
+      ast.nons,
+      ast.typs,
+      ast.srvs,
+      ast.moduleDescription,
+    );
+  }
 
   // Split into toCreate / toSkip based on existence; regenerate-lifecycle files always (re)write.
   for (const [path, content] of wantedFiles) {
@@ -321,7 +332,7 @@ function walkStepsForFiles(
       );
     } else if (step.kind === "ply") {
       polyNouns.add(step.noun);
-      addPolyFeature(emit, module, step, runePath);
+      addPolyFeature(emit, module, step, runePath, types);
       for (const cse of step.cases) {
         walkStepsForFiles(
           cse.steps,
@@ -356,6 +367,14 @@ function addCoordinator(
     `${dir}/mod.ts`,
     renderCoordinator(req, module, runePath, types),
   );
+  // E33/E36: the ordered recipe (with its spec-line provenance) as a comment
+  // block in the int-test, so the test author sees the flow under test.
+  const recipe = stepRecipe(req.steps);
+  const recipeBlock = recipe.length > 0
+    ? `\n// Recipe (from [REQ] ${req.noun}.${req.verb} @ ${runePath}:${
+      req.line + 1
+    }):\n${recipe.map((l) => `//   ${l}`).join("\n")}\n`
+    : "";
   emit(
     "coordinator-int-test",
     `${dir}/int.test.ts`,
@@ -363,6 +382,7 @@ function addCoordinator(
       req,
       runePath,
       faults: collectAllFaults(req),
+      recipe: recipeBlock,
     }),
   );
 }
@@ -409,6 +429,7 @@ function addPolyFeature(
   module: string,
   ply: PlyNode,
   runePath: string,
+  types: TypeContext,
 ): void {
   const noun = applyCase(ply.noun, "kebab");
   const dir = `src/${module}/domain/business/${noun}`;
@@ -422,15 +443,18 @@ function addPolyFeature(
     params: renderParams(ply.params),
     output: "unknown",
   };
-  emit(
-    "poly-base-mod",
-    `${dir}/base/mod.ts`,
-    render(tpl("poly-base-mod"), { ply: typedPly, runePath }),
-  );
+  // E35/E48: dispatch docs — the variant roster, the [NON] domain prose, and the
+  // REAL spec signature (the abstract method is typed to `unknown` for safety).
+  const variants = ply.cases.map((c) => c.name).join(", ");
+  const nonDesc = types.nonByNoun.get(ply.noun)?.description;
+  const nonDoc = nonDesc ? `// ${typedPly.noun}: ${nonDesc}\n` : "";
+  const realSig = `${ply.verb}(${ply.params.join(", ")}): ${ply.output}`;
+  const polyCtx = { ply: typedPly, runePath, variants, nonDoc, realSig };
+  emit("poly-base-mod", `${dir}/base/mod.ts`, render(tpl("poly-base-mod"), polyCtx));
   emit(
     "poly-base-test",
     `${dir}/base/test.ts`,
-    render(tpl("poly-base-test"), { ply: typedPly, runePath }),
+    render(tpl("poly-base-test"), polyCtx),
   );
   const firstVariant = ply.cases[0]?.name ?? "";
   emit(
@@ -496,10 +520,19 @@ function addAdapter(
   // Cover every fault declared on ANY boundary step for this noun, not just the
   // first one — one adapter serves all of the noun's boundary calls, and
   // rune-fault-coverage expects a test for each declared fault.
+  // E34: list the boundary methods this adapter fronts (+ backing service) as a
+  // comment, so the smoke test names what it must reach.
+  const methodList = methods.length > 0
+    ? "\n// Boundary methods to reach:\n" +
+      methods.map((m) => {
+        const svc = m.service ? ` (service: ${m.service})` : "";
+        return `//   ${toPascal(step.noun)}.${m.verb}(${m.params.join(", ")})${svc}`;
+      }).join("\n") + "\n"
+    : "";
   emit(
     "adapter-smk-test",
     `${dir}/smk.test.ts`,
-    render(tpl("adapter-smk-test"), { step, runePath, faults }),
+    render(tpl("adapter-smk-test"), { step, runePath, faults, methodList }),
   );
 }
 
@@ -956,6 +989,35 @@ function collectFaultRaisers(
   return out;
 }
 
+// The spec's ordered, non-boundary step recipe as bare numbered lines (no indent
+// or comment prefix). Boundaries are the shell's reads/writes/sends — only pure
+// steps / [NEW] / [RET] / [PLY] dispatch belong in the recipe (E3). Shared by
+// the coordinator core and the int-test (E33).
+function stepRecipe(steps: StepLike[] | CseNode["steps"]): string[] {
+  const out: string[] = [];
+  let n = 0;
+  for (const s of steps) {
+    let line: string | null = null;
+    if (s.kind === "step") {
+      const sep = s.isStatic ? "::" : ".";
+      const ret = s.output ? `: ${s.output}` : "";
+      const thr = s.faults.length ? ` -> throws: ${s.faults.join(", ")}` : "";
+      line = `${s.noun}${sep}${s.verb}(${s.params.join(", ")})${ret}${thr}`;
+    } else if (s.kind === "ctr") {
+      line = `[NEW] ${s.className}`;
+    } else if (s.kind === "ret") {
+      line = `[RET] ${s.value}`;
+    } else if (s.kind === "ply") {
+      const cases = s.cases.map((c) => c.name).join("|");
+      const ret = s.output ? `: ${s.output}` : "";
+      line = `[PLY] ${s.noun}.${s.verb}(${s.params.join(", ")})${ret}` +
+        ` (cases: ${cases})`;
+    }
+    if (line) out.push(`${++n}. ${line}`);
+  }
+  return out;
+}
+
 // A coordinator is the imperative SHELL for a [REQ]: it validates the request
 // input, loads inputs through the data adapters (boundary steps that RETURN a
 // value — validated at the seam), hands them to a pure inner `<verb>Core` (the
@@ -1194,27 +1256,7 @@ function renderCoordinator(
   // E3: the spec's ordered step recipe as a checklist, so the dev implements
   // exactly what the [REQ] declared. Boundaries are the shell's reads/writes/
   // sends — only pure steps / [NEW] / [RET] / [PLY] dispatch belong in the core.
-  const recipe: string[] = [];
-  let stepNo = 0;
-  for (const s of req.steps) {
-    let line: string | null = null;
-    if (s.kind === "step") {
-      const sep = s.isStatic ? "::" : ".";
-      const out = s.output ? `: ${s.output}` : "";
-      const thr = s.faults.length ? ` -> throws: ${s.faults.join(", ")}` : "";
-      line = `${s.noun}${sep}${s.verb}(${s.params.join(", ")})${out}${thr}`;
-    } else if (s.kind === "ctr") {
-      line = `[NEW] ${s.className}`;
-    } else if (s.kind === "ret") {
-      line = `[RET] ${s.value}`;
-    } else if (s.kind === "ply") {
-      const cases = s.cases.map((c) => c.name).join("|");
-      const out = s.output ? `: ${s.output}` : "";
-      line = `[PLY] ${s.noun}.${s.verb}(${s.params.join(", ")})${out}` +
-        ` (cases: ${cases})`;
-    }
-    if (line) recipe.push(`  //   ${++stepNo}. ${line}`);
-  }
+  const recipe = stepRecipe(req.steps).map((l) => `  //   ${l}`);
   if (recipe.length > 0) {
     L.push(`  // Recipe from [REQ] ${req.noun}.${req.verb} (run in order):`);
     L.push(...recipe);
@@ -1632,6 +1674,10 @@ function addModRoot(
   module: string,
   reqs: ReqNode[],
   runePath: string,
+  nons: NonNode[],
+  typs: TypNode[],
+  srvs: SrvNode[],
+  moduleDescription: string | null,
 ): void {
   // Each coordinator exports a function named after its verb, so two [REQ]s
   // sharing a verb (access.resolve + rules.resolve) would re-export `resolve`
@@ -1639,6 +1685,26 @@ function addModRoot(
   // (`resolve as accessResolve`); verbs that are unique in the module stay bare.
   const verbCounts = new Map<string, number>();
   for (const r of reqs) verbCounts.set(r.verb, (verbCounts.get(r.verb) ?? 0) + 1);
+  // E10/E46: a module front-door doc — the [MOD] prose, the domain-noun glossary
+  // ([NON]), the type vocabulary ([TYP]), and the backing services ([SRV]) —
+  // built in JS (the template engine has no conditionals), each section guarded.
+  const doc: string[] = [];
+  if (moduleDescription) {
+    for (const ln of moduleDescription.split("\n")) doc.push(`// ${ln}`.trimEnd());
+  }
+  const section = (title: string, lines: string[]): void => {
+    if (lines.length === 0) return;
+    if (doc.length) doc.push("//");
+    doc.push(`// ${title}`);
+    for (const l of lines) doc.push(`//   ${l}`);
+  };
+  section("Domain nouns (from [NON]):", nons.map((n) =>
+    `${n.name}${n.description ? `: ${n.description}` : ""}`));
+  section("Type vocabulary (from [TYP]):", typs.map((t) =>
+    `${t.name}: ${t.typeName}${t.description ? ` — ${t.description}` : ""}`));
+  section("Backing services (from [SRV]):", srvs.map((s) =>
+    `${s.name} (${s.transport})${s.envVars.length ? `: ${s.envVars.join(", ")}` : ""}`));
+  const moduleDoc = doc.length > 0 ? doc.join("\n") + "\n" : "";
   emit(
     "mod-root",
     `src/${module}/mod-root.ts`,
@@ -1653,6 +1719,7 @@ function addModRoot(
       }),
       module,
       runePath,
+      moduleDoc,
     }),
   );
 }
@@ -1786,7 +1853,7 @@ const HEADER = `// Generated by rune manifest from {{runePath}}.
 const REGEN_HEADER =
   `// Generated by rune manifest — DO NOT EDIT (regenerated on every \`rune sync\`).\n`;
 
-const COORDINATOR_INT_TEST_TPL = `${HEADER}
+const COORDINATOR_INT_TEST_TPL = `${HEADER}{{recipe}}
 import { {{req.verb}} } from "./mod.ts";
 
 Deno.test("{{req.verb}} — happy path", async () => {
@@ -1802,6 +1869,8 @@ Deno.test("{{this}}", async () => {
 
 const POLY_BASE_MOD_TPL = `${HEADER}
 // Polymorphic base for "{{ply.noun}}". Variants extend this.
+{{nonDoc}}// rune signature: {{realSig}}
+// Variants (exactly one runs per call): {{variants}}
 
 export abstract class {{ply.noun}}Base {
   abstract {{ply.verb}}({{ply.params}}): {{ply.output}};
@@ -1809,6 +1878,7 @@ export abstract class {{ply.noun}}Base {
 `;
 
 const POLY_BASE_TEST_TPL = `${HEADER}
+// Dispatch coverage — one variant runs per call: {{variants}}
 Deno.test("{{ply.noun}} base — placeholder", () => {
   // TODO: tests against the base abstraction
 });
@@ -1839,11 +1909,13 @@ const POLY_IMPL_TEST_TPL = `${HEADER}
 import {{ply.noun}}{{cse.name}} from "./mod.ts";
 
 Deno.test("{{ply.noun}}/{{cse.name}} — placeholder", () => {
-  // TODO: variant-specific tests
+  // Arrange — const variant = new {{ply.noun}}{{cse.name}}();
+  // Act — {{ply.verb}}(...)
+  // Assert — TODO: assert this variant's behavior
 });
 `;
 
-const ADAPTER_SMK_TEST_TPL = `${HEADER}
+const ADAPTER_SMK_TEST_TPL = `${HEADER}{{methodList}}
 Deno.test("{{step.noun}} — connectivity", () => {
   // TODO: smoke test that verifies the boundary is reachable
 });
@@ -1856,7 +1928,7 @@ Deno.test("{{this}}", async () => {
 `;
 
 const MOD_ROOT_TPL = `${REGEN_HEADER}
-// Public API surface for module "{{module}}".
+{{moduleDoc}}// Public API surface for module "{{module}}".
 {{#each reqs}}
 ${"export"} { {{this.binding}} } from "./domain/coordinators/{{this.processFile}}/mod.ts";
 {{/each}}
