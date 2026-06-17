@@ -27,10 +27,26 @@ enriched; no grammar change, no breaking change:
 - Template-based (need `gen-codegen-templates.ts` resync): E33 int-test recipe ·
   E34 smk boundary list · E35 poly test skeletons · E36 int-test provenance ·
   E46 mod-root glossary · E48 poly base docs. Non-breaking; achievable.
-- **Tier 2 — the `[SRV]` + `[MOD]` breaking grammar** (parser rewrite, tree-sitter
-  grammar + WASM, new lint rule, full spec migration, LSP). Large + high-risk;
-  deliberately NOT half-landed (a partial breaking grammar leaves the repo red).
-  Recommended as a focused, worktree-isolated effort.
+**SHIPPED — Tier 2 grammar (built in worktree, integrated, GREEN):**
+- `[SRV] <transport>:<name>: <ENV,…>` + `[MOD] name: desc` parsing; `matchBoundary`
+  rewritten to a single-colon `service:` prefix (no fixed kinds); `BoundaryStepNode.
+  tag`→`service`; `SrvNode` + `RuneAst.srvs`/`moduleDescription`.
+- tree-sitter `srv` tag (keywords.json + generate-core + grammar.js/json + WASM +
+  highlights — 11/11 tags); `artifact/schema.ts` FOLLOWS gained `service`.
+- new `rune-service-presence` lint rule (project-scoped); migrated example/todos +
+  fixtures/specs to `[SRV]`.
+- **E20 service docs on adapters**: each generated adapter method documents its
+  backing service + transport + env vars + prose (the original jr-dev gap, closed).
+
+**NOT YET BUILT (minor polish / known deferral):**
+- `[MOD]` description EMISSION into files (parsed + grammar done; no spec uses it
+  yet → zero functional impact today) — E10/E17/E46.
+- Template-based polish (need `gen-codegen-templates.ts` resync): E33/E34/E35/E36
+  test skeletons, E46 mod-root glossary, E48 poly docs. Non-breaking.
+- **Editor highlighting of `service:` prefixes** (tree-sitter `boundary_prefix`
+  still the old fixed kinds) — a generic `word:` token collides with `::` in
+  tree-sitter's lexer; highlighting-only, the TS engine parses correctly. Hard
+  deferral.
 
 ## Thesis
 
