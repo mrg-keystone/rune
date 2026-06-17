@@ -15,6 +15,7 @@ export * as moduleFragmentation from "./implementations/module-fragmentation/mod
 export * as runeCoordinatorPresence from "./implementations/rune-coordinator-presence/mod.ts";
 export * as runeBusinessPresence from "./implementations/rune-business-presence/mod.ts";
 export * as runeAdapterPresence from "./implementations/rune-adapter-presence/mod.ts";
+export * as runeServicePresence from "./implementations/rune-service-presence/mod.ts";
 export * as runePolyCases from "./implementations/rune-poly-cases/mod.ts";
 export * as runeEntrypointPresence from "./implementations/rune-entrypoint-presence/mod.ts";
 export * as runeDtoShape from "./implementations/rune-dto-shape/mod.ts";

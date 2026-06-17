@@ -32,3 +32,6 @@
 
 [NON] task
     a single todo item
+
+[SRV] sc:db: DB_URL
+    the project's primary datastore (sidecar)

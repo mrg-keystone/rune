@@ -32,3 +32,6 @@
 
 [NON] list
     a named collection of tasks
+
+[SRV] sc:db: DB_URL
+    the project's primary datastore (sidecar)
