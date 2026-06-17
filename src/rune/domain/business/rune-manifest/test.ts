@@ -1531,3 +1531,34 @@ Deno.test("planManifest — mod-root front-door doc + [MOD] desc + glossary (E10
   assertStringIncludes(it.content, "// Recipe (from [REQ] order.create @ checkout.rune:3):");
   assertStringIncludes(it.content, "//   2. order.fill(item): order");
 });
+
+Deno.test("planManifest — @ApiProperty stays within #api-doc's Schema type (E27 fix)", () => {
+  // Regression: @ApiProperty must only use keys/values valid on @danet/swagger's
+  // Schema — NO `required` (it's string[], not boolean), NO `isArray`, and
+  // `format` only for valid DataFormat (uuid/email/uri are NOT — their
+  // validators enforce them). Earlier these produced TS2322/2353 in real keep.
+  const rune = `[MOD] shop
+
+[REQ] order.make(MakeDto): MakeDto
+    id::gen(): id
+
+[DTO] MakeDto: id, tag?, label(s)
+    an order
+
+[TYP:uuid] id: string
+    the id
+[TYP:email] tag: string
+    a contact tag
+[TYP] label: string
+    a label`;
+  const plan = planManifest("shop.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const dto = plan.toCreate.find((f) => f.path.endsWith("dto/make.ts"))!.content;
+  // uuid field: @IsUUID enforces it; @ApiProperty carries NO invalid format.
+  assertStringIncludes(dto, "@IsUUID()");
+  assertEquals(dto.includes('format: "uuid"'), false);
+  assertEquals(dto.includes('format: "email"'), false);
+  // optional + array must NOT leak the non-Schema keys.
+  assertEquals(dto.includes("required: false"), false);
+  assertEquals(dto.includes("isArray: true"), false);
+});

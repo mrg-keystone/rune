@@ -707,14 +707,15 @@ function renderDto(
     if (array) lead.push(`// rune: ${base}(s) — array of [TYP] ${base}`);
     // The [TYP]'s constraint modifiers, in source order. `int` REPLACES the
     // IsNumber base check (class-validator's IsInt subsumes it). Alongside the
-    // validators we accumulate ONE merged @ApiProperty options object (E27) —
-    // two @ApiProperty on a field is undefined in Swagger, so everything
-    // (description, example, required, isArray, schema hints) merges here.
+    // validators we accumulate ONE merged @ApiProperty options object (E27).
+    // Keys/values are restricted to what #api-doc's Schema type actually accepts
+    // (@danet/swagger): NO `required`/`isArray` (not Schema keys — optionality
+    // and arrays are carried by @IsOptional/@IsArray + the TS type), and `format`
+    // only for valid DataFormat values (uuid/email/uri are NOT — their
+    // @IsUUID/@IsEmail/@IsUrl validators enforce them instead).
     const constraints: string[] = [];
     const api: string[] = [];
     if (typ?.description) api.push(`description: ${JSON.stringify(typ.description)}`);
-    if (optional) api.push("required: false");
-    if (array) api.push("isArray: true");
     let baseDec = dec;
     for (const mod of typ?.modifiers ?? []) {
       const eq = mod.indexOf("=");
@@ -732,14 +733,11 @@ function renderDto(
       if (id === "int") baseDec = null;
       validators.add(spec.decorator);
       constraints.push(array ? spec.eachCall(value) : spec.call(value));
-      // OpenAPI schema hints derived from the same modifier.
+      // Schema hints — only keys/values valid on @danet/swagger's Schema.
       if (id === "min") api.push(`minimum: ${value}`);
       else if (id === "max") api.push(`maximum: ${value}`);
       else if (id === "positive") api.push("exclusiveMinimum: 0");
       else if (id === "int") api.push(`type: "integer"`);
-      else if (id === "uuid") api.push(`format: "uuid"`);
-      else if (id === "email") api.push(`format: "email"`);
-      else if (id === "url") api.push(`format: "uri"`);
       else if (id === "nonempty" && !array) api.push("minLength: 1");
     }
     if (typ?.typeName === "Uint8Array") api.push(`type: "string"`, `format: "binary"`);
