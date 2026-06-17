@@ -111,10 +111,6 @@ export function buildGrammar(reg) {
     .map((r) => `        ${r},`)
     .join("\n");
 
-  const boundaryChoice = reg.boundaries.prefixes
-    .map((p) => JSON.stringify(p))
-    .join(", ");
-
   return `/// <reference types="tree-sitter-cli/dsl" />
 // @ts-check
 //
@@ -126,7 +122,7 @@ module.exports = grammar({
 
   extras: ($) => [/ /, /\\t/, $.comment],
 
-  externals: ($) => [$.typ_desc, $.dto_desc, $.non_desc, $.fault_line],
+  externals: ($) => [$.typ_desc, $.dto_desc, $.non_desc, $.fault_line, $.service_prefix],
 
   rules: {
     source_file: ($) => repeat(choice($._line, /\\r?\\n/)),
@@ -222,10 +218,11 @@ ${tagRules}
 
     step_line: ($) => seq($.signature, ":", $.return_type),
 
+    // The boundary prefix is the external service_prefix token (\`name:\`, a
+    // single colon — distinct from the \`::\` static separator, which the DFA
+    // can't tell apart without the scanner's lookahead).
     boundary_line: ($) =>
-      seq($.boundary_prefix, $.signature, ":", $.return_type),
-
-    boundary_prefix: ($) => choice(${boundaryChoice}),
+      seq($.service_prefix, $.signature, ":", $.return_type),
 
     // [SRV] body: <transport>:<name>: <ENV, ...> consumed as one line token.
     srv_spec: ($) => token(/[^\\n]+/),
@@ -315,8 +312,8 @@ export function buildHighlights(reg) {
     "(param_name) @rune.param",
     "(property_name) @rune.param",
     "",
-    "; Boundaries: system edges",
-    "(boundary_prefix) @rune.boundary",
+    "; Boundaries: system edges (service: prefix)",
+    "(service_prefix) @rune.boundary",
     "",
     "; Faults",
     "(fault_line) @rune.fault",

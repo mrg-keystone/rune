@@ -6,6 +6,7 @@ enum TokenType {
   DTO_DESC,
   NON_DESC,
   FAULT_LINE,
+  SERVICE_PREFIX,
 };
 
 void *tree_sitter_rune_external_scanner_create() {
@@ -92,66 +93,58 @@ bool tree_sitter_rune_external_scanner_scan(
   bool want_dto_desc = valid_symbols[DTO_DESC];
   bool want_non_desc = valid_symbols[NON_DESC];
   bool want_fault_line = valid_symbols[FAULT_LINE];
+  bool want_service = valid_symbols[SERVICE_PREFIX];
 
-  if (!want_typ_desc && !want_dto_desc && !want_non_desc && !want_fault_line) {
+  if (!want_typ_desc && !want_dto_desc && !want_non_desc && !want_fault_line &&
+      !want_service) {
     return false;
   }
 
-  // Must be at start of line
+  // The scanner is invoked at the raw line start (before the indent is consumed
+  // as extras), so all four externals share one entry point.
   if (!is_at_line_start(lexer)) {
     return false;
   }
 
-  // Count leading spaces
+  // Count leading spaces (kept in the token, matching the desc/fault tokens).
   int spaces = 0;
   while (lexer->lookahead == ' ') {
     lexer->advance(lexer, false);
     spaces++;
   }
 
-  // Fault lines: 6+ spaces, only lowercase/digits/hyphens/spaces
-  if (want_fault_line && spaces >= 6) {
-    // Must start with lowercase letter
-    if (lexer->lookahead >= 'a' && lexer->lookahead <= 'z') {
-      char buf[256];
-      int buf_len = 0;
-
-      // Collect line content
-      while (lexer->lookahead != '\n' && lexer->lookahead != '\r' &&
-             lexer->lookahead != 0 && buf_len < 255) {
-        buf[buf_len++] = (char)lexer->lookahead;
-        lexer->advance(lexer, false);
-      }
-      buf[buf_len] = '\0';
-
-      if (is_fault_content(buf, buf_len)) {
-        lexer->result_symbol = FAULT_LINE;
-        return true;
-      }
-    }
-    // If not a fault line at 6+ spaces, fall through (could be other content)
-    return false;
-  }
-
-  // Description lines: exactly 4 spaces
-  if (spaces != 4) {
-    return false;
-  }
-
-  if (!want_typ_desc && !want_dto_desc && !want_non_desc) {
-    return false;
-  }
-
-  // Must start with lowercase letter (prose text)
+  // Every external here starts with a lowercase letter.
   if (lexer->lookahead < 'a' || lexer->lookahead > 'z') {
     return false;
   }
 
-  // Buffer to check if this looks like code
   char buf[256];
   int buf_len = 0;
 
-  // Collect the line content
+  // Read the leading word [a-zA-Z0-9_]* — shared by the service-prefix probe
+  // and the desc/fault buffer.
+  while (((lexer->lookahead >= 'a' && lexer->lookahead <= 'z') ||
+          (lexer->lookahead >= 'A' && lexer->lookahead <= 'Z') ||
+          (lexer->lookahead >= '0' && lexer->lookahead <= '9') ||
+          lexer->lookahead == '_') &&
+         buf_len < 255) {
+    buf[buf_len++] = (char)lexer->lookahead;
+    lexer->advance(lexer, false);
+  }
+
+  // Service boundary prefix: word + exactly ONE colon (not the `::` static
+  // separator). The DFA can't express this lookahead; the scanner can.
+  if (want_service && lexer->lookahead == ':') {
+    lexer->advance(lexer, false); // consume ':'
+    if (lexer->lookahead != ':') {
+      lexer->result_symbol = SERVICE_PREFIX;
+      lexer->mark_end(lexer);
+      return true;
+    }
+    if (buf_len < 255) buf[buf_len++] = ':'; // `::` → code, keep for classify
+  }
+
+  // Not a service prefix — read the rest of the line and classify desc/fault.
   while (lexer->lookahead != '\n' && lexer->lookahead != '\r' &&
          lexer->lookahead != 0 && buf_len < 255) {
     buf[buf_len++] = (char)lexer->lookahead;
@@ -159,18 +152,24 @@ bool tree_sitter_rune_external_scanner_scan(
   }
   buf[buf_len] = '\0';
 
-  // If it looks like code, reject it
-  if (looks_like_code(buf, buf_len)) {
-    return false;
+  // Fault lines: 6+ spaces, only lowercase/digits/hyphens/spaces.
+  if (want_fault_line && spaces >= 6 && is_fault_content(buf, buf_len)) {
+    lexer->result_symbol = FAULT_LINE;
+    return true;
   }
 
-  // Prefer TYP_DESC > DTO_DESC > NON_DESC
-  if (want_typ_desc) {
-    lexer->result_symbol = TYP_DESC;
-  } else if (want_dto_desc) {
-    lexer->result_symbol = DTO_DESC;
-  } else {
-    lexer->result_symbol = NON_DESC;
+  // Description lines: exactly 4 spaces, prose (not code).
+  if (spaces == 4 && (want_typ_desc || want_dto_desc || want_non_desc) &&
+      !looks_like_code(buf, buf_len)) {
+    if (want_typ_desc) {
+      lexer->result_symbol = TYP_DESC;
+    } else if (want_dto_desc) {
+      lexer->result_symbol = DTO_DESC;
+    } else {
+      lexer->result_symbol = NON_DESC;
+    }
+    return true;
   }
-  return true;
+
+  return false;
 }

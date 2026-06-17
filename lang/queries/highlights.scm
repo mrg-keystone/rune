@@ -45,8 +45,8 @@
 (param_name) @rune.param
 (property_name) @rune.param
 
-; Boundaries: system edges
-(boundary_prefix) @rune.boundary
+; Boundaries: system edges (service: prefix)
+(service_prefix) @rune.boundary
 
 ; Faults
 (fault_line) @rune.fault

@@ -27,11 +27,11 @@
       "required": true,
       "types": [
         {
-          "type": "boundary_prefix",
+          "type": "return_type",
           "named": true
         },
         {
-          "type": "return_type",
+          "type": "service_prefix",
           "named": true
         },
         {
@@ -40,11 +40,6 @@
         }
       ]
     }
-  },
-  {
-    "type": "boundary_prefix",
-    "named": true,
-    "fields": {}
   },
   {
     "type": "cse_line",
@@ -809,10 +804,6 @@
     "named": true
   },
   {
-    "type": "db:",
-    "named": false
-  },
-  {
     "type": "dto_array_suffix",
     "named": true
   },
@@ -833,20 +824,8 @@
     "named": true
   },
   {
-    "type": "ex:",
-    "named": false
-  },
-  {
     "type": "fault_line",
     "named": true
-  },
-  {
-    "type": "fs:",
-    "named": false
-  },
-  {
-    "type": "lg:",
-    "named": false
   },
   {
     "type": "method_name",
@@ -857,20 +836,12 @@
     "named": true
   },
   {
-    "type": "mq:",
-    "named": false
-  },
-  {
     "type": "non_desc",
     "named": true
   },
   {
     "type": "non_tag",
     "named": true
-  },
-  {
-    "type": "os:",
-    "named": false
   },
   {
     "type": "ply_tag",
@@ -882,6 +853,10 @@
   },
   {
     "type": "ret_tag",
+    "named": true
+  },
+  {
+    "type": "service_prefix",
     "named": true
   },
   {
