@@ -38,15 +38,23 @@ enriched; no grammar change, no breaking change:
 - **E20 service docs on adapters**: each generated adapter method documents its
   backing service + transport + env vars + prose (the original jr-dev gap, closed).
 
-**NOT YET BUILT (minor polish / known deferral):**
-- `[MOD]` description EMISSION into files (parsed + grammar done; no spec uses it
-  yet → zero functional impact today) — E10/E17/E46.
-- Template-based polish (need `gen-codegen-templates.ts` resync): E33/E34/E35/E36
-  test skeletons, E46 mod-root glossary, E48 poly docs. Non-breaking.
-- **Editor highlighting of `service:` prefixes** (tree-sitter `boundary_prefix`
-  still the old fixed kinds) — a generic `word:` token collides with `::` in
-  tree-sitter's lexer; highlighting-only, the TS engine parses correctly. Hard
-  deferral.
+**SHIPPED — final polish (all green):**
+- `[MOD]` description + mod-root **front-door doc**: the `[MOD]` prose, domain-noun
+  glossary ([NON]), type vocabulary ([TYP]), and backing services ([SRV]) (E10/E46).
+- int-test ordered recipe + spec-line provenance (E33/E36); smk boundary-method
+  list (E34); poly base variant roster + [NON] prose + real signature, impl AAA
+  (E35/E48). (templates resynced via gen-codegen-templates.ts.)
+- **Editor highlighting of `service:` prefixes** — SOLVED. The external scanner
+  emits a `SERVICE_PREFIX` token (lowercase word + a single colon, distinct from
+  the `::` static separator — the lookahead the DFA can't do), unified with the
+  desc/fault externals at the shared line-start entry. Proven via `tree-sitter
+  parse`: `firebase:order.save` → `boundary_line`/`service_prefix`, `id::generate`
+  → `step_line`, `timeout` → `fault_line`.
+
+**Status: complete.** Every spec item is built; `verify: GREEN`; 399/400 tests
+(the 1 is `findGitRoot` asserting the dir is named "rune" — a worktree-path
+artifact that passes in the real repo). Ship by merging
+`worktree-agent-a976ca4e071053a7f` → develop.
 
 ## Thesis
 
