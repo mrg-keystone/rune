@@ -102,6 +102,26 @@ export function transformName(rawName: string, binding: Binding): string {
   return applyCase(name, binding.caseStyle);
 }
 
+/** The `dto/` basename for a [TYP]. A [TYP] kebabs to `<name>`; a [DTO] strips
+ * its `Dto` suffix and kebabs (transformName), so `[TYP] principal` and
+ * `[DTO] PrincipalDto` both want `dto/principal.ts`. When they collide in the
+ * SAME dir, the [DTO] keeps the clean name (it is the contract imported by name
+ * across the project) and the [TYP] takes a `-type` suffix, so both files exist
+ * instead of one silently clobbering the other. `dtoNamesSameDir` is the raw
+ * [DTO] names sharing this [TYP]'s dir (same `isCore`). Pure: the generator and
+ * the rune-typ-shape rule call it so disk layout and the lint expectation agree. */
+export function typFileName(
+  typName: string,
+  dtoNamesSameDir: string[],
+  binding: Binding,
+): string {
+  const base = applyCase(typName, "kebab");
+  const claimed = new Set(
+    dtoNamesSameDir.map((n) => transformName(n, binding)),
+  );
+  return claimed.has(base) ? `${base}-type` : base;
+}
+
 // Compose a process name from a [REQ]'s noun and verb.
 //   recording.set        → "recording-set"
 //   register/recording   → "recording-register" (camelCase form: noun-verb)

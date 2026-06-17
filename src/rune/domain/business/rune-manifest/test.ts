@@ -607,8 +607,9 @@ Deno.test("planManifest — DTO field modifiers: (s) -> array, ? -> optional", (
   // `?` makes the field optional (TS `?:` + @IsOptional()).
   assertEquals(dto!.content.includes("note?: string"), true);
   assertEquals(dto!.content.includes("@IsOptional()"), true);
-  // the raw modifier syntax must never leak into the generated code.
-  assertEquals(dto!.content.includes("(s)"), false);
+  // the raw modifier syntax must never leak into a field DECLARATION (it may
+  // legitimately appear in an explanatory `// rune:` comment).
+  assertEquals(/\(s\)[!?:]/.test(dto!.content), false);
 });
 
 Deno.test("planManifest — renderDto maps [TYP] primitives to validators; unmapped gets @Allow", () => {
@@ -638,7 +639,7 @@ Deno.test("planManifest — renderDto maps [TYP] primitives to validators; unmap
   // visible TODO marker.
   assertEquals(c.includes("mystery!: unknown"), true);
   assertEquals(c.includes("TODO: tighten"), true);
-  assertStringIncludes(c, '// TODO: tighten — "mystery" has no [TYP], left as unknown\n  @Allow()\n  mystery!: unknown;');
+  assertStringIncludes(c, '// TODO: tighten — "mystery" has no [TYP], left as unknown\n  // Add `[TYP] mystery: <type>` to the .rune to type it.\n  @Allow()\n  mystery!: unknown;');
   // imports are the sorted union of the decorators actually used
   assertEquals(
     c.includes('import { Allow, IsBoolean, IsNumber, IsString } from "class-validator";'),
@@ -1147,13 +1148,20 @@ Deno.test("planManifest — boundary-only REQ noun emits no business import or `
   assertEquals(/import \{ Cache \}/.test(cache), false);
   // the core still builds from inputs/reads.
   assertStringIncludes(cache, "  const out = readCore(validInput, storeFetch);");
-  assertStringIncludes(cache, "  // TODO: run the pure steps on the inputs, build the dtos");
+  // the recipe lists the spec's non-boundary steps in order ([RET] here; the
+  // db: fetch is the shell's read, not a core step).
+  assertStringIncludes(cache, "  // Recipe from [REQ] cache.read (run in order):");
+  assertStringIncludes(cache, "  //   1. [RET] OutDto");
 
   // a sibling REQ WITH an instance step DOES generate + use its business class.
   assertEquals(paths.includes("src/eng/domain/business/report/mod.ts"), true);
   const report = plan.toCreate.find((f) => f.path.endsWith("report-build/mod.ts"))!.content;
   assertStringIncludes(report, 'import { Report } from "@/src/eng/domain/business/report/mod.ts";');
   assertStringIncludes(report, "  const report = new Report();");
+  // and the recipe walks [NEW] + the two instance steps in order.
+  assertStringIncludes(report, "  //   1. [NEW] report");
+  assertStringIncludes(report, "  //   2. report.compose(InDto): OutDto");
+  assertStringIncludes(report, "  //   3. report.toDto(): OutDto");
 });
 
 Deno.test("planManifest — :core DTOs import from src/core/dto in coordinator + controller", () => {
@@ -1348,10 +1356,136 @@ Deno.test("planManifest — [TYP:example=…] emits @ApiProperty({ example }) on
   const dto = plan.toCreate.find((f) => f.path === "src/shop/dto/order.ts");
   if (!dto) throw new Error("no order.ts DTO generated");
 
-  // string example is quoted; number example is a numeric literal; the swagger
+  // ONE merged @ApiProperty per field: description + example (string quoted,
+  // number a numeric literal) + schema hints (min=1 -> minimum). The swagger
   // decorator import rides on the #api-doc alias.
-  assertStringIncludes(dto.content, '@ApiProperty({ example: "widget" })');
-  assertStringIncludes(dto.content, "@ApiProperty({ example: 3 })");
+  assertStringIncludes(
+    dto.content,
+    '@ApiProperty({ description: "a thing to buy", example: "widget" })',
+  );
+  assertStringIncludes(
+    dto.content,
+    '@ApiProperty({ description: "how many", example: 3, minimum: 1 })',
+  );
   assertStringIncludes(dto.content, "@Min(1)");
   assertStringIncludes(dto.content, 'import { ApiProperty } from "#api-doc";');
+});
+
+Deno.test("planManifest — [TYP] vs same-stem [DTO] file collision: distinct files", () => {
+  // [TYP] receipt and [DTO] ReceiptDto both kebab to dto/receipt.ts. The [DTO]
+  // keeps the clean name; the [TYP] takes a `-type` suffix, so neither silently
+  // clobbers the other (previously the [TYP] was dropped, breaking rune-typ-shape).
+  const rune = `[MOD] shop
+
+[REQ] order.read(RefDto): ReceiptDto
+    db:order.load(RefDto): ReceiptDto
+
+[DTO] RefDto: id
+    a reference
+[DTO] ReceiptDto: receipt
+    a receipt
+
+[TYP] id: string
+    x
+[TYP] receipt: string
+    the receipt code`;
+  const plan = planManifest("specs/shop.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const paths = [...plan.toCreate, ...plan.toRegenerate].map((f) => f.path);
+  // Both files exist — the DTO at the clean stem, the TYP disambiguated.
+  assertEquals(paths.includes("src/shop/dto/receipt.ts"), true);
+  assertEquals(paths.includes("src/shop/dto/receipt-type.ts"), true);
+  const typ = plan.toCreate.find((f) => f.path === "src/shop/dto/receipt-type.ts");
+  assertStringIncludes(typ!.content, "export type Receipt = string;");
+  const dto = plan.toCreate.find((f) => f.path === "src/shop/dto/receipt.ts");
+  assertStringIncludes(dto!.content, "export class ReceiptDto");
+});
+
+Deno.test("planManifest — business test.ts scaffolds a Deno.test per untagged-step fault", () => {
+  // Faults on UNTAGGED (business) steps must get a stub in business/<noun>/test.ts
+  // (smk.test/int.test already do this for boundary/REQ faults) so rune-fault-
+  // coverage has a case to verify instead of flagging an un-fillable gap.
+  const rune = `[MOD] policy
+
+[REQ] gate.evaluate(InputDto): OutputDto
+    [NEW] gate
+    gate.check(InputDto): OutputDto
+      invalid-input
+      out-of-range
+
+[DTO] InputDto: id
+    in
+[DTO] OutputDto: id
+    out
+
+[TYP] id: string
+    x`;
+  const plan = planManifest("specs/policy.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const test = plan.toCreate.find((f) =>
+    f.path === "src/policy/domain/business/gate/test.ts"
+  );
+  if (!test) throw new Error("no business test.ts generated");
+  assertStringIncludes(test.content, 'Deno.test("invalid-input", () => {');
+  assertStringIncludes(test.content, 'Deno.test("out-of-range", () => {');
+});
+
+Deno.test("planManifest — DTO/TYP fields carry description JSDoc + provenance", () => {
+  const rune = `[MOD] shop
+
+[REQ] order.make(MakeDto): MakeDto
+    id::gen(): id
+
+[DTO] MakeDto: id
+    an order to make
+
+[TYP:uuid] id: string
+    the unique order id`;
+  const plan = planManifest("specs/shop.rune", rune, new Set());
+  const dto = plan.toCreate.find((f) => f.path.endsWith("dto/make.ts"))!;
+  // field-level [TYP] description JSDoc + provenance (E23/E24)
+  assertStringIncludes(dto.content, "/** the unique order id */");
+  assertStringIncludes(dto.content, "// rune declares: [TYP:uuid] id: string");
+  // class JSDoc + visibility + provenance (E26)
+  assertStringIncludes(dto.content, " * an order to make");
+  assertStringIncludes(dto.content, " * @internal");
+  assertStringIncludes(dto.content, "// rune declares: [DTO] MakeDto: id");
+  const typ = plan.toCreate.find((f) => f.path.endsWith("dto/id.ts"))!;
+  // TYP alias JSDoc + enforced-decorator prose + line provenance (E29/E30)
+  assertStringIncludes(typ.content, "/** the unique order id */");
+  assertStringIncludes(typ.content, "// enforced on DTO fields: @IsUUID()");
+  assertStringIncludes(typ.content, "shop.rune:9.");
+});
+
+Deno.test("planManifest — coordinator carries spec-line provenance + JSDoc", () => {
+  // The coordinator header points at the [REQ]'s 1-based spec line (E1), and the
+  // exported verb gets a JSDoc block with @param/@returns and one @throws per
+  // declared fault, attributed to the step that raises it (E2).
+  const rune = `[MOD] checkout
+
+[REQ] order.create(NewOrderDto): OrderDto
+    db:order.save(OrderDto): void
+      timeout
+    [RET] OrderDto
+
+[DTO] NewOrderDto: item
+    a new order to create
+[DTO] OrderDto: id, item
+    a created order
+
+[TYP] item: string
+    the item to order
+[TYP] id: string
+    the order id`;
+  const plan = planManifest("specs/checkout.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const coord = [...plan.toCreate, ...plan.toRegenerate].find((f) =>
+    f.path === "src/checkout/domain/coordinators/order-create/mod.ts"
+  );
+  if (!coord) throw new Error("no coordinator generated");
+  // [REQ] is on line 3 (1-based).
+  assertStringIncludes(coord.content, "from specs/checkout.rune:3.");
+  assertStringIncludes(coord.content, "@param input NewOrderDto");
+  assertStringIncludes(coord.content, "@returns OrderDto");
+  assertStringIncludes(coord.content, "@throws timeout — raised by order.save");
 });

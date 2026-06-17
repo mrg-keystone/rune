@@ -7,6 +7,7 @@ import {
   type CseNode,
   type DtoNode,
   type EntNode,
+  type NonNode,
   parse,
   type PlyNode,
   type ReqNode,
@@ -21,6 +22,7 @@ import {
   moduleFromSpecPath,
   processName,
   transformName,
+  typFileName,
 } from "@rune/domain/business/rune-bindings/mod.ts";
 import {
   collectNounMethods,
@@ -155,13 +157,21 @@ export function planManifest(
   // All faults declared on each noun's boundary steps, so one data adapter's
   // smk.test covers every boundary fault (not just the first step's).
   const boundaryFaults = collectBoundaryFaults(ast);
+  // Faults on each noun's UNTAGGED (business) steps, so the business test.ts
+  // gets a Deno.test stub per fault — mirroring smk.test/int.test, which already
+  // scaffold their faults. Without this, rune-fault-coverage flags every
+  // business-step fault with no stub for the dev to fill.
+  const businessFaults = collectBusinessFaults(ast);
 
   // The spec's type declarations, by name: [TYP] nodes (primitive + modifiers
   // drive field types, validator decorators, and the coordinator seam asserts)
   // and [DTO] nodes (nested-DTO resolution + isCore-aware import paths).
   const typMap = new Map(ast.typs.map((t) => [t.name, t]));
   const dtoByName = new Map(ast.dtos.map((d) => [d.name, d]));
-  const types: TypeContext = { typMap, dtoByName, nameBinding };
+  // [NON] prose by noun — threaded so business/data class docs carry the domain
+  // object's meaning instead of discarding it (E12/E18).
+  const nonByNoun = new Map(ast.nons.map((n) => [n.name, n]));
+  const types: TypeContext = { typMap, dtoByName, nameBinding, nonByNoun };
 
   // Collect intended files by element type.
   const polyNouns = new Set<string>();
@@ -175,6 +185,7 @@ export function planManifest(
       polyNouns,
       runePath,
       boundaryFaults,
+      businessFaults,
       types,
     );
   }
@@ -259,6 +270,7 @@ interface TypeContext {
   typMap: Map<string, TypNode>;
   dtoByName: Map<string, DtoNode>;
   nameBinding: Binding;
+  nonByNoun: Map<string, NonNode>;
 }
 
 function walkStepsForFiles(
@@ -269,6 +281,7 @@ function walkStepsForFiles(
   polyNouns: Set<string>,
   runePath: string,
   boundaryFaults: Map<string, string[]>,
+  businessFaults: Map<string, string[]>,
   types: TypeContext,
 ): void {
   for (const step of steps) {
@@ -280,6 +293,7 @@ function walkStepsForFiles(
           module,
           step.noun,
           nounMethods.get(step.noun) ?? [],
+          businessFaults.get(step.noun) ?? step.faults,
           runePath,
           types,
         );
@@ -306,6 +320,7 @@ function walkStepsForFiles(
           polyNouns,
           runePath,
           boundaryFaults,
+          businessFaults,
           types,
         );
       }
@@ -346,6 +361,7 @@ function addBusinessFeature(
   module: string,
   noun: string,
   methods: MethodSig[],
+  faults: string[],
   runePath: string,
   types: TypeContext,
 ): void {
@@ -360,12 +376,20 @@ function addBusinessFeature(
       dtoByName: types.dtoByName,
       module,
       nameBinding: types.nameBinding,
+      runePath,
+      nonByNoun: types.nonByNoun,
     }),
   );
   emit(
     "business-test",
     `${dir}/test.ts`,
-    renderBusinessTest(noun, methods, runePath),
+    renderBusinessTest(
+      noun,
+      methods,
+      faults,
+      runePath,
+      types.nonByNoun.get(noun)?.description,
+    ),
   );
 }
 
@@ -453,6 +477,8 @@ function addAdapter(
       dtoByName: types.dtoByName,
       module,
       nameBinding: types.nameBinding,
+      runePath,
+      nonByNoun: types.nonByNoun,
     }),
   );
   // Cover every fault declared on ANY boundary step for this noun, not just the
@@ -484,9 +510,14 @@ function addTyp(
   runePath: string,
   types: TypeContext,
 ): void {
-  const fileName = applyCase(typ.name, "kebab");
+  // Disambiguate against a same-dir [DTO] that strips to the same stem (e.g.
+  // [TYP] principal vs [DTO] PrincipalDto): the [DTO] keeps `dto/principal.ts`,
+  // this [TYP] becomes `dto/principal-type.ts`, so neither clobbers the other.
+  const dtoNamesSameDir = [...types.dtoByName.values()]
+    .filter((d) => !!d.isCore === !!typ.isCore)
+    .map((d) => d.name);
+  const fileName = typFileName(typ.name, dtoNamesSameDir, types.nameBinding);
   const dir = typ.isCore ? "src/core/dto" : `src/${module}/dto`;
-  // A [DTO] may have already produced this path; emit() keeps the first writer.
   emit("typ", `${dir}/${fileName}.ts`, renderTyp(typ, runePath, module, types));
 }
 
@@ -560,7 +591,7 @@ function renderDto(
   const validators = new Set<string>();
   const nestedImports = new Set<string>();
   let hasNested = false;
-  let hasExample = false;
+  let hasApiProperty = false;
   const fields = dto.properties.map((raw) => {
     // A property may carry the documented modifiers: `(s)` (array of the base
     // type, property name pluralized — `taskId(s)` -> `taskIds: taskId[]`) and
@@ -570,6 +601,10 @@ function renderDto(
     const base = raw.replace(/\(s\)/g, "").replace(/\?/g, "").trim();
     const name = array ? `${base}s` : base;
     const decorators: string[] = [];
+    // Per-field doc/provenance comments emitted ABOVE the decorator stack so a
+    // dev sees the field's meaning, its [TYP] origin, and its modifiers inline
+    // (E23/E24/E25/E28). JSDoc first so editor hover attaches to the field.
+    const lead: string[] = [];
     if (optional) {
       validators.add("IsOptional");
       decorators.push("@IsOptional()");
@@ -585,13 +620,15 @@ function renderDto(
     if (nested) {
       hasNested = true;
       if (nested.name !== dto.name) nestedImports.add(nested.name);
+      if (nested.description) lead.push(`/** ${nested.description} */`);
+      if (array) lead.push(`// rune: ${base}(s) — array of [DTO] ${nested.name}`);
       validators.add("ValidateNested");
       decorators.push(
         array ? "@ValidateNested({ each: true })" : "@ValidateNested()",
       );
       decorators.push(`@Type(() => ${nested.name})`);
       const ts = array ? `${nested.name}[]` : nested.name;
-      return { name, ts, decorators, optional };
+      return { name, ts, decorators, optional, lead };
     }
 
     const typ = types.typMap.get(base);
@@ -605,27 +642,44 @@ function renderDto(
       validators.add("Allow");
       decorators.unshift(
         `// TODO: tighten — "${base}" has no [TYP], left as ${ts}`,
+        `// Add \`[TYP] ${base}: <type>\` to the .rune to type it.`,
         "@Allow()",
       );
-      return { name, ts, decorators, optional };
+      return { name, ts, decorators, optional, lead };
     }
+    // [TYP] field: doc comment from the type's description, a provenance line
+    // echoing the (singular) base declaration, and notes for ext / array.
+    if (typ?.description) lead.push(`/** ${typ.description} */`);
+    if (typ) {
+      const provTag = typ.modifiers.length > 0
+        ? `[TYP:${typ.modifiers.join(",")}]`
+        : "[TYP]";
+      lead.push(`// rune declares: ${provTag} ${base}: ${typ.typeName}`);
+    }
+    if (typ?.isExternal) {
+      lead.push("// rune: [TYP:ext] — supplied by another module / the caller");
+    }
+    if (array) lead.push(`// rune: ${base}(s) — array of [TYP] ${base}`);
     // The [TYP]'s constraint modifiers, in source order. `int` REPLACES the
-    // IsNumber base check (class-validator's IsInt subsumes it).
+    // IsNumber base check (class-validator's IsInt subsumes it). Alongside the
+    // validators we accumulate ONE merged @ApiProperty options object (E27) —
+    // two @ApiProperty on a field is undefined in Swagger, so everything
+    // (description, example, required, isArray, schema hints) merges here.
     const constraints: string[] = [];
+    const api: string[] = [];
+    if (typ?.description) api.push(`description: ${JSON.stringify(typ.description)}`);
+    if (optional) api.push("required: false");
+    if (array) api.push("isArray: true");
     let baseDec = dec;
     for (const mod of typ?.modifiers ?? []) {
       const eq = mod.indexOf("=");
       const id = eq === -1 ? mod : mod.slice(0, eq);
       const value = eq === -1 ? null : mod.slice(eq + 1);
-      // example=<v> → @ApiProperty({ example }): keep's runner and cake fill
-      // required, unbound input fields from the schema's non-empty example, so
-      // a field nothing produces stops being a guaranteed 422 in the walk.
+      // example=<v> → schema example: keep's runner/cake fill required, unbound
+      // input fields from it, so a field nothing produces stops being a 422.
       if (id === "example" && value !== null && value !== "") {
-        hasExample = true;
         const lit = exampleLiteral(value, typ?.typeName);
-        decorators.unshift(
-          `@ApiProperty({ example: ${array ? `[${lit}]` : lit} })`,
-        );
+        api.push(`example: ${array ? `[${lit}]` : lit}`);
         continue;
       }
       const spec = TYP_MODIFIERS.get(id);
@@ -633,7 +687,17 @@ function renderDto(
       if (id === "int") baseDec = null;
       validators.add(spec.decorator);
       constraints.push(array ? spec.eachCall(value) : spec.call(value));
+      // OpenAPI schema hints derived from the same modifier.
+      if (id === "min") api.push(`minimum: ${value}`);
+      else if (id === "max") api.push(`maximum: ${value}`);
+      else if (id === "positive") api.push("exclusiveMinimum: 0");
+      else if (id === "int") api.push(`type: "integer"`);
+      else if (id === "uuid") api.push(`format: "uuid"`);
+      else if (id === "email") api.push(`format: "email"`);
+      else if (id === "url") api.push(`format: "uri"`);
+      else if (id === "nonempty" && !array) api.push("minLength: 1");
     }
+    if (typ?.typeName === "Uint8Array") api.push(`type: "string"`, `format: "binary"`);
     if (baseDec) {
       validators.add(baseDec);
       decorators.push(array ? `@${baseDec}({ each: true })` : `@${baseDec}()`);
@@ -646,7 +710,12 @@ function renderDto(
       validators.add("Allow");
       decorators.push("@Allow()");
     }
-    return { name, ts, decorators, optional };
+    // The single merged @ApiProperty, unshifted so it leads the decorator stack.
+    if (api.length > 0) {
+      hasApiProperty = true;
+      decorators.unshift(`@ApiProperty({ ${api.join(", ")} })`);
+    }
+    return { name, ts, decorators, optional, lead };
   });
 
   const lines: string[] = [];
@@ -666,7 +735,7 @@ function renderDto(
       `import { ${[...validators].sort().join(", ")} } from "class-validator";`,
     );
   }
-  if (hasExample) {
+  if (hasApiProperty) {
     lines.push(`import { ApiProperty } from "#api-doc";`);
   }
   for (const n of [...nestedImports].sort()) {
@@ -674,10 +743,21 @@ function renderDto(
     lines.push(`import { ${n} } from "@/${dtoDir(n, module, types)}/${file}.ts";`);
   }
   if (hasNested || validators.size > 0) lines.push("");
-  lines.push(`// ${dto.description}`);
+  // Class JSDoc carries the [DTO] prose + a visibility tag; a provenance line
+  // names the source declaration (E26). Guarded so an undescribed DTO still
+  // gets the visibility tag rather than an empty /** */.
+  lines.push("/**");
+  if (dto.description) lines.push(` * ${dto.description}`);
+  lines.push(dto.isCore ? " * @public cross-module contract" : " * @internal");
+  lines.push(" */");
+  const dtoTag = dto.isCore ? "[DTO:core]" : "[DTO]";
+  lines.push(
+    `// rune declares: ${dtoTag} ${dto.name}: ${dto.properties.join(", ")}`,
+  );
   lines.push(`export class ${dto.name} {`);
   fields.forEach((f, i) => {
     if (i > 0) lines.push("");
+    for (const d of f.lead) lines.push(`  ${d}`);
     for (const d of f.decorators) lines.push(`  ${d}`);
     lines.push(`  ${f.name}${f.optional ? "?" : "!"}: ${f.ts};`);
   });
@@ -700,7 +780,8 @@ function renderTyp(
     ? `[TYP:${typ.modifiers.join(",")}]`
     : "[TYP]";
   const lines = [
-    `// Generated by rune manifest from ${runePath}.`,
+    // +1 → the [TYP] line in the spec (E30).
+    `// Generated by rune manifest from ${runePath}:${typ.line + 1}.`,
     "// Edit the body. Re-running manifest will not overwrite this file.",
     "",
   ];
@@ -713,12 +794,34 @@ function renderTyp(
       "",
     );
   }
-  lines.push(
-    `// ${typ.description}`,
-    `// rune declares: ${tag} ${typ.name}: ${typ.typeName}`,
-    `export type ${toPascal(typ.name)} = ${ts};`,
-    "",
-  );
+  // E29: description as JSDoc (guarded — undescribed [TYP] emits no /** */).
+  if (typ.description) lines.push(`/** ${typ.description} */`);
+  lines.push(`// rune declares: ${tag} ${typ.name}: ${typ.typeName}`);
+  // E30: which class-validator decorators this type's modifiers put on every
+  // DTO field of this type — so the [TYP] file documents its own enforcement.
+  const enforced: string[] = [];
+  for (const mod of typ.modifiers) {
+    const eq = mod.indexOf("=");
+    const id = eq === -1 ? mod : mod.slice(0, eq);
+    const value = eq === -1 ? null : mod.slice(eq + 1);
+    if (id === "example") continue; // not a validator
+    const spec = TYP_MODIFIERS.get(id);
+    if (!spec?.decorator) continue; // ext/core — placement, not validation
+    enforced.push(spec.call(value));
+  }
+  if (enforced.length > 0) {
+    lines.push(`// enforced on DTO fields: ${enforced.join(", ")}`);
+  }
+  if (typ.isExternal) {
+    lines.push(
+      "// [TYP:ext] — produced OUTSIDE this module; entrypoints wire it as a",
+      "// $external input",
+    );
+  }
+  if (typ.isCore) {
+    lines.push("// core: shared across modules — narrow with cross-module care.");
+  }
+  lines.push(`export type ${toPascal(typ.name)} = ${ts};`, "");
   return lines.join("\n");
 }
 
@@ -728,23 +831,60 @@ function camel(name: string): string {
 }
 
 // One test stub per method, so the test file mirrors the class instead of a
-// single catch-all placeholder.
+// single catch-all placeholder — plus one stub per fault declared on this noun's
+// untagged steps, so rune-fault-coverage has a case to verify (smk.test/int.test
+// scaffold their faults the same way). `faults` is in first-seen order, deduped.
 function renderBusinessTest(
   noun: string,
   methods: MethodSig[],
+  faults: string[],
   runePath: string,
+  nonDesc?: string,
 ): string {
   const pascal = toPascal(noun);
   const L: string[] = [];
   L.push(`// Generated by rune manifest from ${runePath}.`);
   L.push("// Edit the body. Re-running manifest will not overwrite this file.");
+  if (nonDesc) L.push(`// ${pascal}: ${nonDesc}`); // [NON] subject (E32)
   L.push("");
   L.push(`import { ${pascal} } from "./mod.ts";`);
-  const tested = methods.length > 0 ? methods.map((m) => m.verb) : ["placeholder"];
-  for (const verb of tested) {
+  // fault -> the method that declares it, so the fault stub names its raiser.
+  const faultVerb = new Map<string, string>();
+  for (const m of methods) {
+    for (const f of m.faults ?? []) if (!faultVerb.has(f)) faultVerb.set(f, m.verb);
+  }
+  if (methods.length > 0) {
+    // A comment-only Arrange/Act/Assert skeleton (E32). Comment-only because a
+    // live `new Id().generate()` is TS2576 and DTO-arg calls don't compile here.
+    for (const m of methods) {
+      const sig = `${m.verb}(${m.params.join(", ")})${m.output ? `: ${m.output}` : ""}`;
+      L.push("");
+      L.push(`Deno.test("${pascal}.${m.verb}", () => {`);
+      L.push(
+        m.isStatic
+          ? `  // Arrange — (static) ${pascal}.${m.verb}`
+          : `  // Arrange — const subject = new ${pascal}();`,
+      );
+      L.push(`  // Act — ${sig}`);
+      L.push(
+        m.output && m.output !== "void"
+          ? `  // Assert — TODO: assert the ${m.output} result`
+          : "  // Assert — TODO: assert the side effect",
+      );
+      L.push("});");
+    }
+  } else {
     L.push("");
-    L.push(`Deno.test("${pascal}.${verb}", () => {`);
-    L.push(`  // TODO: test ${verb}`);
+    L.push(`Deno.test("${pascal}.placeholder", () => {`);
+    L.push("  // TODO: test");
+    L.push("});");
+  }
+  for (const fault of faults) {
+    const raiser = faultVerb.get(fault);
+    L.push("");
+    L.push(`Deno.test("${fault}", () => {`);
+    if (raiser) L.push(`  // raised by ${pascal}.${raiser}`);
+    L.push(`  // TODO: exercise the "${fault}" fault path`);
     L.push("});");
   }
   L.push("");
@@ -779,6 +919,29 @@ function seamFor(type: string, typMap: Map<string, TypNode>): Seam {
 function seamTs(type: string, typMap: Map<string, TypNode>): string {
   const seam = seamFor(type, typMap);
   return seam.kind === "primitive" ? seam.ts : type;
+}
+
+// Every fault declared in a step subtree, paired with the `noun.verb` that
+// raises it — for @throws docs on coordinators and endpoints. Unlike
+// collectAllFaults this keeps the raiser and does NOT dedup (a fault on two
+// steps is attributed to both).
+function collectFaultRaisers(
+  steps: StepLike[] | CseNode["steps"],
+): { fault: string; raiser: string }[] {
+  const out: { fault: string; raiser: string }[] = [];
+  const walk = (ss: StepLike[] | CseNode["steps"]): void => {
+    for (const s of ss) {
+      if (s.kind === "step" || s.kind === "boundary") {
+        for (const f of s.faults) {
+          out.push({ fault: f, raiser: `${s.noun}.${s.verb}` });
+        }
+      } else if (s.kind === "ply") {
+        for (const c of s.cases) walk(c.steps);
+      }
+    }
+  };
+  walk(steps);
+  return out;
 }
 
 // A coordinator is the imperative SHELL for a [REQ]: it validates the request
@@ -823,6 +986,17 @@ function renderCoordinator(
         .map((s) => s.noun),
     ),
   ];
+  // Only nouns with an INSTANCE (non-static) step are constructed in the core.
+  // A static-only noun (e.g. `id::generate()`) is called statically, never
+  // `new`'d — emitting `const id = new Id()` for it was a latent defect (E4).
+  const instanceStepNouns = new Set(
+    req.steps
+      .filter((s): s is StepNode =>
+        s.kind === "step" && !polyNouns.has(s.noun) && !s.isStatic
+      )
+      .map((s) => s.noun),
+  );
+  const newNouns = instanceNouns.filter((n) => instanceStepNouns.has(n));
 
   const readVars = reads.map((r) => ({
     name: camel(`${r.noun}-${r.verb}`),
@@ -873,7 +1047,8 @@ function renderCoordinator(
   );
 
   const L: string[] = [];
-  L.push(`// Generated by rune manifest from ${runePath}.`);
+  // req.line is 0-based; +1 points at the [REQ] line in the spec (E1).
+  L.push(`// Generated by rune manifest from ${runePath}:${req.line + 1}.`);
   L.push("// Edit the body. Re-running manifest will not overwrite this file.");
   L.push("");
   // Value imports: the DTO classes are runtime contracts (assert targets).
@@ -897,9 +1072,28 @@ function renderCoordinator(
   }
   L.push("");
 
+  // JSDoc: input/output contracts + every fault, attributed to the step that
+  // raises it (collectFaultRaisers walks steps directly — collectAllFaults
+  // dedups and drops the raiser, which is exactly what @throws needs) (E2).
+  const faultRaisers = collectFaultRaisers(req.steps);
+  L.push("/**");
   L.push(
-    `// Coordinator for [REQ] ${req.noun}.${req.verb}(${req.input}): ${req.output}.`,
+    ` * Coordinator for [REQ] ${req.noun}.${req.verb}(${req.input}): ${req.output}.`,
   );
+  if (req.input) {
+    const inWord = inputSeam.kind === "opaque"
+      ? "passed through unvalidated (no [TYP] contract)"
+      : "asserted against its contract at the seam";
+    L.push(` * @param input ${req.input} — ${inWord}.`);
+  }
+  const outWord = outputSeam.kind === "opaque"
+    ? "passed through unvalidated (no [TYP] contract)"
+    : "asserted before return";
+  L.push(` * @returns ${req.output} — ${outWord}.`);
+  for (const { fault, raiser } of faultRaisers) {
+    L.push(` * @throws ${fault} — raised by ${raiser}`);
+  }
+  L.push(" */");
   L.push(
     `export async function ${req.verb}(input: ${
       seamTs(req.input, typMap)
@@ -982,13 +1176,43 @@ function renderCoordinator(
   L.push(`// Pure business logic for ${req.noun}.${req.verb} — no I/O. Takes the`);
   L.push(`// request input${takesReads}; returns ${returnsClause}.`);
   L.push(`function ${req.verb}Core(${coreParams}): { ${ret} } {`);
-  for (const n of instanceNouns) {
+  for (const n of newNouns) {
     L.push(`  const ${camel(n)} = new ${toPascal(n)}();`);
   }
-  const todoNouns = instanceNouns.length
-    ? instanceNouns.map((n) => camel(n)).join(", ")
-    : "the inputs";
-  L.push(`  // TODO: run the pure steps on ${todoNouns}, build the dtos`);
+  // E3: the spec's ordered step recipe as a checklist, so the dev implements
+  // exactly what the [REQ] declared. Boundaries are the shell's reads/writes/
+  // sends — only pure steps / [NEW] / [RET] / [PLY] dispatch belong in the core.
+  const recipe: string[] = [];
+  let stepNo = 0;
+  for (const s of req.steps) {
+    let line: string | null = null;
+    if (s.kind === "step") {
+      const sep = s.isStatic ? "::" : ".";
+      const out = s.output ? `: ${s.output}` : "";
+      const thr = s.faults.length ? ` -> throws: ${s.faults.join(", ")}` : "";
+      line = `${s.noun}${sep}${s.verb}(${s.params.join(", ")})${out}${thr}`;
+    } else if (s.kind === "ctr") {
+      line = `[NEW] ${s.className}`;
+    } else if (s.kind === "ret") {
+      line = `[RET] ${s.value}`;
+    } else if (s.kind === "ply") {
+      const cases = s.cases.map((c) => c.name).join("|");
+      const out = s.output ? `: ${s.output}` : "";
+      line = `[PLY] ${s.noun}.${s.verb}(${s.params.join(", ")})${out}` +
+        ` (cases: ${cases})`;
+    }
+    if (line) recipe.push(`  //   ${++stepNo}. ${line}`);
+  }
+  if (recipe.length > 0) {
+    L.push(`  // Recipe from [REQ] ${req.noun}.${req.verb} (run in order):`);
+    L.push(...recipe);
+    L.push("  // TODO: implement the steps above, then build the dtos");
+  } else {
+    const todoNouns = newNouns.length
+      ? newNouns.map((n) => camel(n)).join(", ")
+      : "the inputs";
+    L.push(`  // TODO: run the pure steps on ${todoNouns}, build the dtos`);
+  }
   L.push(`  throw new Error("not implemented");`);
   L.push("}");
   L.push("");
@@ -1139,6 +1363,7 @@ function renderEntrypointController(
   // Match each ent to its [REQ] coordinator by (input, output) DTO pair.
   const coordImports = new Set<string>();
   const entCoord = new Map<EntNode, string | null>();
+  const entReqNode = new Map<EntNode, ReqNode | null>();
   for (const ent of ents) {
     // An explicit `[ENT]` body `[REQ]` names the exact coordinator; otherwise fall back to the
     // (input, output) signature match.
@@ -1147,6 +1372,7 @@ function renderEntrypointController(
         r.noun === ent.delegate!.noun && r.verb === ent.delegate!.verb
       )
       : reqs.find((r) => r.input === ent.input && r.output === ent.output);
+    entReqNode.set(ent, req ?? null);
     if (!req) {
       entCoord.set(ent, null);
       continue;
@@ -1192,6 +1418,57 @@ function renderEntrypointController(
       );
     }
     if (p.optional) opts.push("optional: true");
+    // E38: a JSDoc block (delegate target, @param/@returns from DTO prose,
+    // @throws from the coordinator's faults) plus `//` lines explaining the
+    // derived process metadata. The @Endpoint decorator itself stays one line.
+    const matched = entReqNode.get(ent) ?? null;
+    const dtoDesc = (n: string): string =>
+      types.dtoByName.get(n)?.description ?? "";
+    const jsdoc: string[] = [];
+    if (matched) {
+      const how = ent.delegate
+        ? "named by the [ENT] body"
+        : "matched by input/output signature";
+      jsdoc.push(`Delegates to coordinator ${matched.noun}.${matched.verb} (${how}).`);
+    } else {
+      jsdoc.push("No coordinator wired — see the handler body.");
+    }
+    if (!noInput) {
+      const d = dtoDesc(ent.input);
+      jsdoc.push(`@param body ${ent.input}${d ? ` — ${d}` : ""}`);
+    }
+    const od = dtoDesc(ent.output);
+    jsdoc.push(`@returns ${ent.output}${od ? ` — ${od}` : ""}`);
+    if (matched) {
+      for (const { fault, raiser } of collectFaultRaisers(matched.steps)) {
+        jsdoc.push(`@throws ${fault} (${raiser})`);
+      }
+    }
+    L.push("  /**");
+    for (const d of jsdoc) L.push(`   * ${d}`);
+    L.push("   */");
+    // Process-metadata prose (derived, so a human reading the route understands
+    // why it is ordered/bound the way it is).
+    for (const field of Object.keys(p.bind)) {
+      const v = p.bind[field];
+      if (Array.isArray(v)) {
+        L.push(`  // ${field} <- ${v.join(" OR ")} (first branch to run wins)`);
+      } else if (v.startsWith("$")) {
+        L.push(`  // ${field} <- supplied externally (seed / module input)`);
+      } else {
+        L.push(`  // ${field} <- ${v}`);
+      }
+    }
+    if (p.dependsOn.length) L.push(`  // Runs after: ${p.dependsOn.join(", ")}.`);
+    if (p.flows.length) {
+      L.push(
+        `  // Only in the "${p.flows.join(`", "`)}" flow branch (untagged endpoints`,
+      );
+      L.push("  // run in every flow).");
+    }
+    if (p.optional) L.push("  // Optional: attempted but never blocks the run.");
+    // E37: spec provenance (+1 → the [ENT] line).
+    L.push(`  // from ${runePath}:${ent.line + 1}`);
     L.push(`  @Endpoint({ ${opts.join(", ")} })`);
     L.push(
       `  ${ent.action}(${
@@ -1202,7 +1479,12 @@ function renderEntrypointController(
     if (alias) {
       L.push(`    return ${alias}(${noInput ? "{}" : "body"});`);
     } else {
-      L.push(`    // No [REQ] matches (${ent.input}): ${ent.output} — wire a coordinator.`);
+      // E39: name the exact coordinator path the dev should create.
+      const target = ent.delegate
+        ? processName(ent.delegate.noun, ent.delegate.verb)
+        : "<noun>-<verb>";
+      L.push(`    // No [REQ] matches (${ent.input}): ${ent.output}.`);
+      L.push(`    // Create src/${module}/domain/coordinators/${target}/mod.ts`);
       L.push(`    throw new Error("not implemented");`);
     }
     L.push(`  }`);
@@ -1240,7 +1522,15 @@ function renderEntrypointE2e(
     }
   }
   const placeholder = (name: string): string => {
-    const t = typMap.get(name)?.typeName;
+    const typ = typMap.get(name);
+    // Prefer the spec's declared example= value over a synthetic stub (E43).
+    for (const mod of typ?.modifiers ?? []) {
+      if (mod.startsWith("example=")) {
+        const v = mod.slice("example=".length);
+        if (v) return exampleLiteral(v, typ?.typeName);
+      }
+    }
+    const t = typ?.typeName;
     if (t === "number" || t === "integer") return "7";
     if (t === "boolean") return "true";
     return JSON.stringify(`${name}-stub`);
@@ -1249,6 +1539,28 @@ function renderEntrypointE2e(
     .sort()
     .map((n) => `${n}: ${placeholder(n)}`)
     .join(", ");
+  // E44: a legend for the $ext seeds (name -> [TYP] description) and the
+  // endpoint chain in @Endpoint order, so the e2e reads as documentation of how
+  // the surface runs. Emitted as comments above the one-line exercise call.
+  const legend: string[] = [];
+  if (seedNames.size > 0) {
+    legend.push("      // $ext seeds — replace stub values with real inputs:");
+    for (const n of [...seedNames].sort()) {
+      const d = typMap.get(n)?.description;
+      legend.push(`      //   ${n}${d ? ` — ${d}` : ""}`);
+    }
+  }
+  const ordered = [...ents].sort((a, b) =>
+    (process.get(a)?.order ?? 0) - (process.get(b)?.order ?? 0)
+  );
+  if (ordered.length > 0) {
+    legend.push("      // Endpoint chain (by @Endpoint order):");
+    for (const e of ordered) {
+      const p = process.get(e);
+      const deps = p?.dependsOn.length ? ` (after ${p.dependsOn.join(", ")})` : "";
+      legend.push(`      //   ${p?.order ?? "?"}. ${e.action} -> ${e.output}${deps}`);
+    }
+  }
   const exerciseCall = seedEntries
     ? `      const report = await exerciseEndpoints({ api, overrides: { seeds: { ${seedEntries} } } });`
     : "      const report = await exerciseEndpoints({ api });";
@@ -1268,6 +1580,7 @@ function renderEntrypointE2e(
     "  fn: async () => {",
     `    const api = await bootstrapServer(${JSON.stringify(module)}, ${moduleConst}, { swagger: true });`,
     "    try {",
+    ...legend,
     exerciseCall,
     "      assertEquals(report.failed.map((r) => r.id), []);",
     "    } finally {",
@@ -1364,6 +1677,28 @@ function collectBoundaryFaults(
   const walk = (steps: StepLike[] | CseNode["steps"]) => {
     for (const step of steps) {
       if (step.kind === "boundary") {
+        const list = byNoun.get(step.noun) ?? [];
+        for (const f of step.faults) if (!list.includes(f)) list.push(f);
+        byNoun.set(step.noun, list);
+      } else if (step.kind === "ply") {
+        for (const cse of step.cases) walk(cse.steps);
+      }
+    }
+  };
+  for (const req of ast.reqs) walk(req.steps);
+  return byNoun;
+}
+
+/** Map each noun to the union of faults on all its UNTAGGED (business) steps,
+ * across every [REQ] and [CSE], in first-seen order. One business class serves
+ * all of a noun's instance steps, so its test.ts must cover all their faults. */
+function collectBusinessFaults(
+  ast: ReturnType<typeof parse>,
+): Map<string, string[]> {
+  const byNoun = new Map<string, string[]>();
+  const walk = (steps: StepLike[] | CseNode["steps"]) => {
+    for (const step of steps) {
+      if (step.kind === "step") {
         const list = byNoun.get(step.noun) ?? [];
         for (const f of step.faults) if (!list.includes(f)) list.push(f);
         byNoun.set(step.noun, list);

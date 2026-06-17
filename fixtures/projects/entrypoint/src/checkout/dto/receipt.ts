@@ -2,9 +2,17 @@
 // Edit the body. Re-running manifest will not overwrite this file.
 
 import { IsString } from "class-validator";
+import { ApiProperty } from "#api-doc";
 
-// a receipt for a payment
+/**
+ * a receipt for a payment
+ * @internal
+ */
+// rune declares: [DTO] ReceiptDto: receipt
 export class ReceiptDto {
+  /** the receipt code */
+  // rune declares: [TYP] receipt: string
+  @ApiProperty({ description: "the receipt code" })
   @IsString()
   receipt!: string;
 }

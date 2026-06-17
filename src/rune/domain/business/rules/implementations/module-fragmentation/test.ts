@@ -212,3 +212,34 @@ Deno.test("check — does not flag coupling on large well-formed module", async 
   const result = await check("src/orders", "folder", ctx);
   assertEquals(result, null);
 });
+
+Deno.test("check — single business feature alone (adequate size + layers) is NOT flagged", async () => {
+  // A focused service like `secrets` legitimately has one business noun. With
+  // enough source files and ≥2 active layers, the single-feature signal must not
+  // fire on its own — it only contributes when corroborated by structural thinness.
+  const ctx = makeCtx(
+    [
+      "src/secrets/mod-root.ts",
+      "src/secrets/domain/business/vault/mod.ts",
+      "src/secrets/domain/business/vault/test.ts",
+      "src/secrets/domain/coordinators/vault-fetch/mod.ts",
+      "src/secrets/domain/coordinators/vault-fetch/int.test.ts",
+      "src/secrets/dto/secret.ts",
+      "src/secrets/dto/secret-ref.ts",
+      "src/secrets/entrypoints/http/mod.ts",
+    ],
+    [
+      "src/secrets",
+      "src/secrets/domain",
+      "src/secrets/domain/business",
+      "src/secrets/domain/business/vault",
+      "src/secrets/domain/coordinators",
+      "src/secrets/domain/coordinators/vault-fetch",
+      "src/secrets/dto",
+      "src/secrets/entrypoints",
+      "src/secrets/entrypoints/http",
+    ],
+  );
+  const result = await check("src/secrets", "folder", ctx);
+  assertEquals(result, null);
+});

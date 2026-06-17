@@ -13,6 +13,9 @@ Deno.test({
   fn: async () => {
     const api = await bootstrapServer("checkout", httpModule, { swagger: true });
     try {
+      // Endpoint chain (by @Endpoint order):
+      //   1. createOrder -> OrderDto
+      //   2. payOrder -> ReceiptDto (after createOrder)
       const report = await exerciseEndpoints({ api });
       assertEquals(report.failed.map((r) => r.id), []);
     } finally {

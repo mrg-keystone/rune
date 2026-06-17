@@ -291,7 +291,13 @@ const REQUIRED_IMPORTS: Record<string, string> = {
   "@/": "./",
   "class-validator": "npm:class-validator@^0.14",
   "class-transformer": "npm:class-transformer@^0.5",
-  "reflect-metadata": "npm:reflect-metadata@^0.2",
+  // Pinned to keep/danet's EXACT reflect-metadata so the module graph dedupes to
+  // ONE copy. A range like ^0.2 resolves to 0.2.x and loads a SECOND Reflect
+  // polyfill that re-initialises the global metadata store — wiping the
+  // design:paramtypes danet wrote through its 0.1.13 copy, so @Body()/@Endpoint
+  // param decorators read `undefined` and bootstrapServer() throws at load. Keep
+  // this in lockstep with keep's pin.
+  "reflect-metadata": "npm:reflect-metadata@0.1.13",
   "#std/assert": "jsr:@std/assert",
   "#std/path": "jsr:@std/path",
   // Generated [ENT] controllers + e2e tests import the keep backend framework.

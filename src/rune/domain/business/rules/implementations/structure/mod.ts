@@ -299,6 +299,14 @@ export async function check(
   const looseFileMatch = containsLooseName(baseName);
   if (looseFileMatch) return [`"${baseName}" contains loose/vague word "${looseFileMatch}" — use a more specific name`];
 
+  // Co-located private helpers: a leading-underscore file (e.g. `_dispatch.ts`,
+  // `_leaf.ts`) is an intentional internal split of the folder it lives in — the
+  // opposite of a vague junk drawer (those are caught by the loose-name check
+  // above). Allowed in any recognized folder so non-trivial [PLY] dispatchers and
+  // other hand-authored decompositions don't trip the structure rule. The parent
+  // folder must still itself be in the spec (checked above via parentNode).
+  if (baseName.startsWith("_")) return null;
+
   // Try fixed file keys
   for (const [k, v] of Object.entries(parentNode)) {
     if (k.startsWith("$") || isFolderKey(k)) continue;

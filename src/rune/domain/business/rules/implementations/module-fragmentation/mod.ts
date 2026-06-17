@@ -41,23 +41,13 @@ export async function check(
   const violations: string[] = [];
 
   // Signal 1: Small module
-  if (sourceFiles.length < MIN_SOURCE_FILES) {
+  const isSmall = sourceFiles.length < MIN_SOURCE_FILES;
+  if (isSmall) {
     violations.push(`Module only has ${sourceFiles.length} source files — consider merging it into a related module`);
   }
 
-  // Signal 2: Single-feature module
-  const businessDir = path + "/domain/business";
-  const businessFeatures = ctx.dirs.filter(
-    (d) =>
-      d.startsWith(businessDir + "/") &&
-      d.split("/").length === businessDir.split("/").length + 1,
-  );
-  if (businessFeatures.length > 0 && businessFeatures.length < MIN_BUSINESS_FEATURES) {
-    const names = businessFeatures.map((d) => d.split("/").pop());
-    violations.push(`Module has only one business feature (${names.join(", ")}) — it may not need its own module`);
-  }
-
-  // Signal 3: Underutilized layers
+  // Signal 3 (computed early — it corroborates the single-feature signal below):
+  // underutilized layers.
   const activeLayers: string[] = [];
   for (const layer of DOMAIN_LAYERS) {
     if (ctx.dirs.includes(path + "/domain/" + layer)) activeLayers.push(layer);
@@ -65,7 +55,30 @@ export async function check(
   for (const layer of TOP_LAYERS) {
     if (ctx.dirs.includes(path + "/" + layer)) activeLayers.push(layer);
   }
-  if (activeLayers.length < MIN_ACTIVE_LAYERS) {
+  const isUnderutilized = activeLayers.length < MIN_ACTIVE_LAYERS;
+
+  // Signal 2: Single-feature module. A single business noun is, on its own, a
+  // legitimate module shape (a focused service like `secrets` may have exactly
+  // one noun) — so this signal only contributes when CORROBORATED by structural
+  // thinness (a small file count or an underused layer set). Alone it is not
+  // fragmentation, and firing it alone blocked correct single-noun modules from
+  // reaching "All clear".
+  const businessDir = path + "/domain/business";
+  const businessFeatures = ctx.dirs.filter(
+    (d) =>
+      d.startsWith(businessDir + "/") &&
+      d.split("/").length === businessDir.split("/").length + 1,
+  );
+  if (
+    businessFeatures.length > 0 &&
+    businessFeatures.length < MIN_BUSINESS_FEATURES &&
+    (isSmall || isUnderutilized)
+  ) {
+    const names = businessFeatures.map((d) => d.split("/").pop());
+    violations.push(`Module has only one business feature (${names.join(", ")}) — it may not need its own module`);
+  }
+
+  if (isUnderutilized) {
     const layerList = activeLayers.length > 0 ? activeLayers.join(", ") : "none";
     violations.push(`Module only uses ${activeLayers.length} layer(s) (${layerList}) — consider merging into a module that uses more of the architecture`);
   }

@@ -1,9 +1,10 @@
 import type { EntryTarget, PipelineContext } from "@/core/dto/types.ts";
 import { parse } from "@rune/domain/business/rune-parse/mod.ts";
 import {
-  applyCase,
+  bindings,
   isProjectSpec,
   moduleFromSpecPath,
+  typFileName,
 } from "@rune/domain/business/rune-bindings/mod.ts";
 
 // rune-typ-shape: every [TYP] in a rune file must have a corresponding file at:
@@ -26,9 +27,16 @@ export async function check(
 
   const fileSet = new Set(ctx.files);
   const violations: string[] = [];
+  const nameBinding = bindings["<name>"];
 
   for (const typ of ast.typs) {
-    const fileName = applyCase(typ.name, "kebab");
+    // Mirror the generator's collision handling: a [TYP] sharing a same-dir
+    // [DTO]'s stripped stem (principal vs PrincipalDto) is written with a
+    // `-type` suffix, so the rule must look for it there, not at the bare stem.
+    const dtoNamesSameDir = ast.dtos
+      .filter((d) => !!d.isCore === !!typ.isCore)
+      .map((d) => d.name);
+    const fileName = typFileName(typ.name, dtoNamesSameDir, nameBinding);
     const dir = typ.isCore ? "src/core/dto" : `src/${moduleName}/dto`;
     const filePath = `${dir}/${fileName}.ts`;
 

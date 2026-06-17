@@ -1083,6 +1083,13 @@
                   ".ts"
                 ],
                 "desc": "barrel re-export for the active variant"
+              },
+              "mod": {
+                "ext": [
+                  ".ts"
+                ],
+                "desc": "optional dispatcher: selects + delegates to a variant for non-trivial dispatch (co-located _-prefixed helpers also allowed)",
+                "optional": true
               }
             }
           ]
@@ -1202,6 +1209,13 @@
                     ".ts"
                   ],
                   "desc": "barrel re-export for the active variant"
+                },
+                "mod": {
+                  "ext": [
+                    ".ts"
+                  ],
+                  "desc": "optional dispatcher: selects + delegates to a variant for non-trivial dispatch (co-located _-prefixed helpers also allowed)",
+                  "optional": true
                 }
               }
             ]

@@ -2,9 +2,17 @@
 // Edit the body. Re-running manifest will not overwrite this file.
 
 import { IsString } from "class-validator";
+import { ApiProperty } from "#api-doc";
 
-// a page of products
+/**
+ * a page of products
+ * @internal
+ */
+// rune declares: [DTO] ProductsDto: items
 export class ProductsDto {
+  /** the items */
+  // rune declares: [TYP] items: string
+  @ApiProperty({ description: "the items" })
   @IsString()
   items!: string;
 }

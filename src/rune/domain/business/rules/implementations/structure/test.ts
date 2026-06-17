@@ -140,3 +140,51 @@ Deno.test("check — feature folder with only mod.ts (no test.ts) should be flag
   const result = await check("src/mymod/domain/business/myfeat", "folder", ctx);
   assertEquals(result !== null, true, "feature folder with only mod.ts should be flagged");
 });
+
+// A resolvable [PLY] feature folder (base/ + implementations/ + poly-mod.ts),
+// the shape a non-trivial dispatcher lives in.
+const POLY_DIRS = [
+  "src/orders", "src/orders/domain", "src/orders/domain/business",
+  "src/orders/domain/business/channel",
+  "src/orders/domain/business/channel/base",
+  "src/orders/domain/business/channel/implementations",
+  "src/orders/domain/business/channel/implementations/email",
+];
+const POLY_FILES = [
+  "src/orders/domain/business/channel/base/mod.ts",
+  "src/orders/domain/business/channel/implementations/email/mod.ts",
+  "src/orders/domain/business/channel/poly-mod.ts",
+];
+
+Deno.test("check — leading-underscore helper is allowed in a recognized [PLY] folder", async () => {
+  // A non-trivial [PLY] dispatcher can split into co-located helpers; an
+  // underscore prefix marks them as intentional internal files (not a junk drawer).
+  const ctx = makeCtx(
+    [...POLY_FILES, "src/orders/domain/business/channel/_dispatch.ts"],
+    POLY_DIRS,
+  );
+  const result = await check("src/orders/domain/business/channel/_dispatch.ts", "ts", ctx);
+  assertEquals(result, null);
+});
+
+Deno.test("check — underscore helper with a loose word is still flagged", async () => {
+  // The loose-name guard wins over the underscore allowance — `_helpers.ts`
+  // (contains "helpers") is still a vague junk drawer.
+  const ctx = makeCtx(
+    [...POLY_FILES, "src/orders/domain/business/channel/_helpers.ts"],
+    POLY_DIRS,
+  );
+  const result = await check("src/orders/domain/business/channel/_helpers.ts", "ts", ctx);
+  assertEquals(result !== null, true);
+  assertEquals(result!.some((v) => v.includes("loose/vague")), true);
+});
+
+Deno.test("check — [PLY] dispatcher mod.ts is allowed alongside base/implementations/poly-mod", async () => {
+  // The poly variant now allows an optional dispatcher mod.ts at the folder root.
+  const ctx = makeCtx(
+    [...POLY_FILES, "src/orders/domain/business/channel/mod.ts"],
+    POLY_DIRS,
+  );
+  const result = await check("src/orders/domain/business/channel/mod.ts", "ts", ctx);
+  assertEquals(result, null);
+});

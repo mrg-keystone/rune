@@ -2,9 +2,17 @@
 // Edit the body. Re-running manifest will not overwrite this file.
 
 import { IsNumber } from "class-validator";
+import { ApiProperty } from "#api-doc";
 
-// a paged product listing request
+/**
+ * a paged product listing request
+ * @internal
+ */
+// rune declares: [DTO] ListDto: page
 export class ListDto {
+  /** the page */
+  // rune declares: [TYP] page: number
+  @ApiProperty({ description: "the page" })
   @IsNumber()
   page!: number;
 }

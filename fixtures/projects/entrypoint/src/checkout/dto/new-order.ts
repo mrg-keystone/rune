@@ -2,9 +2,17 @@
 // Edit the body. Re-running manifest will not overwrite this file.
 
 import { IsString } from "class-validator";
+import { ApiProperty } from "#api-doc";
 
-// a new order to create
+/**
+ * a new order to create
+ * @internal
+ */
+// rune declares: [DTO] NewOrderDto: item
 export class NewOrderDto {
+  /** the item to order */
+  // rune declares: [TYP] item: string
+  @ApiProperty({ description: "the item to order" })
   @IsString()
   item!: string;
 }
