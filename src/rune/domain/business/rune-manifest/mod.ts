@@ -435,7 +435,7 @@ function addPolyFeature(
 function addAdapter(
   emit: Emit,
   module: string,
-  step: { tag: string; noun: string; faults: string[]; line: number },
+  step: { service: string; noun: string; faults: string[]; line: number },
   methods: MethodSig[],
   runePath: string,
   faults: string[],

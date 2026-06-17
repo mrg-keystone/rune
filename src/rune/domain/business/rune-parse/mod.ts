@@ -6,15 +6,21 @@ import {
   TYP_MODIFIERS,
 } from "@rune/domain/business/rune-modifiers/mod.ts";
 
-export type BoundaryTag = "db" | "fs" | "mq" | "ex" | "os" | "lg";
+// The closed set of service transports a [SRV] may declare.
+export const SRV_TRANSPORTS = ["sk", "hp", "ws", "sc"] as const;
+export type SrvTransport = typeof SRV_TRANSPORTS[number];
 
 export interface RuneAst {
   module: string | null;
+  /** Optional [MOD] description (`[MOD] name: prose…` + indented continuation). */
+  moduleDescription: string | null;
   reqs: ReqNode[];
   ents: EntNode[];
   dtos: DtoNode[];
   typs: TypNode[];
   nons: NonNode[];
+  /** Declared backing services ([SRV] <transport>:<name>: <ENV,…>). */
+  srvs: SrvNode[];
   errors: ParseError[];
 }
 
@@ -62,7 +68,9 @@ export interface StepNode {
 
 export interface BoundaryStepNode {
   kind: "boundary";
-  tag: BoundaryTag;
+  /** The backing service name (the `<service>:` prefix); resolved to a [SRV]
+   * by the rune-service-presence lint rule, not at parse time. */
+  service: string;
   noun: string;
   verb: string;
   params: string[];
@@ -137,29 +145,44 @@ export interface NonNode {
   line: number;
 }
 
+export interface SrvNode {
+  /** Connection transport — one of SRV_TRANSPORTS (sk/hp/ws/sc). */
+  transport: string;
+  /** Service name referenced by `<name>:` boundary prefixes. */
+  name: string;
+  /** Declared environment variable names (comma-separated after the 2nd colon). */
+  envVars: string[];
+  description: string;
+  line: number;
+}
+
 export interface ParseError {
   line: number;
   message: string;
 }
 
-const BOUNDARY_TAGS: readonly BoundaryTag[] = ["db", "fs", "mq", "ex", "os", "lg"];
-
 export function parse(text: string, opts: ParseOptions = {}): RuneAst {
   const rec = new TagRecognizer(opts.tags ?? BUILTIN_TAGS);
   const ast: RuneAst = {
     module: null,
+    moduleDescription: null,
     reqs: [],
     ents: [],
     dtos: [],
     typs: [],
     nons: [],
+    srvs: [],
     errors: [],
   };
 
   const lines = text.split(/\r?\n/);
 
-  // Block-mode tracking for indented description lines.
-  let descTarget: DtoNode | TypNode | NonNode | null = null;
+  // Block-mode tracking for indented description lines. Any node with a
+  // `description` field can be the target (DTO/TYP/NON/SRV + the module).
+  let descTarget: { description: string } | null = null;
+  // The module's description accumulates here ([MOD] name: prose + continuation);
+  // flushed onto ast.moduleDescription after the walk.
+  const modDesc = { description: "" };
 
   // Tree-builder state.
   let currentReq: ReqNode | null = null;
@@ -227,17 +250,54 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
     }
 
     // [MOD] directive — must come before any element, but we accept it anywhere.
+    // `[MOD] name` or `[MOD] name: prose…`; the prose continues on indented lines.
     const modTag = rec.match(trimmed, "mod");
     if (modTag) {
-      const name = modTag.rest;
+      const rest = modTag.rest;
+      const colon = rest.indexOf(":");
+      const name = (colon === -1 ? rest : rest.slice(0, colon)).trim();
+      const inlineDesc = colon === -1 ? "" : rest.slice(colon + 1).trim();
       if (name === "") {
         ast.errors.push({ line: i, message: "[MOD] missing name" });
+        descTarget = null;
       } else if (ast.module !== null) {
         ast.errors.push({ line: i, message: `duplicate [MOD]: already set to "${ast.module}"` });
+        descTarget = null;
       } else {
         ast.module = name;
+        if (inlineDesc) modDesc.description = inlineDesc;
+        descTarget = modDesc; // indented continuation appends to the module desc
       }
-      descTarget = null;
+      continue;
+    }
+
+    // [SRV] <transport>:<name>: <ENV, ENV2>  (the backing-service declaration).
+    if (trimmed.startsWith("[SRV]")) {
+      const rest = trimmed.slice("[SRV]".length).trim();
+      const m = rest.match(/^([a-z]+):([A-Za-z_][A-Za-z0-9_-]*)(?::\s*(.*))?$/);
+      if (!m) {
+        ast.errors.push({
+          line: i,
+          message: "[SRV] malformed — expected [SRV] <transport>:<name>: <ENV,…>",
+        });
+        descTarget = null;
+        continue;
+      }
+      const [, transport, name, envStr] = m;
+      if (!SRV_TRANSPORTS.includes(transport as SrvTransport)) {
+        ast.errors.push({
+          line: i,
+          message: `[SRV] unknown transport "${transport}" — expected ${
+            SRV_TRANSPORTS.join("/")
+          }`,
+        });
+      }
+      const envVars = (envStr ?? "").split(",").map((s) => s.trim()).filter((s) =>
+        s !== ""
+      );
+      const node: SrvNode = { transport, name, envVars, description: "", line: i };
+      ast.srvs.push(node);
+      descTarget = node;
       continue;
     }
 
@@ -451,11 +511,11 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
     if (boundary) {
       const sig = parseStepSignature(boundary.rest);
       if (!sig) {
-        ast.errors.push({ line: i, message: `${boundary.tag}: malformed signature` });
+        ast.errors.push({ line: i, message: `${boundary.service}: malformed signature` });
       } else {
         const node: BoundaryStepNode = {
           kind: "boundary",
-          tag: boundary.tag,
+          service: boundary.service,
           ...sig,
           faults: [],
           line: i,
@@ -528,6 +588,7 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
     }
   }
 
+  ast.moduleDescription = modDesc.description.trim() || null;
   return ast;
 }
 
@@ -630,18 +691,18 @@ class TagRecognizer {
 }
 
 interface BoundaryMatch {
-  tag: BoundaryTag;
+  service: string;
   rest: string;
 }
 
 function matchBoundary(trimmed: string): BoundaryMatch | null {
-  for (const tag of BOUNDARY_TAGS) {
-    const prefix = `${tag}:`;
-    if (trimmed.startsWith(prefix)) {
-      return { tag, rest: trimmed.slice(prefix.length) };
-    }
-  }
-  return null;
+  // A leading `<service>:` (single colon, NOT `::`) marks a boundary step. The
+  // negative lookahead on a second colon keeps a static `Noun::verb` out of the
+  // boundary path. The service must be declared by a matching [SRV] — enforced
+  // by the rune-service-presence lint rule, not here.
+  const m = trimmed.match(/^([A-Za-z_][A-Za-z0-9_-]*):(?!:)/);
+  if (!m) return null;
+  return { service: m[1], rest: trimmed.slice(m[0].length) };
 }
 
 interface StepSig {

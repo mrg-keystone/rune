@@ -75,11 +75,66 @@ Deno.test("parse — boundary step with faults", () => {
   const step = ast.reqs[0].steps[0];
   assertEquals(step.kind, "boundary");
   if (step.kind === "boundary") {
-    assertEquals(step.tag, "db");
+    assertEquals(step.service, "db");
     assertEquals(step.noun, "metadata");
     assertEquals(step.verb, "set");
     assertEquals(step.faults, ["timed-out", "network-error"]);
   }
+});
+
+Deno.test("parse — [SRV] declares transport + name + env vars + description", () => {
+  const ast = parse(
+    `[MOD] checkout: takes an order and charges payment.
+    handles the full purchase flow.
+
+[REQ] payment.pay(PayDto): ReceiptDto
+    firebase:payment.charge(PayDto): ReceiptDto
+      timeout
+    [RET] ReceiptDto
+
+[SRV] sk:firebase: FIREBASE_API_KEY, FIREBASE_PROJECT_ID
+    Firebase callable; charge() idempotent by idemKey`,
+  );
+  assertEquals(ast.errors, []);
+  // [MOD] description (inline + continuation line).
+  assertEquals(ast.module, "checkout");
+  assertEquals(
+    ast.moduleDescription,
+    "takes an order and charges payment. handles the full purchase flow.",
+  );
+  // [SRV] node.
+  assertEquals(ast.srvs.length, 1);
+  const srv = ast.srvs[0];
+  assertEquals(srv.transport, "sk");
+  assertEquals(srv.name, "firebase");
+  assertEquals(srv.envVars, ["FIREBASE_API_KEY", "FIREBASE_PROJECT_ID"]);
+  assertEquals(srv.description, "Firebase callable; charge() idempotent by idemKey");
+  // The boundary call carries the service name as its prefix.
+  const step = ast.reqs[0].steps[0];
+  assertEquals(step.kind, "boundary");
+  if (step.kind === "boundary") assertEquals(step.service, "firebase");
+});
+
+Deno.test("parse — service: prefix vs Noun:: static are disambiguated", () => {
+  const ast = parse(
+    `[REQ] task.create(InDto): OutDto
+    id::generate(): id
+    kv:task.save(InDto): void`,
+  );
+  assertEquals(ast.errors, []);
+  const [staticStep, boundary] = ast.reqs[0].steps;
+  // `id::generate` is a static business step, NOT a boundary (double colon).
+  assertEquals(staticStep.kind, "step");
+  if (staticStep.kind === "step") assertEquals(staticStep.isStatic, true);
+  // `kv:task.save` is a boundary (single-colon service prefix).
+  assertEquals(boundary.kind, "boundary");
+  if (boundary.kind === "boundary") assertEquals(boundary.service, "kv");
+});
+
+Deno.test("parse — [SRV] rejects an unknown transport", () => {
+  const ast = parse(`[SRV] xx:thing: A_KEY`);
+  assertEquals(ast.errors.length, 1);
+  assertEquals(ast.errors[0].message.includes("unknown transport"), true);
 });
 
 Deno.test("parse — [PLY] with two [CSE] cases", () => {

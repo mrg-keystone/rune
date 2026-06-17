@@ -28,7 +28,7 @@ export async function check(
   if (!moduleName) return null;
 
   // Collect every boundary noun across all REQs (and inside [PLY] cases).
-  const services = new Map<string, { tag: string; line: number }>();
+  const services = new Map<string, { service: string; line: number }>();
   for (const req of ast.reqs) {
     collectBoundaries(req.steps, services);
   }
@@ -42,10 +42,10 @@ export async function check(
     const mod = `${dir}/mod.ts`;
     const smk = `${dir}/smk.test.ts`;
     if (!fileSet.has(mod)) {
-      violations.push(`Missing adapter file: ${mod} (for boundary ${info.tag}:${noun} at line ${info.line + 1})`);
+      violations.push(`Missing adapter file: ${mod} (for boundary ${info.service}:${noun} at line ${info.line + 1})`);
     }
     if (!fileSet.has(smk)) {
-      violations.push(`Missing adapter smoke test: ${smk} (for boundary ${info.tag}:${noun} at line ${info.line + 1})`);
+      violations.push(`Missing adapter smoke test: ${smk} (for boundary ${info.service}:${noun} at line ${info.line + 1})`);
     }
   }
 
@@ -54,12 +54,12 @@ export async function check(
 
 function collectBoundaries(
   steps: StepLike[] | CseNode["steps"],
-  out: Map<string, { tag: string; line: number }>,
+  out: Map<string, { service: string; line: number }>,
 ): void {
   for (const step of steps) {
     if (step.kind === "boundary") {
       if (!out.has(step.noun)) {
-        out.set(step.noun, { tag: step.tag, line: step.line });
+        out.set(step.noun, { service: step.service, line: step.line });
       }
     } else if (step.kind === "ply") {
       for (const cse of step.cases) {
