@@ -13,6 +13,7 @@ import {
   type DtoNode,
   type NonNode,
   type RuneAst,
+  type SrvNode,
   type StepLike,
   type TypNode,
 } from "@rune/domain/business/rune-parse/mod.ts";
@@ -30,6 +31,9 @@ export interface MethodSig {
   /** Fault slugs declared on this step, UNIONed across every flow that calls
    * the method — emitted as `@throws` doc on the generated method (E13). */
   faults: string[];
+  /** For a boundary method, the declared [SRV] service it calls — drives the
+   * service/transport/env doc on the adapter method (E20). */
+  service?: string;
 }
 
 /** Type resolution + signature shape for renderImpl. All optional: with no
@@ -50,6 +54,9 @@ export interface RenderImplOptions {
   /** [NON] declarations by noun: the prose becomes the class doc comment, and
    * for adapters (async) it rides under the I/O-boundary role line (E12/E18). */
   nonByNoun?: Map<string, NonNode>;
+  /** [SRV] declarations by name: an adapter method calling `service:noun.verb`
+   * documents its backing service, transport, and env vars (E20). */
+  srvByName?: Map<string, SrvNode>;
 }
 
 // Group method signatures by noun across every [REQ] flow. Polymorphic ([PLY])
@@ -70,6 +77,7 @@ export function collectNounMethods(ast: RuneAst): Map<string, MethodSig[]> {
       for (const f of sig.faults) {
         if (!existing.faults.includes(f)) existing.faults.push(f);
       }
+      if (!existing.service && sig.service) existing.service = sig.service;
     } else {
       list.push({ ...sig, faults: [...sig.faults] });
     }
@@ -85,6 +93,7 @@ export function collectNounMethods(ast: RuneAst): Map<string, MethodSig[]> {
           output: step.output,
           isStatic: step.isStatic,
           faults: step.faults ?? [],
+          service: step.kind === "boundary" ? step.service : undefined,
         });
       } else if (step.kind === "ply") {
         polyNouns.add(step.noun);
@@ -136,6 +145,18 @@ export function renderImpl(
     }
     const rd = descFor(m.output);
     if (rd && m.output !== "void" && m.output !== noun) doc.push(`@returns ${rd}`);
+    // Backing-service metadata for an adapter method (E20): which [SRV] it calls,
+    // its transport, and the env vars to wire — the context the dev was missing.
+    if (opts.async && m.service) {
+      const srv = opts.srvByName?.get(m.service);
+      if (srv) {
+        const env = srv.envVars.length ? ` — env: ${srv.envVars.join(", ")}` : "";
+        doc.push(`service: ${srv.name} (transport ${srv.transport})${env}`);
+        if (srv.description) doc.push(srv.description);
+      } else {
+        doc.push(`service: ${m.service} (no [SRV] declared)`);
+      }
+    }
     for (const f of m.faults ?? []) doc.push(`@throws ${f}`);
     if (doc.length) {
       body.push("  /**");

@@ -10,6 +10,7 @@ export class Invoice {
   /**
    * @param issueDto a request to issue an invoice
    * @returns an issued invoice
+   * service: db (no [SRV] declared)
    * @throws timeout
    */
   save(issueDto: IssueDto): Promise<InvoiceDto> {

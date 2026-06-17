@@ -11,6 +11,7 @@ import {
   parse,
   type PlyNode,
   type ReqNode,
+  type SrvNode,
   type StepLike,
   type StepNode,
   type TypNode,
@@ -171,7 +172,16 @@ export function planManifest(
   // [NON] prose by noun — threaded so business/data class docs carry the domain
   // object's meaning instead of discarding it (E12/E18).
   const nonByNoun = new Map(ast.nons.map((n) => [n.name, n]));
-  const types: TypeContext = { typMap, dtoByName, nameBinding, nonByNoun };
+  // [SRV] declarations by name — adapter methods document their backing
+  // service/transport/env from these (E20).
+  const srvByName = new Map(ast.srvs.map((s) => [s.name, s]));
+  const types: TypeContext = {
+    typMap,
+    dtoByName,
+    nameBinding,
+    nonByNoun,
+    srvByName,
+  };
 
   // Collect intended files by element type.
   const polyNouns = new Set<string>();
@@ -271,6 +281,7 @@ interface TypeContext {
   dtoByName: Map<string, DtoNode>;
   nameBinding: Binding;
   nonByNoun: Map<string, NonNode>;
+  srvByName: Map<string, SrvNode>;
 }
 
 function walkStepsForFiles(
@@ -479,6 +490,7 @@ function addAdapter(
       nameBinding: types.nameBinding,
       runePath,
       nonByNoun: types.nonByNoun,
+      srvByName: types.srvByName,
     }),
   );
   // Cover every fault declared on ANY boundary step for this noun, not just the

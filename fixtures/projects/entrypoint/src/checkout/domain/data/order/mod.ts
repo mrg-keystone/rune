@@ -8,6 +8,7 @@ import { OrderDto } from "@/src/checkout/dto/order.ts";
 export class Order {
   /**
    * @param orderDto a created order
+   * service: db (no [SRV] declared)
    * @throws timeout
    */
   save(orderDto: OrderDto): Promise<void> {

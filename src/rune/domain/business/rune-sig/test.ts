@@ -170,3 +170,31 @@ Deno.test("renderImpl — adapter announces its I/O-boundary role + [NON]", () =
   assertStringIncludes(impl, "// a single todo item");
   assertStringIncludes(impl, "@throws timeout");
 });
+
+Deno.test("renderImpl — adapter method documents its [SRV] service (E20)", () => {
+  const srvByName = new Map([
+    ["firebase", {
+      transport: "sk",
+      name: "firebase",
+      envVars: ["FIREBASE_API_KEY", "FIREBASE_PROJECT_ID"],
+      description: "Firebase callable; charge() idempotent",
+      line: 0,
+    }],
+  ]);
+  const impl = renderImpl("order", [
+    {
+      verb: "save",
+      params: ["OrderDto"],
+      output: "void",
+      isStatic: false,
+      faults: ["timeout"],
+      service: "firebase",
+    },
+  ], { async: true, module: "checkout", nameBinding: bindings["<name>"], srvByName });
+  assertStringIncludes(
+    impl,
+    "service: firebase (transport sk) — env: FIREBASE_API_KEY, FIREBASE_PROJECT_ID",
+  );
+  assertStringIncludes(impl, "Firebase callable; charge() idempotent");
+  assertStringIncludes(impl, "@throws timeout");
+});

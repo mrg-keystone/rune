@@ -10,6 +10,7 @@ export class Payment {
   /**
    * @param payDto a payment for an order
    * @returns a receipt for a payment
+   * service: db (no [SRV] declared)
    * @throws timeout
    */
   charge(payDto: PayDto): Promise<ReceiptDto> {
