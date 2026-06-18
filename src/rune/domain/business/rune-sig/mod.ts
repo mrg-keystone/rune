@@ -59,11 +59,14 @@ export interface RenderImplOptions {
   srvByName?: Map<string, SrvNode>;
 }
 
-// Group method signatures by noun across every [REQ] flow. Polymorphic ([PLY])
-// nouns are excluded — they get base/implementations, not a sig/impl split.
+// Group method signatures by noun across every [REQ] flow, INCLUDING the
+// boundary methods of a noun that is also a [PLY] dispatch noun — those still
+// need a data adapter (a noun can be polymorphic for one verb AND a plain
+// boundary for another, e.g. gateway.authorize [PLY] + gateway.capture). The
+// poly noun's BUSINESS class is suppressed by the caller (walkStepsForFiles),
+// not here — deleting the whole noun starved its adapter (a TS2339 bug).
 export function collectNounMethods(ast: RuneAst): Map<string, MethodSig[]> {
   const byNoun = new Map<string, MethodSig[]>();
-  const polyNouns = new Set<string>();
 
   const add = (noun: string, sig: MethodSig): void => {
     const list = byNoun.get(noun) ?? [];
@@ -96,14 +99,15 @@ export function collectNounMethods(ast: RuneAst): Map<string, MethodSig[]> {
           service: step.kind === "boundary" ? step.service : undefined,
         });
       } else if (step.kind === "ply") {
-        polyNouns.add(step.noun);
+        // The [PLY] verb itself is the abstract base/variants (not a concrete
+        // method here); but its CASE steps (often boundary calls on the same
+        // noun) still need adapter methods, so walk them.
         for (const cse of step.cases) walk(cse.steps);
       }
     }
   };
 
   for (const req of ast.reqs) walk(req.steps);
-  for (const noun of polyNouns) byNoun.delete(noun);
   return byNoun;
 }
 

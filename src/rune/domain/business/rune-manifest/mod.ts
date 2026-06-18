@@ -183,8 +183,21 @@ export function planManifest(
     srvByName,
   };
 
-  // Collect intended files by element type.
+  // Collect intended files by element type. Poly nouns are gathered UP FRONT
+  // (across all [REQ]s, including nested cases) so the business-class guard in
+  // walkStepsForFiles is order-independent — a noun whose untagged step appears
+  // in an earlier [REQ] than its [PLY] must still be excluded from a concrete
+  // business class.
   const polyNouns = new Set<string>();
+  const collectPoly = (steps: StepLike[] | CseNode["steps"]): void => {
+    for (const s of steps) {
+      if (s.kind === "ply") {
+        polyNouns.add(s.noun);
+        for (const c of s.cases) collectPoly(c.steps);
+      }
+    }
+  };
+  for (const req of ast.reqs) collectPoly(req.steps);
   for (const req of ast.reqs) {
     addCoordinator(emit, module, req, runePath, types);
     walkStepsForFiles(
@@ -1038,6 +1051,16 @@ function renderCoordinator(
   // joins the writes (nothing to bind — the old read path rendered `as ;`),
   // args straight off the validated input.
   const sends = boundaries.filter((s) => s.output === "");
+  // A read whose param is a DTO produced mid-flow (not the request input) can't
+  // load before the core — it consumes a value the core builds. Such reads run
+  // AFTER the core, fed from its output; loading them pre-core would pass the
+  // wrong-typed request input (a TS2345 type error in the scaffold). A read is
+  // "input-fed" only when every DTO param IS the request input (TYP params are
+  // input fields).
+  const isInputRead = (r: BoundaryStepNode): boolean =>
+    r.params.every((p) => !/Dto$/.test(p) || p === req.input);
+  const inputReads = reads.filter(isInputRead);
+  const coreReads = reads.filter((r) => !isInputRead(r));
   const boundaryNouns = [...new Set(boundaries.map((s) => s.noun))];
 
   // Business classes are generated ONLY for nouns that appear as untagged
@@ -1070,13 +1093,33 @@ function renderCoordinator(
   );
   const newNouns = instanceNouns.filter((n) => instanceStepNouns.has(n));
 
-  const readVars = reads.map((r) => ({
+  const readVars = inputReads.map((r) => ({
     name: camel(`${r.noun}-${r.verb}`),
     type: r.output,
     noun: r.noun,
     verb: r.verb,
     params: r.params,
   }));
+  // Reads consuming a core-built DTO: each needs that DTO produced by the core
+  // (a `coreField` in its return), then runs post-core fed from `out.<coreField>`.
+  const coreReadVars = coreReads.map((r) => {
+    const dtoParam = r.params.find((p) => /Dto$/.test(p) && p !== req.input);
+    return {
+      name: camel(`${r.noun}-${r.verb}`),
+      type: r.output,
+      noun: r.noun,
+      verb: r.verb,
+      params: r.params,
+      dtoParam,
+      coreField: dtoParam ? camel(dtoParam) : camel(`${r.noun}-${r.verb}-arg`),
+      coreType: dtoParam ? seamTs(dtoParam, typMap) : "unknown",
+    };
+  });
+  // When a core-read produces the REQ's own output, IT is the result source —
+  // the core no longer returns `result` (it can't build the output a boundary
+  // produces); the coordinator returns that read's (already-asserted) value.
+  const resultRead = [...coreReadVars].reverse().find((r) => r.type === req.output) ??
+    null;
   const usedFields = new Set<string>();
   const writeFields = writes.map((w) => {
     let f = camel(w.verb);
@@ -1102,9 +1145,21 @@ function renderCoordinator(
     params
       .map((p) => /Dto$/.test(p) ? inputRef : `${inputRef}.${p}`)
       .join(", ");
+  // Args for a post-core read: a core-built DTO comes from `out.<field>`
+  // (asserted at the seam), the request input DTO stays `inputRef`, TYP params
+  // are input fields.
+  const coreReadArgs = (r: { noun: string; verb: string; params: string[] }): string =>
+    r.params
+      .map((p) => {
+        if (!/Dto$/.test(p)) return `${inputRef}.${p}`;
+        if (p === req.input) return inputRef;
+        return `assert(${p}, out.${camel(p)}, "${r.noun}.${r.verb} ${camel(p)}")`;
+      })
+      .join(", ");
   const usesAssert = inputSeam.kind !== "opaque" ||
     outputSeam.kind !== "opaque" ||
     readVars.some((r) => seamFor(r.type, typMap).kind !== "opaque") ||
+    coreReadVars.length > 0 ||
     writeFields.some((w) => w.seam.kind !== "opaque");
 
   const dtos = dtoImports(
@@ -1113,6 +1168,8 @@ function renderCoordinator(
       req.output,
       ...readVars.map((r) => r.type),
       ...writeFields.map((w) => w.type),
+      ...coreReadVars.map((r) => r.type),
+      ...coreReadVars.map((r) => r.dtoParam),
     ],
     module,
     types,
@@ -1219,9 +1276,28 @@ function renderCoordinator(
       L.push(`  await ${camel(s.noun)}Data.${s.verb}(${stepArgs(s.params)});`);
     }
   }
+  if (coreReadVars.length) {
+    L.push("");
+    L.push("  // reads consuming core output — run AFTER the core (validated at the seam)");
+    for (const r of coreReadVars) {
+      const call = `await ${camel(r.noun)}Data.${r.verb}(${coreReadArgs(r)})`;
+      const seam = seamFor(r.type, typMap);
+      const ctx = `"${r.noun}.${r.verb}"`;
+      if (seam.kind === "dto") {
+        L.push(`  const ${r.name} = assert(${seam.cls}, ${call}, ${ctx});`);
+      } else if (seam.kind === "primitive") {
+        L.push(`  const ${r.name} = assert.${seam.fn}(${call}, ${ctx});`);
+      } else {
+        L.push(`  const ${r.name} = ${call} as ${r.type}; // unvalidated: ${r.type} has no runtime contract`);
+      }
+    }
+  }
   L.push("");
   const outputCtx = `"${req.noun}.${req.verb} output"`;
-  if (outputSeam.kind === "dto") {
+  if (resultRead) {
+    // The output is produced by a post-core boundary — already asserted above.
+    L.push(`  return ${resultRead.name};`);
+  } else if (outputSeam.kind === "dto") {
     L.push(`  return assert(${outputSeam.cls}, out.result, ${outputCtx});`);
   } else if (outputSeam.kind === "primitive") {
     L.push(`  return assert.${outputSeam.fn}(out.result, ${outputCtx});`);
@@ -1235,16 +1311,28 @@ function renderCoordinator(
     `input: ${seamTs(req.input, typMap)}`,
     ...readVars.map((r) => `${r.name}: ${seamTs(r.type, typMap)}`),
   ].join(", ");
+  // The core also produces any DTO a post-core read consumes; and it stops
+  // producing `result` when a post-core read is the output's source.
+  const coreReadRet: string[] = [];
+  const seenCoreField = new Set<string>();
+  for (const r of coreReadVars) {
+    if (seenCoreField.has(r.coreField)) continue;
+    seenCoreField.add(r.coreField);
+    coreReadRet.push(`${r.coreField}: ${r.coreType}`);
+  }
   const ret = [
     ...writeFields.map((w) => `${w.field}: ${w.type}`),
-    `result: ${seamTs(req.output, typMap)}`,
+    ...coreReadRet,
+    ...(resultRead ? [] : [`result: ${seamTs(req.output, typMap)}`]),
   ].join("; ");
   // Describe only the parts this verb actually has, so a no-reads or no-writes
   // coordinator doesn't carry a misleading "the dtos the reads loaded" boilerplate.
   const takesReads = readVars.length ? " and the dtos the reads loaded" : "";
-  const returnsClause = writeFields.length
-    ? "the dtos the writes consume plus the result"
-    : "the result";
+  const returnsClause = [
+    writeFields.length ? "the dtos the writes consume" : "",
+    coreReadRet.length ? "the dtos the post-core reads consume" : "",
+    resultRead ? "" : "the result",
+  ].filter(Boolean).join(" plus ") || "the result";
   L.push(`// Pure business logic for ${req.noun}.${req.verb} — no I/O. Takes the`);
   L.push(`// request input${takesReads}; returns ${returnsClause}.`);
   L.push(`function ${req.verb}Core(${coreParams}): { ${ret} } {`);

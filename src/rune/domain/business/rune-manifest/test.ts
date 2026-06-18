@@ -1562,3 +1562,77 @@ Deno.test("planManifest — @ApiProperty stays within #api-doc's Schema type (E2
   assertEquals(dto.includes("required: false"), false);
   assertEquals(dto.includes("isArray: true"), false);
 });
+
+Deno.test("planManifest — read boundary consuming a core-built DTO runs post-core (TS2345 fix)", () => {
+  // cdn:doc.distribute(ManifestDto): DocDto — distribute returns the REQ output
+  // AND consumes a ManifestDto built mid-flow (Manifest::build). It must run
+  // AFTER the core, fed from out.manifestDto; loading it pre-core passed the
+  // request input (PubReqDto) where ManifestDto was expected (a type error).
+  const rune = `[MOD] pub
+
+[REQ] doc.publish(PubReqDto): DocDto
+    Manifest::build(PubReqDto): ManifestDto
+    cdn:doc.distribute(ManifestDto): DocDto
+
+[DTO] PubReqDto: id
+    a request
+[DTO] ManifestDto: id
+    a manifest
+[DTO] DocDto: id
+    a doc
+[TYP] id: string
+    an id`;
+  const plan = planManifest("pub.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const c = [...plan.toCreate, ...plan.toRegenerate].find((f) =>
+    f.path.endsWith("coordinators/doc-publish/mod.ts")
+  )!.content;
+  // the boundary runs AFTER the core, fed the asserted core-built DTO
+  assertStringIncludes(c, "// core — pure business logic");
+  assertStringIncludes(c, "assert(ManifestDto, out.manifestDto");
+  // it produces the result → returned directly (not out.result)
+  assertStringIncludes(c, "return docDistribute;");
+  assertEquals(c.includes("out.result"), false);
+  // the core produces the consumed DTO, not a bogus result
+  assertStringIncludes(c, "manifestDto: ManifestDto");
+  // and the wrong-typed pre-core load is GONE
+  assertEquals(c.includes("distribute(validInput)"), false);
+});
+
+Deno.test("planManifest — a noun that is BOTH [PLY] and a boundary keeps its adapter methods (TS2339 fix)", () => {
+  // gw is polymorphic for auth ([PLY]) AND a plain boundary for capture. The
+  // data adapter must still carry capture() — deleting the whole poly noun left
+  // an empty Gateway class and the coordinator's gwData.capture() failed (TS2339).
+  const rune = `[MOD] pay
+
+[REQ] charge.run(ReqDto): OutDto
+    [PLY] gw.auth(ReqDto): OutDto
+        [CSE] visa
+            svc:gw.authVisa(ReqDto): OutDto
+
+[REQ] settle.go(ReqDto): OutDto
+    svc:gw.capture(ReqDto): OutDto
+
+[DTO] ReqDto: id
+    a request
+[DTO] OutDto: id
+    an out
+[TYP] id: string
+    an id
+[NON] gw
+    the gateway`;
+  const plan = planManifest("pay.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const adapter = plan.toCreate.find((f) =>
+    f.path.endsWith("domain/data/gw/mod.ts")
+  );
+  if (!adapter) throw new Error("no gw data adapter generated");
+  // both the [PLY]-case boundary and the standalone boundary land on the adapter
+  assertStringIncludes(adapter.content, "capture(reqDto: ReqDto)");
+  assertStringIncludes(adapter.content, "authVisa(reqDto: ReqDto)");
+  // and NO concrete business class for the poly noun (it gets a base/variants)
+  assertEquals(
+    plan.toCreate.some((f) => f.path.endsWith("domain/business/gw/mod.ts")),
+    false,
+  );
+});
