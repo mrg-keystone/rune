@@ -21,6 +21,19 @@ pub enum LineKind {
     Mod {
         name: String,
     },
+    /// [SRV] <transport>:<name>: <ENV, ENV2> — a declared backing service.
+    Srv {
+        transport: String,
+        name: String,
+        env_vars: Vec<String>,
+        indent: usize,
+    },
+    /// A free-prose description continuation line under [MOD]/[SRV] (or any
+    /// description block) — benign, never a diagnostic.
+    Prose {
+        text: String,
+        indent: usize,
+    },
     Ent {
         noun: String,
         verb: String,
@@ -120,6 +133,8 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
     let mut in_dto_block = false;
     let mut in_typ_block = false;
     let mut in_non_block = false;
+    let mut in_mod_block = false;
+    let mut in_srv_block = false;
     let mut in_multiline_step = false;
     let mut paren_depth: i32 = 0;
     let mut multiline_indent: usize = 0;
@@ -155,6 +170,8 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
             in_dto_block = false;
             in_typ_block = false;
             in_non_block = false;
+            in_mod_block = false;
+            in_srv_block = false;
             in_multiline_step = false;
             paren_depth = 0;
             multiline_indent = 0;
@@ -183,16 +200,49 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
             continue;
         }
 
-        // [MOD] directive (no modifier form)
+        // Any bracket-tag line ends an open [MOD]/[SRV] description block (the
+        // [MOD]/[SRV] handlers below re-open their own as needed).
+        if trimmed.starts_with('[') {
+            in_mod_block = false;
+            in_srv_block = false;
+        }
+
+        // [MOD] directive — optional `: description` plus indented continuation
+        // prose (the module front-door doc). name is the part before the colon.
         if let Some(rest) = trimmed.strip_prefix("[MOD]") {
             in_dto_block = false;
             in_typ_block = false;
             in_non_block = false;
-            let name = rest.trim().to_string();
+            let name = rest.trim().split(':').next().unwrap_or("").trim().to_string();
             if !name.is_empty() {
+                in_mod_block = true; // following indented prose = module description
                 results.push(ParsedLine { line_num, kind: LineKind::Mod { name } });
             } else {
                 results.push(ParsedLine { line_num, kind: LineKind::Unknown("[MOD] missing name".to_string()) });
+            }
+            continue;
+        }
+
+        // [SRV] <transport>:<name>: <ENV, ENV2> — a declared backing service,
+        // plus optional indented continuation prose (its description).
+        if let Some(rest) = trimmed.strip_prefix("[SRV]") {
+            in_dto_block = false;
+            in_typ_block = false;
+            in_non_block = false;
+            in_srv_block = true; // following indented prose = service description
+            let mut parts = rest.trim().splitn(3, ':');
+            let transport = parts.next().unwrap_or("").trim().to_string();
+            let name = parts.next().unwrap_or("").trim().to_string();
+            let env_str = parts.next().unwrap_or("").trim();
+            let env_vars: Vec<String> = env_str
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !transport.is_empty() && !name.is_empty() {
+                results.push(ParsedLine { line_num, kind: LineKind::Srv { transport, name, env_vars, indent: actual_indent } });
+            } else {
+                results.push(ParsedLine { line_num, kind: LineKind::Unknown("[SRV] malformed — expected [SRV] <transport>:<name>: <ENV,…>".to_string()) });
             }
             continue;
         }
@@ -312,6 +362,21 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
                     text: trimmed.to_string(),
                     indent: actual_indent,
                 },
+            });
+            continue;
+        }
+
+        // [MOD]/[SRV] description continuation: while the block is open, every
+        // indented non-tag line is prose (block state, like the TS engine — no
+        // paren/period heuristic, so docs mentioning `put()` aren't mis-parsed).
+        // The block ends at a blank line or the next bracket tag (handled above).
+        if (in_mod_block || in_srv_block)
+            && actual_indent >= 4
+            && !trimmed.starts_with('[')
+        {
+            results.push(ParsedLine {
+                line_num,
+                kind: LineKind::Prose { text: trimmed.to_string(), indent: actual_indent },
             });
             continue;
         }
@@ -858,6 +923,28 @@ mod tests {
         let doc = "[MOD] checkout";
         let lines = parse_document(doc);
         assert!(matches!(&lines[0].kind, LineKind::Mod { name } if name == "checkout"));
+    }
+
+    #[test]
+    fn test_parse_mod_with_description() {
+        // [MOD] name: desc + an indented continuation line (with a period) =
+        // module front-door doc; the continuation must NOT be an Unknown error.
+        let doc = "[MOD] media: a pipeline.\n    streams progress to clients.";
+        let lines = parse_document(doc);
+        assert!(matches!(&lines[0].kind, LineKind::Mod { name } if name == "media"));
+        assert!(matches!(&lines[1].kind, LineKind::Prose { .. }));
+    }
+
+    #[test]
+    fn test_parse_srv() {
+        // [SRV] <transport>:<name>: <ENV,…> + a description line that mentions a
+        // method call (put()) — both must parse cleanly (no Unknown).
+        let doc = "[SRV] sc:blobstore: BLOBSTORE_ENDPOINT, BLOBSTORE_BUCKET\n    sidecar store; put() is idempotent.";
+        let lines = parse_document(doc);
+        assert!(matches!(&lines[0].kind, LineKind::Srv { transport, name, env_vars, .. }
+            if transport == "sc" && name == "blobstore"
+            && env_vars == &vec!["BLOBSTORE_ENDPOINT".to_string(), "BLOBSTORE_BUCKET".to_string()]));
+        assert!(matches!(&lines[1].kind, LineKind::Prose { .. }));
     }
 
     #[test]

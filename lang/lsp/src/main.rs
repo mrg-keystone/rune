@@ -330,15 +330,13 @@ impl Backend {
                     consecutive_empty = 0;
                 }
 
-                LineKind::Cse { name, indent } => {
+                LineKind::Cse { name, indent: _ } => {
                     if poly_stack.is_empty() {
                         diagnostics.push(diag_err(line_num, format!("[CSE] {} must be inside a [PLY] block", name)));
-                    } else {
-                        let expected = poly_stack.last().unwrap() + 4;
-                        if *indent != expected {
-                            diagnostics.push(diag_err(line_num, format!("[CSE] should be indented {} spaces, got {}", expected, indent)));
-                        }
                     }
+                    // Indent is NOT strictly checked — the TS engine (the source
+                    // of truth for `rune check`) accepts [CSE] at any indent
+                    // deeper than its [PLY], so the LSP must not flag it either.
                     last_step_indent = None;
                     last_was_req = false;
                     consecutive_empty = 0;
@@ -436,11 +434,26 @@ impl Backend {
                     consecutive_empty += 1;
                 }
 
+                // [SRV] declaration: the only check is a valid transport;
+                // service-presence (boundary → declared service) is a
+                // project-wide rule left to `rune lint`, not the single-file LSP.
+                LineKind::Srv { transport, .. } => {
+                    let valid = ["sk", "hp", "ws", "sc"];
+                    if !valid.contains(&transport.as_str()) {
+                        diagnostics.push(diag_err(
+                            line_num,
+                            format!("[SRV] unknown transport \"{}\" — expected sk/hp/ws/sc", transport),
+                        ));
+                    }
+                    consecutive_empty = 0;
+                }
+
                 // Definitions handled in the first pass; descriptions / refs are
                 // prose with no second-pass checks.
                 LineKind::DtoDesc { .. }
                 | LineKind::TypDesc { .. }
                 | LineKind::NonDesc { .. }
+                | LineKind::Prose { .. }
                 | LineKind::DtoProperty { .. }
                 | LineKind::DtoArrayProperty { .. }
                 | LineKind::DtoRef(_) => {
