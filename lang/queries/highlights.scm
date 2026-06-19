@@ -41,9 +41,10 @@
 ; String enum values
 (typ_enum_value) @rune.fault
 
-; Parameters and DTO properties
+; Parameters, DTO properties, and declared type names
 (param_name) @rune.param
 (property_name) @rune.param
+(typ_name) @rune.param
 
 ; Boundaries: system edges (service: prefix)
 (service_prefix) @rune.boundary
