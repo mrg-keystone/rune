@@ -14,6 +14,47 @@ struct Backend {
     documents: Arc<RwLock<std::collections::HashMap<Url, Rope>>>,
 }
 
+/// The project's shared [SRV] service names for the spec at `uri`: resolve the
+/// root (dir above an outermost `src/<module>/`, else the spec's own dir) and
+/// read the core spec at `<root>/src/core/core.rune` or a flat `<root>/core.rune`.
+/// Best-effort + filesystem-based, mirroring the engine's `loadCoreSrvs`; returns
+/// an empty set when there's no core spec.
+fn core_services_for(uri: &Url) -> HashSet<String> {
+    let mut out = HashSet::new();
+    let Ok(path) = uri.to_file_path() else {
+        return out;
+    };
+    let Some(spec_dir) = path.parent() else {
+        return out;
+    };
+    let in_src_module = spec_dir
+        .parent()
+        .and_then(|p| p.file_name())
+        .map(|n| n == "src")
+        .unwrap_or(false);
+    let root = if in_src_module {
+        spec_dir.parent().unwrap().parent().unwrap().to_path_buf()
+    } else {
+        spec_dir.to_path_buf()
+    };
+    for cand in [root.join("src/core/core.rune"), root.join("core.rune")] {
+        if cand == path {
+            continue; // never load the file being checked as its own core
+        }
+        if let Ok(text) = std::fs::read_to_string(&cand) {
+            for l in parse_document(&text) {
+                if let LineKind::Srv { name, .. } = l.kind {
+                    out.insert(name);
+                }
+            }
+            if !out.is_empty() {
+                break;
+            }
+        }
+    }
+    out
+}
+
 impl Backend {
     fn new(client: Client) -> Self {
         Self {
@@ -34,7 +75,8 @@ impl Backend {
         let text = rope.to_string();
         drop(docs);
 
-        let diagnostics = Self::compute_diagnostics(&text);
+        let core_services = core_services_for(uri);
+        let diagnostics = Self::compute_diagnostics(&text, &core_services);
 
         self.client
             .publish_diagnostics(uri.clone(), diagnostics, None)
@@ -44,9 +86,34 @@ impl Backend {
     /// Pure diagnostic computation, split out of the publish-to-client path so
     /// the corpus-parity tests can drive validation directly. Mirrors what
     /// `rune sync`/`manifest` enforces.
-    fn compute_diagnostics(text: &str) -> Vec<Diagnostic> {
+    fn compute_diagnostics(text: &str, core_services: &HashSet<String>) -> Vec<Diagnostic> {
         let lines = parse_document(text);
         let mut diagnostics = Vec::new();
+
+        // Service-presence: every boundary `service:noun.verb(...)` must resolve
+        // to a declared [SRV] — local, or shared from the project's core.rune
+        // (passed in by validate(); empty in the pure/test path, where corpus
+        // files declare their services locally). Mirrors strict `rune check`.
+        let mut declared: HashSet<String> = core_services.clone();
+        for l in &lines {
+            if let LineKind::Srv { name, .. } = &l.kind {
+                declared.insert(name.clone());
+            }
+        }
+        for l in &lines {
+            if let LineKind::BoundaryStep { prefix, .. } = &l.kind {
+                let svc = prefix.trim_end_matches(':');
+                if !declared.contains(svc) {
+                    diagnostics.push(diag_err(
+                        l.line_num,
+                        format!(
+                            "undeclared service \"{}\" — declare it as `[SRV] (TRANSPORT){}: <ENV,…>` in src/core/core.rune",
+                            svc, svc
+                        ),
+                    ));
+                }
+            }
+        }
 
         // 80 column limit.
         for (line_num, line) in text.lines().enumerate() {
@@ -311,10 +378,9 @@ impl Backend {
                         diagnostics.push(diag_err(line_num, format!("Boundary step should be indented {} spaces, got {}", step_expected, indent)));
                     }
                     check_sig(&mut diagnostics, &mut method_signatures, line_num, noun, verb, *is_static, params, output);
-                    let valid = ["db:", "fs:", "mq:", "ex:", "os:", "lg:"];
-                    if !valid.contains(&prefix.as_str()) {
-                        diagnostics.push(diag_err(line_num, format!("Invalid boundary prefix: {}", prefix)));
-                    }
+                    // The service name (any lowercase prefix) is validated for
+                    // PRESENCE below against declared [SRV]s + core.rune — no
+                    // fixed prefix allowlist anymore.
                     for param in params {
                         if !is_dto_or_primitive(param, &defined_types) {
                             diagnostics.push(diag_err(line_num, format!("{} boundary parameter must be a DTO or primitive, got '{}'", prefix, param)));
@@ -1326,7 +1392,7 @@ mod tests {
         let mut failures = Vec::new();
         for path in rune_files("valid") {
             let text = std::fs::read_to_string(&path).unwrap();
-            let diags = Backend::compute_diagnostics(&text);
+            let diags = Backend::compute_diagnostics(&text, &std::collections::HashSet::new());
             if !diags.is_empty() {
                 let msgs: Vec<String> = diags.iter().map(|d| d.message.clone()).collect();
                 failures.push(format!(
@@ -1349,7 +1415,7 @@ mod tests {
         let mut failures = Vec::new();
         for path in rune_files("invalid") {
             let text = std::fs::read_to_string(&path).unwrap();
-            let diags = Backend::compute_diagnostics(&text);
+            let diags = Backend::compute_diagnostics(&text, &std::collections::HashSet::new());
             if diags.is_empty() {
                 failures.push(path.file_name().unwrap().to_string_lossy().to_string());
             }
@@ -1366,7 +1432,7 @@ mod tests {
     #[test]
     fn srv_without_docs_is_flagged() {
         let text = "[SRV] (SDK)firebase: API_KEY\n    the backend";
-        let diags = Backend::compute_diagnostics(text);
+        let diags = Backend::compute_diagnostics(text, &std::collections::HashSet::new());
         assert!(
             diags.iter().any(|d| d.message.contains("requires an @docs")),
             "expected a missing-@docs diagnostic, got: {:?}",
@@ -1377,7 +1443,7 @@ mod tests {
     #[test]
     fn srv_with_docs_is_clean() {
         let text = "[SRV] (SDK)firebase: API_KEY\n    the backend\n    @docs https://x.dev/api";
-        let diags = Backend::compute_diagnostics(text);
+        let diags = Backend::compute_diagnostics(text, &std::collections::HashSet::new());
         assert!(
             !diags.iter().any(|d| d.message.contains("@docs")),
             "expected no @docs diagnostic, got: {:?}",
@@ -1473,6 +1539,48 @@ mod tests {
         assert_eq!(
             validate_typ_modifiers("min = 5", "qty", "number"),
             vec!["[TYP] unknown modifier \"min \" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>)".to_string()]
+        );
+    }
+
+    // --- service-presence (boundary -> declared [SRV]) --------------------
+
+    const SVC_SPEC: &str = "[MOD] m\n[REQ] x.run(InDto): OutDto\n    cache:x.save(InDto): void\n    [RET] OutDto\n[DTO] InDto: id\n    a\n[DTO] OutDto: id\n    b\n[TYP] id: string\n    c";
+
+    #[test]
+    fn boundary_to_undeclared_service_is_flagged() {
+        // No local [SRV], empty core -> the boundary service is undeclared.
+        let diags = Backend::compute_diagnostics(SVC_SPEC, &std::collections::HashSet::new());
+        assert!(
+            diags.iter().any(|d| d.message.contains("undeclared service \"cache\"")),
+            "expected undeclared-service diag, got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn boundary_with_local_srv_is_clean() {
+        let text = format!(
+            "{}\n[SRV] (SIDECAR)cache: CACHE_URL\n    the cache\n    @docs https://x.dev",
+            SVC_SPEC
+        );
+        let diags = Backend::compute_diagnostics(&text, &std::collections::HashSet::new());
+        assert!(
+            !diags.iter().any(|d| d.message.contains("undeclared service")),
+            "expected no undeclared-service diag, got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn boundary_with_core_service_is_clean() {
+        // The service is declared in the project's core.rune (passed in).
+        let mut core = std::collections::HashSet::new();
+        core.insert("cache".to_string());
+        let diags = Backend::compute_diagnostics(SVC_SPEC, &core);
+        assert!(
+            !diags.iter().any(|d| d.message.contains("undeclared service")),
+            "expected no undeclared-service diag, got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
         );
     }
 }

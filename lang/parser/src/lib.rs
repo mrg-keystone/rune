@@ -472,22 +472,61 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
             continue;
         }
 
-        // Boundary step (db:, ex:, etc.)
-        let boundary_prefixes = ["db:", "fs:", "mq:", "ex:", "os:", "lg:"];
+        // Boundary step: <service>:<noun>.<verb>(...) — any lowercase service
+        // name + a SINGLE colon (NOT `::` static, NOT a plain `noun.verb`). The
+        // service is validated against declared [SRV]s by service-presence (the
+        // LSP + `rune check`), not by a fixed prefix list.
+        let svc_prefix: Option<String> = {
+            let b = trimmed.as_bytes();
+            if !b.is_empty() && b[0].is_ascii_lowercase() {
+                let mut i = 1;
+                while i < b.len()
+                    && (b[i].is_ascii_lowercase()
+                        || b[i].is_ascii_digit()
+                        || b[i] == b'_'
+                        || b[i] == b'-')
+                {
+                    i += 1;
+                }
+                if i < b.len() && b[i] == b':' && b.get(i + 1) != Some(&b':') {
+                    Some(trimmed[..=i].to_string()) // includes the colon, e.g. "dx:"
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
         let mut found_boundary = false;
-        for bp in boundary_prefixes {
-            if trimmed.starts_with(bp) {
-                // Check if this is a complete line or start of multiline
-                if open_parens > close_parens || (trimmed.contains('(') && !trimmed.contains("):")) {
+        if let Some(bp) = svc_prefix {
+            let rest = &trimmed[bp.len()..];
+            let is_multiline_start = open_parens > close_parens
+                || (trimmed.contains('(') && !trimmed.contains("):"));
+            if let Some((noun, verb, params, output, is_static)) = parse_signature(rest) {
+                results.push(ParsedLine {
+                    line_num,
+                    kind: LineKind::BoundaryStep {
+                        prefix: bp.clone(),
+                        noun,
+                        verb,
+                        params,
+                        output,
+                        indent: actual_indent,
+                        is_static,
+                    },
+                });
+                found_boundary = true;
+            } else if is_multiline_start {
+                if let Some((noun, verb, params, output, is_static)) =
+                    parse_partial_signature(rest)
+                {
                     in_multiline_step = true;
                     paren_depth = open_parens as i32 - close_parens as i32;
                     multiline_indent = actual_indent;
-                }
-                if let Some((noun, verb, params, output, is_static)) = parse_signature(&trimmed[bp.len()..]) {
                     results.push(ParsedLine {
                         line_num,
                         kind: LineKind::BoundaryStep {
-                            prefix: bp.to_string(),
+                            prefix: bp.clone(),
                             noun,
                             verb,
                             params,
@@ -497,25 +536,6 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
                         },
                     });
                     found_boundary = true;
-                    break;
-                } else if in_multiline_step {
-                    // Multi-line start - extract what we can
-                    if let Some((noun, verb, params, output, is_static)) = parse_partial_signature(&trimmed[bp.len()..]) {
-                        results.push(ParsedLine {
-                            line_num,
-                            kind: LineKind::BoundaryStep {
-                                prefix: bp.to_string(),
-                                noun,
-                                verb,
-                                params,
-                                output,
-                                indent: actual_indent,
-                                is_static,
-                            },
-                        });
-                        found_boundary = true;
-                        break;
-                    }
                 }
             }
         }
