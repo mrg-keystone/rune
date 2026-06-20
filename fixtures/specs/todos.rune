@@ -54,6 +54,3 @@
     a single todo item
 [NON] list
     a named collection of todos
-
-[SRV] sc:db: DB_URL
-    the project's primary datastore (sidecar)

@@ -5,7 +5,7 @@ import {
   planManifest,
 } from "@rune/domain/business/rune-manifest/mod.ts";
 import { loadArtifact } from "@rune/domain/business/artifact/mod.ts";
-import { resolveRoot } from "@rune/entrypoints/spec-root.ts";
+import { loadCoreSrvs, resolveRoot } from "@rune/entrypoints/spec-root.ts";
 
 const RED = "\x1b[31m";
 const GREEN = "\x1b[32m";
@@ -110,7 +110,8 @@ export async function runManifest(args: string[]): Promise<number> {
   if (opts === "error") return 2;
 
   const existingFiles = await collectFiles(root);
-  const plan = planManifest(relRune, runeText, existingFiles, opts ?? {});
+  const sharedSrvs = await loadCoreSrvs(root, absRune);
+  const plan = planManifest(relRune, runeText, existingFiles, opts ?? {}, sharedSrvs);
 
   if (plan.errors.length > 0) {
     if (parsed.json) {

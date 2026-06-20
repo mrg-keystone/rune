@@ -129,6 +129,17 @@ export function processName(noun: string, verb: string): string {
   return `${toKebab(noun)}-${toKebab(verb)}`;
 }
 
+// The single shared-service spec, relative to the project root. `[SRV]` may only
+// be declared here; every other spec resolves its boundary services against it
+// (declare-once, visible everywhere). No import syntax — the convention is the
+// path. Canonical home shared by the loader (spec-root) and the lint rules.
+export const CORE_SPEC_REL = "src/core/core.rune";
+
+/** Is this (root-relative) path the project's shared-service spec? */
+export function isCoreSpec(path: string): boolean {
+  return path === CORE_SPEC_REL;
+}
+
 // A rune file counts as a project spec only at one of these paths:
 //   specs/<name>.rune
 //   src/<module>/spec.rune

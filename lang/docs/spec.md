@@ -83,6 +83,13 @@ Use `[RET]` to return a value created earlier in the flow. This is useful when t
     db:metadata.set(id, metadata): void  // side effect - returns void
     os:storage.save(id, data): void      // side effect - returns void
     [RET] IdDto                          // return the DTO created earlier
+
+[SRV] sc:db: DB_URL                      // backs db:metadata.set
+    the project's primary datastore
+    @docs https://docs.example.com/db
+[SRV] sk:os: OBJECT_STORE_URL            // backs os:storage.save
+    object storage for recording blobs
+    @docs https://docs.example.com/storage
 ```
 
 - Format: `[RET] value`
@@ -92,20 +99,37 @@ Use `[RET]` to return a value created earlier in the flow. This is useful when t
 
 ### Boundary tags
 
-2-char colon prefix on steps that cross a system boundary. Business logic steps stay untagged.
+A boundary step crosses a system boundary into a **backing service**. It is written `service:noun.verb(args): ret` — a single-colon service prefix. This is distinct from `Noun::verb()` (static, double colon) and `noun.verb()` (in-module business step). Business logic steps stay untagged.
 
-| Tag  | Boundary                       |
-| ---- | ------------------------------ |
-| `db` | database / persistence         |
-| `fs` | file system (local)            |
-| `mq` | message queue                  |
-| `ex` | external service / provider    |
-| `os` | object storage (S3, GCS, etc.) |
-| `lg` | logs                           |
+The service name in the prefix **must** be declared once, in the project's shared `src/core/core.rune`, by a matching `[SRV]` block (see **`[SRV]` — backing services** below). There are no built-in boundary kinds anymore — `db:`, `fs:`, `ex:`, `os:` are not fixed tags but plain service names, and each one used as a prefix requires its own `[SRV]`. An undeclared `service:` prefix is a spec error.
 
 **Boundary constraints:** Parameters and return types must be DTOs or primitives (`string`, `number`, `boolean`, `void`, `Uint8Array`). Custom types are not allowed at system boundaries.
 
-Example: `ex:provider.search(IdDto): UrlDto`
+Example: `db:task.save(TaskDto): void` (backed by `[SRV] sc:db: DB_URL`).
+
+### `[SRV]` — backing services (shared, in `src/core/core.rune`)
+
+Services are **shared infrastructure**: every service referenced by a `service:` boundary prefix is declared exactly once, in a single `src/core/core.rune` (module `core`), and every other spec in the project resolves its boundary services from there. There is no import syntax — the engine always loads `<root>/src/core/core.rune`. A `[SRV]` declared in any other spec is an error (`rune-service-core-only`); move it to core.rune.
+
+```
+// src/core/core.rune
+[MOD] core
+[SRV] sc:db: DB_URL
+    the project's primary datastore
+    @docs https://docs.example.com/db
+```
+
+Each `[SRV]` generates a shared client at `src/core/data/<service>/mod.ts` (a `<Name>Service` class). A module's per-noun data adapter imports and constructs that shared client for any boundary it calls.
+
+- Format: `[SRV] <transport>:<service>: <ENV_VAR, ENV_VAR2>`
+- `transport` is a closed set: `sk` (sdk), `hp` (http), `ws` (websocket), `sc` (sidecar)
+- `<service>` is the name used in `service:` boundary prefixes (here `db:` in `db:task.save`)
+- The trailing list names one or more environment variables (comma-separated) the generated adapter reads
+- A one-line prose description is **required** on the next line, indented 4 spaces
+- An `@docs <url>` line is **required**, indented 4 spaces and within the 80-column limit — its URL survives the inline-comment stripper. An `[SRV]` missing it is a hard parse error (`[SRV] <name> requires an @docs <url> line`). `rune codegen` surfaces the URL as an `@see <url>` JSDoc tag on the generated data-adapter method
+- An undeclared `service:` prefix — one with no matching `[SRV]` — is a spec error
+
+Here `db:task.save` is a boundary call to the service named `db`, declared by the `[SRV]` block; `sc` is the sidecar transport; `DB_URL` is its env var; the `@docs` line is the required documentation link.
 
 ### Polymorphic steps
 
@@ -124,6 +148,10 @@ When a step Noun names an interface rather than a concrete class, the step is po
         ex:provider.download(url): data
           not-found timed-out
     [CTR] metadata
+
+[SRV] hp:ex: PROVIDER_API_URL              // backs ex:provider.*
+    the external recording provider's API
+    @docs https://docs.example.com/provider
 ```
 
 - `[PLY]` at 4 spaces opens a polymorphic block
@@ -314,6 +342,10 @@ The LSP enforces these rules:
 
 - Boundary parameters must be DTOs or primitives
 - Boundary return types must be DTOs or primitives
+- Every `service:` prefix must have a matching `[SRV]` declaration in the project's `src/core/core.rune`; an undeclared service is an error
+- `[SRV]` may be declared ONLY in `src/core/core.rune` — one in any other spec is an error (`rune-service-core-only`)
+- Every `[SRV]` must have a description line and an `@docs <url>` line; a missing `@docs` line is a hard parse error
+- An `[SRV]` transport must be one of `sk`, `hp`, `ws`, `sc`
 
 ### Type validation
 
@@ -443,7 +475,7 @@ decorator, and the generated coordinator asserts them at every seam.
 
 ## Entrypoint
 
-`[ENT]` declares an inbound entrypoint — the inverse of a boundary call. Where `db:`/`os:`/`ex:` describe outbound system calls, `[ENT]` describes an incoming surface (HTTP route, CLI command, queue handler).
+`[ENT]` declares an inbound entrypoint — the inverse of a boundary call. Where `service:` boundary calls (e.g. `db:`, `os:`, `ex:`, each backed by an `[SRV]`) describe outbound calls to backing services, `[ENT]` describes an incoming surface (HTTP route, CLI command, queue handler).
 
 ```
 [ENT] http.postRecording(GetRecordingDto): IdDto
@@ -548,6 +580,7 @@ All keyword tags are exactly 3 letters inside brackets (`[XXX]`). This ensures c
 | `[MOD]` | Module directive (top of file)|
 | `[REQ]` | Requirement definition        |
 | `[ENT]` | Inbound entrypoint            |
+| `[SRV]` | Backing service declaration   |
 | `[PLY]` | Polymorphic step              |
 | `[CSE]` | Case inside polymorphic block |
 | `[CTR]` | Constructor shorthand         |
@@ -571,7 +604,7 @@ See **Constraint Modifiers** for the full decorator table.
 See `./example.rune` for a complete example demonstrating:
 
 - REQ lines with DTO inputs and outputs
-- Steps with boundary prefixes (`ex:`, `db:`, `os:`)
+- Steps with `service:` boundary prefixes (`ex:`, `db:`, `os:`), each backed by an `[SRV]` declaration
 - Polymorphic step with `[PLY]` and `[CSE]` cases
 - Faults under steps
 - Type definitions with `[TYP]` blocks

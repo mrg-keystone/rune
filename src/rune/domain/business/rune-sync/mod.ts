@@ -27,6 +27,7 @@ import {
   pruneRoleFor,
   resolvePolicy,
 } from "@rune/domain/business/rune-manifest/mod.ts";
+import type { SrvNode } from "@rune/domain/business/rune-parse/mod.ts";
 
 export interface SyncPlan {
   module: string;
@@ -57,8 +58,17 @@ export function planSync(
   runeText: string,
   existingFiles: Set<string>,
   opts: ManifestOptions = {},
+  // The project's shared `[SRV]` set from src/core/core.rune, forwarded to
+  // planManifest so a module's adapters resolve their backing services.
+  sharedSrvs?: Map<string, SrvNode>,
 ): SyncPlan {
-  const manifest = planManifest(runePath, runeText, existingFiles, opts);
+  const manifest = planManifest(
+    runePath,
+    runeText,
+    existingFiles,
+    opts,
+    sharedSrvs,
+  );
   const plan: SyncPlan = {
     module: manifest.module,
     rune: runePath,

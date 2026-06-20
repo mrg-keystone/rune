@@ -178,6 +178,7 @@ Deno.test("renderImpl — adapter method documents its [SRV] service (E20)", () 
       name: "firebase",
       envVars: ["FIREBASE_API_KEY", "FIREBASE_PROJECT_ID"],
       description: "Firebase callable; charge() idempotent",
+      docsLink: "https://firebase.google.com/docs/functions",
       line: 0,
     }],
   ]);
@@ -190,11 +191,69 @@ Deno.test("renderImpl — adapter method documents its [SRV] service (E20)", () 
       faults: ["timeout"],
       service: "firebase",
     },
-  ], { async: true, module: "checkout", nameBinding: bindings["<name>"], srvByName });
+  ], {
+    async: true,
+    module: "checkout",
+    nameBinding: bindings["<name>"],
+    srvByName,
+    sharedSrvNames: new Set(["firebase"]),
+  });
   assertStringIncludes(
     impl,
     "service: firebase (transport sk) — env: FIREBASE_API_KEY, FIREBASE_PROJECT_ID",
   );
   assertStringIncludes(impl, "Firebase callable; charge() idempotent");
+  assertStringIncludes(impl, "@see https://firebase.google.com/docs/functions");
   assertStringIncludes(impl, "@throws timeout");
+  // Shared service: the adapter imports the core client and constructs it, so
+  // the import is used and the dev has it in hand.
+  assertStringIncludes(
+    impl,
+    'import { FirebaseService } from "@/src/core/data/firebase/mod.ts";',
+  );
+  assertStringIncludes(
+    impl,
+    "constructor(private readonly firebase = new FirebaseService()) {}",
+  );
+});
+
+Deno.test("renderImpl — no shared-service import when service is unresolved", () => {
+  // A boundary whose [SRV] isn't in srvByName (no core.rune): keep the legacy
+  // "no [SRV] declared" doc and emit NO import/constructor (would be unused).
+  const impl = renderImpl("order", [
+    {
+      verb: "save",
+      params: ["OrderDto"],
+      output: "void",
+      isStatic: false,
+      faults: [],
+      service: "firebase",
+    },
+  ], { async: true, module: "checkout", nameBinding: bindings["<name>"] });
+  assertStringIncludes(impl, "service: firebase (no [SRV] declared)");
+  assert(!impl.includes("src/core/data/"));
+  assert(!impl.includes("constructor("));
+});
+
+Deno.test("renderImpl — multiple services: one import + ctor param each, sorted", () => {
+  const srvByName = new Map([
+    ["db", { transport: "sc", name: "db", envVars: ["DB_URL"], description: "", docsLink: "https://x", line: 0 }],
+    ["ex", { transport: "hp", name: "ex", envVars: ["EX_URL"], description: "", docsLink: "https://y", line: 0 }],
+  ]);
+  const impl = renderImpl("task", [
+    { verb: "save", params: ["TaskDto"], output: "void", isStatic: false, faults: [], service: "db" },
+    { verb: "notify", params: ["TaskDto"], output: "void", isStatic: false, faults: [], service: "ex" },
+  ], {
+    async: true,
+    module: "tasks",
+    nameBinding: bindings["<name>"],
+    srvByName,
+    sharedSrvNames: new Set(["db", "ex"]),
+  });
+  assertStringIncludes(impl, 'import { DbService } from "@/src/core/data/db/mod.ts";');
+  assertStringIncludes(impl, 'import { ExService } from "@/src/core/data/ex/mod.ts";');
+  assertStringIncludes(
+    impl,
+    "constructor(private readonly db = new DbService(), private readonly ex = new ExService()) {}",
+  );
 });

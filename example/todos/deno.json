@@ -12,6 +12,7 @@
     "#std/assert": "jsr:@std/assert",
     "#std/path": "jsr:@std/path",
     "@mrg-keystone/keep": "jsr:@mrg-keystone/keep@^1",
-    "#assert": "jsr:@mrg-keystone/keep@^1/assert"
+    "#assert": "jsr:@mrg-keystone/keep@^1/assert",
+    "#api-doc": "jsr:@danet/swagger@^2.1.1/decorators"
   }
 }

@@ -28,6 +28,11 @@ pub enum LineKind {
         env_vars: Vec<String>,
         indent: usize,
     },
+    /// `@docs <url>` — the REQUIRED documentation link under an [SRV].
+    SrvDocs {
+        url: String,
+        indent: usize,
+    },
     /// A free-prose description continuation line under [MOD]/[SRV] (or any
     /// description block) — benign, never a diagnostic.
     Prose {
@@ -128,6 +133,25 @@ pub enum LineKind {
     Unknown(String),
 }
 
+/// Index of the `//` that begins an inline comment, or None. A `//` only starts
+/// a comment when it follows whitespace or opens the line (the ` // note` form);
+/// a `//` glued to a non-space char (e.g. `https://`) is part of the content, so
+/// URLs survive. Mirrors the TS `stripInlineComment`.
+fn find_inline_comment(line: &str) -> Option<usize> {
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'/'
+            && bytes[i + 1] == b'/'
+            && (i == 0 || bytes[i - 1] == b' ' || bytes[i - 1] == b'\t')
+        {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
 pub fn parse_document(text: &str) -> Vec<ParsedLine> {
     let mut results = Vec::new();
     let mut in_dto_block = false;
@@ -157,11 +181,12 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
             continue;
         }
 
-        // Strip inline comments (// to end of line)
-        let line_without_comment = if let Some(comment_pos) = line.find("//") {
-            &line[..comment_pos]
-        } else {
-            line
+        // Strip inline comments (` // note` to end of line) — but a `//` glued to
+        // a non-space char is left intact so URLs survive (`@docs https://x`, a URL
+        // in a prose description); `://` is never a comment. Mirrors the TS engine.
+        let line_without_comment = match find_inline_comment(line) {
+            Some(comment_pos) => &line[..comment_pos],
+            None => line,
         };
 
         let trimmed = line_without_comment.trim();
@@ -362,6 +387,21 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
                     text: trimmed.to_string(),
                     indent: actual_indent,
                 },
+            });
+            continue;
+        }
+
+        // `@docs <url>` under an [SRV] is the REQUIRED documentation link — its own
+        // kind (not prose) so the LSP can flag an [SRV] that lacks one. Must precede
+        // the prose-continuation rule below (which would otherwise swallow it).
+        if in_srv_block
+            && actual_indent >= 4
+            && (trimmed == "@docs" || trimmed.starts_with("@docs "))
+        {
+            let url = trimmed["@docs".len()..].trim().to_string();
+            results.push(ParsedLine {
+                line_num,
+                kind: LineKind::SrvDocs { url, indent: actual_indent },
             });
             continue;
         }
@@ -945,6 +985,26 @@ mod tests {
             if transport == "sc" && name == "blobstore"
             && env_vars == &vec!["BLOBSTORE_ENDPOINT".to_string(), "BLOBSTORE_BUCKET".to_string()]));
         assert!(matches!(&lines[1].kind, LineKind::Prose { .. }));
+    }
+
+    #[test]
+    fn test_parse_srv_docs() {
+        // The `@docs <url>` line under an [SRV] is its own kind; the `//` inside the
+        // URL must NOT be stripped as an inline comment.
+        let doc = "[SRV] sk:firebase: API_KEY\n    @docs https://firebase.google.com/docs";
+        let lines = parse_document(doc);
+        assert!(matches!(&lines[0].kind, LineKind::Srv { name, .. } if name == "firebase"));
+        assert!(matches!(&lines[1].kind, LineKind::SrvDocs { url, .. }
+            if url == "https://firebase.google.com/docs"));
+    }
+
+    #[test]
+    fn inline_comment_after_url_is_stripped_but_url_survives() {
+        // A real ` // note` after a URL is removed; the URL's own `//` is kept.
+        let doc = "[SRV] sk:s: K\n    @docs https://x.dev/a // see here";
+        let lines = parse_document(doc);
+        assert!(matches!(&lines[1].kind, LineKind::SrvDocs { url, .. }
+            if url == "https://x.dev/a"));
     }
 
     #[test]

@@ -83,7 +83,7 @@ The essentials:
     id::generate(): id                       # static step (::), no scope needed
     [NEW] task                               # construct + add `task` to scope
     task.fill(title): task                   # instance step (.), noun must be in scope
-    db:task.save(TaskDto): void              # boundary step (db:/fs:/mq:/ex:/os:/lg:)
+    db:task.save(TaskDto): void              # boundary: service:noun.verb (one colon)
       timeout                                # fault: indented 2 deeper, lowercase-hyphenated
     task.toDto(): TaskDto                     # LAST step must return the REQ output DTO
 
@@ -95,7 +95,41 @@ The essentials:
     a persisted task
 [NON] task                                    # declares a noun + prose
     a single todo item
+[SRV] sc:db: DB_URL                           # declares service "db" (sidecar)
+    the project's primary datastore           # description required, indented 4
+    @docs https://docs.example.com/db         # REQUIRED @docs <url> line
 ```
+
+### Services (boundary steps) — `[SRV]` + `@docs`
+
+A boundary step `service:noun.verb(In): Out` (single colon) calls a declared
+**service** — distinct from `Noun::verb()` (static, double colon) and
+`noun.verb()` (in-module business step). Its params/returns must be DTOs or
+primitives. Services are **shared**: declare each one ONCE in
+`src/core/core.rune` (module `core`), and every other spec resolves its boundary
+services from there — no per-module `[SRV]`, no import line, the engine just
+loads the project's core spec:
+
+```
+// src/core/core.rune
+[MOD] core
+[SRV] <transport>:<service>: <ENV_VAR, ENV_VAR2>   # transport: sk/hp/ws/sc
+    one-line prose description                      # indented 4
+    @docs <url>                                     # REQUIRED, indented 4
+```
+
+Each `[SRV]` in core.rune generates a shared client at
+`src/core/data/<service>/mod.ts` (a `<Name>Service` class) that the per-noun
+data adapters import and construct. `transport` is a closed set — `sk` (sdk) /
+`hp` (http) / `ws` (websocket) / `sc` (sidecar). An **undeclared** service prefix
+is a spec error (`rune-service-presence`), and a `[SRV]` declared anywhere other
+than core.rune is an error too (`rune-service-core-only`). The OLD fixed kinds
+`db:`/`fs:`/`mq:`/`ex:`/`os:`/`lg:` are gone as builtins — `db:` is now just a
+service *named* `db` that needs a matching `[SRV] sc:db: DB_URL` in core.rune. The
+`@docs <url>` line is **required** on every `[SRV]`; one missing it is a hard
+parse error (`[SRV] <name> requires an @docs <url> line`, from
+`rune check`/`sync`, mirrored by the LSP). Codegen surfaces the url as an
+`@see <url>` JSDoc tag on the generated data-adapter method.
 
 `[RET]` (return a value created earlier in the flow) exists too — see
 `lang/docs/spec.md`. `[PLY]`/`[CSE]` (polymorphism) is covered below.
@@ -380,8 +414,12 @@ These are the ones that cause "won't parse / won't lint" surprises:
 - **Indentation is exact:** `[REQ]`=0, steps=4, faults=6; `[PLY]`=4, `[CSE]`=8,
   case steps=8, case faults=10; descriptions=4. Wrong indent = error.
 - **Lines ≤ 80 chars.** Tags are exactly 3 letters in brackets.
-- **Boundaries** (`db:`/`fs:`/`mq:`/`ex:`/`os:`/`lg:`) take DTO/primitive params and
-  return a DTO/primitive/`void`.
+- **Boundary step `service:noun.verb` (single colon)** calls a declared service;
+  its params/returns must be DTOs or primitives (`string`/`number`/`boolean`/
+  `void`/`Uint8Array`). The `service:` prefix MUST have a matching `[SRV]` block
+  in the same spec (undeclared = spec error). There are **no builtin boundary
+  kinds** — `db:`/`fs:`/`ex:`/… are just service names you declare (see
+  **Services**).
 - **`[TYP]` resolves to a primitive** (`string`/`number`/`boolean`/`void`/
   `Uint8Array`/`Class`/`Primitive` + generics), never to a DTO.
 - **Every `[DTO]` field must resolve to a `[TYP]` or a nested `[DTO]`** (modifiers
@@ -550,11 +588,11 @@ server. Re-run after every spec change.
 ## Worked examples
 
 `example/todos/` has three real specs and their generated trees:
-- `src/tasks/tasks.rune` — pure logic + a `db:` boundary, two `[REQ]`s
+- `src/tasks/tasks.rune` — pure logic + a `db:` service boundary, two `[REQ]`s
 - `src/lists/lists.rune` — same shape; shows a `(s)` array DTO field (`taskId(s)`
   → `taskIds: string[]`)
 - `src/notify/notify.rune` — `[PLY]` polymorphism (`channel` → email/push) + an
-  `ex:` boundary
+  `ex:` service boundary
 
 Copy one of these as a starting point — all three pass `rune check`, `rune sync`,
 `deno check`, and `rune lint` clean (verified). `example/todos/README.md` walks

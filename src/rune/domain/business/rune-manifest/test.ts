@@ -1,5 +1,6 @@
-import { assertEquals, assertStringIncludes } from "#std/assert";
+import { assert, assertEquals, assertStringIncludes } from "#std/assert";
 import { artifactToOptions, DEFAULT_TEMPLATES, planManifest } from "./mod.ts";
+import type { SrvNode } from "@rune/domain/business/rune-parse/mod.ts";
 
 Deno.test("planManifest — coordinator + DTO + TYP for a simple rune", () => {
   const rune = `[MOD] recording
@@ -1511,7 +1512,8 @@ Deno.test("planManifest — mod-root front-door doc + [MOD] desc + glossary (E10
     a created order in flight
 
 [SRV] sk:firebase: FIREBASE_API_KEY, FIREBASE_PROJECT_ID
-    Firebase callable`;
+    Firebase callable
+    @docs https://firebase.google.com/docs/functions`;
   const plan = planManifest("checkout.rune", rune, new Set());
   assertEquals(plan.errors, []);
   const mr = [...plan.toCreate, ...plan.toRegenerate].find((f) =>
@@ -1522,7 +1524,7 @@ Deno.test("planManifest — mod-root front-door doc + [MOD] desc + glossary (E10
   assertStringIncludes(mr.content, "//   order: a created order in flight");
   assertStringIncludes(mr.content, "// Type vocabulary (from [TYP]):");
   assertStringIncludes(mr.content, "//   item: string — the item to order");
-  assertStringIncludes(mr.content, "// Backing services (from [SRV]):");
+  assertStringIncludes(mr.content, "// Backing services (shared, from src/core/core.rune):");
   assertStringIncludes(mr.content, "//   firebase (sk): FIREBASE_API_KEY, FIREBASE_PROJECT_ID");
   // int-test carries the recipe with spec-line provenance (E33/E36)
   const it = [...plan.toCreate, ...plan.toRegenerate].find((f) =>
@@ -1635,4 +1637,65 @@ Deno.test("planManifest — a noun that is BOTH [PLY] and a boundary keeps its a
     plan.toCreate.some((f) => f.path.endsWith("domain/business/gw/mod.ts")),
     false,
   );
+});
+
+Deno.test("planManifest — core.rune generates shared service clients", () => {
+  const rune = `[MOD] core
+[SRV] sc:db: DB_URL
+    the datastore
+    @docs https://docs.example.com/db
+[SRV] hp:ex: EX_BASE_URL
+    external http
+    @docs https://example.com/api`;
+  const plan = planManifest("src/core/core.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const all = [...plan.toCreate, ...plan.toRegenerate, ...plan.toSkip];
+  const db = all.find((f) => f.path === "src/core/data/db/mod.ts");
+  assert(db !== undefined);
+  assertStringIncludes(db!.content, "export class DbService {");
+  assertStringIncludes(db!.content, "db (transport sc) — env: DB_URL");
+  assertStringIncludes(db!.content, "@see https://docs.example.com/db");
+  const ex = all.find((f) => f.path === "src/core/data/ex/mod.ts");
+  assert(ex !== undefined);
+  assertStringIncludes(ex!.content, "export class ExService {");
+});
+
+Deno.test("planManifest — module spec resolves boundary services from sharedSrvs", () => {
+  const sharedSrvs = new Map<string, SrvNode>([
+    ["db", {
+      transport: "sc",
+      name: "db",
+      envVars: ["DB_URL"],
+      description: "datastore",
+      docsLink: "https://x",
+      line: 0,
+    }],
+  ]);
+  const rune = `[MOD] tasks
+[REQ] task.create(InDto): OutDto
+    db:task.save(InDto): void
+    [RET] OutDto
+[DTO] InDto: id
+    x
+[DTO] OutDto: id
+    y
+[TYP] id: string
+    z`;
+  const plan = planManifest("src/tasks/tasks.rune", rune, new Set(), {}, sharedSrvs);
+  assertEquals(plan.errors, []);
+  const all = [...plan.toCreate, ...plan.toRegenerate, ...plan.toSkip];
+  // The module does NOT emit the shared client — only core.rune does.
+  assertEquals(all.some((f) => f.path.startsWith("src/core/data/")), false);
+  // Its data adapter imports + constructs the shared client.
+  const adapter = all.find((f) => f.path === "src/tasks/domain/data/task/mod.ts");
+  assert(adapter !== undefined);
+  assertStringIncludes(
+    adapter!.content,
+    'import { DbService } from "@/src/core/data/db/mod.ts";',
+  );
+  assertStringIncludes(adapter!.content, "new DbService()");
+  // mod-root lists the shared service it references.
+  const mr = all.find((f) => f.path === "src/tasks/mod-root.ts");
+  assertStringIncludes(mr!.content, "Backing services (shared, from src/core/core.rune):");
+  assertStringIncludes(mr!.content, "db (sc): DB_URL");
 });

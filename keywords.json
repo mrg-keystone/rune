@@ -171,13 +171,14 @@
       "indent": 0,
       "follows": "service",
       "color": "#b38585",
-      "description": "Declares a backing service: a transport (sk/hp/ws/sc), a name referenced by service: boundary prefixes, and its required env vars.",
+      "description": "Declares a backing service: a transport (sk/hp/ws/sc), a name referenced by service: boundary prefixes, its required env vars, and a required @docs link.",
       "group": "Data",
-      "syntax": "[SRV] <transport>:<name>: <ENV, ENV2>",
-      "summary": "Declares a backing service (transport + name + env vars + prose). Boundary calls reference it as service:noun.verb(...).",
+      "syntax": "[SRV] <transport>:<name>: <ENV, ENV2>\\n    @docs <url>",
+      "summary": "Declares a backing service (transport + name + env vars + prose + required @docs link). Boundary calls reference it as service:noun.verb(...).",
       "rules": [
         "Transport is one of sk/hp/ws/sc",
-        "Name must be referenced by a service: boundary prefix"
+        "Name must be referenced by a service: boundary prefix",
+        "Requires an indented `@docs <url>` line (the service's documentation link)"
       ]
     }
   ],
@@ -1017,6 +1018,13 @@
     "src/": {
       "core/": {
         "$desc": "Shared kernel — importable from any module",
+        "core": {
+          "ext": [
+            ".rune"
+          ],
+          "desc": "shared-service rune spec — the single [SRV] declaration site for the whole project",
+          "optional": true
+        },
         "business/": {
           "<feature>/": [
             {

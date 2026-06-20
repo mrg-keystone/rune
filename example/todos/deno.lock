@@ -43,6 +43,7 @@
   },
   "workspace": {
     "dependencies": [
+      "jsr:@danet/swagger@^2.1.1",
       "jsr:@mrg-keystone/keep@1",
       "jsr:@std/assert@*",
       "jsr:@std/path@*",

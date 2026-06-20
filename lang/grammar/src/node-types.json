@@ -558,6 +558,10 @@
           "named": true
         },
         {
+          "type": "srv_docs_line",
+          "named": true
+        },
+        {
           "type": "srv_line",
           "named": true
         },
@@ -571,6 +575,21 @@
         },
         {
           "type": "typ_line",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "srv_docs_line",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "srv_spec",
           "named": true
         }
       ]
@@ -776,6 +795,10 @@
   },
   {
     "type": ">",
+    "named": false
+  },
+  {
+    "type": "@docs",
     "named": false
   },
   {

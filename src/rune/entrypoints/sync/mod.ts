@@ -19,7 +19,7 @@ import {
   renderHealRules,
   todoSlugs,
 } from "@rune/domain/business/rune-heal/mod.ts";
-import { resolveRoot } from "@rune/entrypoints/spec-root.ts";
+import { loadCoreSrvs, resolveRoot } from "@rune/entrypoints/spec-root.ts";
 
 const RED = "\x1b[31m";
 const GREEN = "\x1b[32m";
@@ -131,7 +131,8 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
   if (opts === "error") return 2;
 
   const existingFiles = await collectFiles(root);
-  const plan = planSync(relRune, runeText, existingFiles, opts ?? {});
+  const sharedSrvs = await loadCoreSrvs(root, absRune);
+  const plan = planSync(relRune, runeText, existingFiles, opts ?? {}, sharedSrvs);
 
   if (plan.errors.length > 0) {
     console.error(`${RED}parse error in ${relRune}:${RESET}`);

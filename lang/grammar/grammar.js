@@ -27,6 +27,7 @@ module.exports = grammar({
         $.dto_line,
         $.non_line,
         $.srv_line,
+        $.srv_docs_line,
         $.boundary_line,
         $.step_line,
         $.fault_line,
@@ -171,6 +172,12 @@ module.exports = grammar({
 
     // [SRV] body: <transport>:<name>: <ENV, ...> consumed as one line token.
     srv_spec: ($) => token(/[^\n]+/),
+
+    // `@docs <url>` — the required documentation link under an [SRV]. Its own
+    // line rule (not a *_desc) so it parses cleanly instead of as an ERROR node;
+    // the url reuses the greedy srv_spec token so a `//` inside it is NOT lexed
+    // as a comment.
+    srv_docs_line: ($) => seq("@docs", optional($.srv_spec)),
 
     dto_def_name: ($) => /[A-Za-z_][A-Za-z0-9_]*Dto/,
 

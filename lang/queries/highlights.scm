@@ -60,4 +60,5 @@
 (typ_desc) @rune.comment
 (dto_desc) @rune.comment
 (non_desc) @rune.comment
+(srv_docs_line) @rune.comment
 (comment) @rune.comment

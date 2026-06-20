@@ -63,6 +63,36 @@ impl Backend {
             }
         }
 
+        // Every [SRV] MUST declare an `@docs <url>` line (mirrors `rune check`):
+        // scan each [SRV]'s block for a non-empty `@docs` line; flag the [SRV] if
+        // none is found before the block closes (a blank line or the next tag).
+        for (idx, pl) in lines.iter().enumerate() {
+            if let LineKind::Srv { name, .. } = &pl.kind {
+                let mut has_docs = false;
+                for next in &lines[idx + 1..] {
+                    match &next.kind {
+                        LineKind::SrvDocs { url, .. } if !url.trim().is_empty() => {
+                            has_docs = true;
+                            break;
+                        }
+                        // empty `@docs` (flagged separately) / description prose /
+                        // comments keep the [SRV] block open — keep scanning.
+                        LineKind::SrvDocs { .. }
+                        | LineKind::Prose { .. }
+                        | LineKind::Comment { .. } => continue,
+                        // a blank line or any other tag closes the block.
+                        _ => break,
+                    }
+                }
+                if !has_docs {
+                    diagnostics.push(diag_err(
+                        pl.line_num,
+                        format!("[SRV] {} requires an @docs <url> line", name),
+                    ));
+                }
+            }
+        }
+
         // Definitions collected in the first pass (shape checks only — no usage).
         let mut seen_reqs: HashSet<String> = HashSet::new();
         let mut defined_dtos: HashSet<String> = HashSet::new();
@@ -457,6 +487,16 @@ impl Backend {
                 | LineKind::DtoProperty { .. }
                 | LineKind::DtoArrayProperty { .. }
                 | LineKind::DtoRef(_) => {
+                    consecutive_empty = 0;
+                }
+
+                LineKind::SrvDocs { url, .. } => {
+                    if url.trim().is_empty() {
+                        diagnostics.push(diag_err(
+                            line_num,
+                            "[SRV] @docs needs a URL".to_string(),
+                        ));
+                    }
                     consecutive_empty = 0;
                 }
 
@@ -1318,6 +1358,30 @@ mod tests {
             failures.is_empty(),
             "invalid fixtures produced no diagnostics: {}",
             failures.join(", ")
+        );
+    }
+
+    /// A [SRV] missing its required `@docs <url>` line is flagged (mirrors
+    /// `rune check`). With the line present, no @docs diagnostic appears.
+    #[test]
+    fn srv_without_docs_is_flagged() {
+        let text = "[SRV] sk:firebase: API_KEY\n    the backend";
+        let diags = Backend::compute_diagnostics(text);
+        assert!(
+            diags.iter().any(|d| d.message.contains("requires an @docs")),
+            "expected a missing-@docs diagnostic, got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn srv_with_docs_is_clean() {
+        let text = "[SRV] sk:firebase: API_KEY\n    the backend\n    @docs https://x.dev/api";
+        let diags = Backend::compute_diagnostics(text);
+        assert!(
+            !diags.iter().any(|d| d.message.contains("@docs")),
+            "expected no @docs diagnostic, got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
         );
     }
 

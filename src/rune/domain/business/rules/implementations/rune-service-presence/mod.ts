@@ -4,12 +4,18 @@ import {
   parse,
   type StepLike,
 } from "@rune/domain/business/rune-parse/mod.ts";
-import { isProjectSpec } from "@rune/domain/business/rune-bindings/mod.ts";
+import {
+  CORE_SPEC_REL,
+  isCoreSpec,
+  isProjectSpec,
+} from "@rune/domain/business/rune-bindings/mod.ts";
 
 // rune-service-presence: every boundary call `service:noun.verb(...)` must name a
-// service declared by a matching `[SRV] <transport>:<service>: <ENV,…>` in the
-// same spec. The `service:` prefix replaced the old fixed db:/fs:/… kinds — there
-// are no builtin boundaries anymore, so an undeclared service is a spec error.
+// service declared by a matching `[SRV] <transport>:<service>: <ENV,…>`. Services
+// are shared: they are declared ONCE in src/core/core.rune and resolved from
+// there by every module spec (the core spec resolves against its own [SRV]). The
+// `service:` prefix replaced the old fixed db:/fs:/… kinds — there are no builtin
+// boundaries anymore, so an undeclared service is a spec error.
 
 export async function check(
   path: string,
@@ -22,7 +28,17 @@ export async function check(
   const text = await ctx.getFileContent(path);
   const ast = parse(text);
 
-  const declared = new Set(ast.srvs.map((s) => s.name));
+  // Resolve against the shared service set. The core spec is its own source; any
+  // other spec reads core.rune (when present) — services declared there are
+  // visible here without a local [SRV].
+  const declared = new Set<string>();
+  if (isCoreSpec(path)) {
+    for (const s of ast.srvs) declared.add(s.name);
+  } else if (ctx.files.includes(CORE_SPEC_REL)) {
+    const coreAst = parse(await ctx.getFileContent(CORE_SPEC_REL));
+    for (const s of coreAst.srvs) declared.add(s.name);
+  }
+
   const used = new Map<string, number>(); // service -> first line
   for (const req of ast.reqs) collectServices(req.steps, used);
 
@@ -31,7 +47,8 @@ export async function check(
     if (!declared.has(service)) {
       violations.push(
         `Undeclared service "${service}" (boundary at line ${line + 1}) — ` +
-          `add \`[SRV] <transport>:${service}: <ENV,…>\` (transport: sk/hp/ws/sc)`,
+          `declare it once in ${CORE_SPEC_REL} as ` +
+          `\`[SRV] <transport>:${service}: <ENV,…>\` (transport: sk/hp/ws/sc)`,
       );
     }
   }
@@ -55,12 +72,14 @@ export const SYSTEM_PROMPT =
   `You are enforcing the rune-service-presence rule.
 
 Every boundary call uses a declared service prefix: \`service:noun.verb(...)\`.
-The service must be declared once in the same spec:
+Services are SHARED: declare each one ONCE in src/core/core.rune:
   [SRV] <transport>:<service>: <ENV_VAR, ENV_VAR2>
 where transport is one of sk (sdk) / hp (http) / ws (websocket) / sc (sidecar).
+Every module spec resolves its boundary services from that core spec — there is
+no per-module [SRV].
 
-An undeclared service means a boundary points at a backing service the spec never
-described (its transport + config are unknown).`;
+An undeclared service means a boundary points at a backing service no core.rune
+declared (its transport + config are unknown).`;
 
 export function buildPrompt(
   violations: string[],
@@ -71,6 +90,6 @@ export function buildPrompt(
 Undeclared services:
 ${violations.map((v) => `  - ${v}`).join("\n")}
 
-Add a [SRV] declaration for each service, or change the boundary prefix to a
-service that is already declared.`;
+Add a [SRV] declaration for each service to src/core/core.rune, or change the
+boundary prefix to a service that core.rune already declares.`;
 }

@@ -29,6 +29,3 @@
     a queued outbound notification
 [NON] channel
     a delivery channel (email or push)
-
-[SRV] hp:ex: EX_BASE_URL
-    an external HTTP service

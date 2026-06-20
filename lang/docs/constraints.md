@@ -9,7 +9,7 @@ Derived from LSP implementation.
 | Lines must not exceed 80 characters | ERROR |
 | `[REQ]` format: `[REQ] noun.verb(InputDto): OutputDto` | ERROR |
 | Step format: `noun.verb(args): type` or `Noun::verb(args): type` | ERROR |
-| Boundary format: `tag:noun.verb(args): type` | ERROR |
+| Boundary format: `service:noun.verb(args): type` (single-colon service prefix) | ERROR |
 | Fault format: lowercase, hyphenated, space-separated | ERROR |
 | `[DTO]` format: `[DTO] NameDto: prop1, prop2` | ERROR |
 | `[TYP]` format: `[TYP] name: type` | ERROR |
@@ -100,19 +100,66 @@ DTO field graph across the module's `[ENT]`s.
 
 ## Boundaries
 
-| Tag | System |
-|-----|--------|
-| `db:` | database/persistence |
-| `fs:` | file system |
-| `mq:` | message queue |
-| `ex:` | external service |
-| `os:` | object storage |
-| `lg:` | logs |
+A boundary step is written `service:noun.verb(params): ret` — a single-colon
+**service prefix**. This is distinct from `Noun::verb()` (static, double colon)
+and from `noun.verb()` (an in-module business step). There are no builtin
+boundary kinds: a prefix like `db:` is just a service **named** `db` that must
+be declared in the same spec by a `[SRV]` block. (The old fixed kinds
+`db:`/`fs:`/`mq:`/`ex:`/`os:`/`lg:` are gone — each is now an ordinary service
+that needs a matching `[SRV]`.)
 
 | Rule | Severity |
 |------|----------|
+| A boundary prefix names a declared service | ERROR |
+| Service prefix must have a matching `[SRV]` in the same spec | ERROR |
 | Parameters must be DTO or primitive | ERROR |
 | Return type must be DTO, primitive, or `void` | ERROR |
+
+An undeclared service prefix is a spec error (the `rune-service-presence`
+lint).
+
+### Service declarations (`[SRV]`)
+
+A service is declared once per spec by:
+
+    [SRV] <transport>:<service>: <ENV_VAR, ENV_VAR2>
+        <one-line prose description>
+        @docs <url>
+
+`<transport>` is a **closed set**: `sk` (sdk) / `hp` (http) / `ws` (websocket)
+/ `sc` (sidecar).
+
+| Rule | Severity |
+|------|----------|
+| `[SRV]` format: `[SRV] <transport>:<service>: <ENV_VARS>` | ERROR |
+| Transport must be one of `sk` / `hp` / `ws` / `sc` | ERROR |
+| One-line description required (4 spaces) | ERROR |
+| `@docs <url>` line required (4 spaces) | ERROR |
+
+The `@docs <url>` line is **required** on every `[SRV]` (added 2026-06-18). A
+`[SRV]` missing it is a hard parse error — `[SRV] <name> requires an @docs
+<url> line` — from `rune check` / `sync`, mirrored by the LSP. The `@docs` line
+is indented 4, obeys the 80-column rule, and its url survives the inline-comment
+stripper. `rune codegen` surfaces it as an `@see <url>` JSDoc tag on the
+generated data-adapter method.
+
+Worked example:
+
+    [REQ] task.create(CreateTaskDto): TaskDto
+        id::generate(): id                       // static step (::)
+        [NEW] task
+        task.fill(title): task                   // in-module business step
+        db:task.save(TaskDto): void              // boundary: service:noun.verb
+          timeout                                // fault
+        task.toDto(): TaskDto
+
+    [SRV] sc:db: DB_URL                          // declares service "db" (sidecar)
+        the project's primary datastore
+        @docs https://docs.example.com/db        // REQUIRED documentation link
+
+Here `db:task.save` is a boundary call to the service named `db`, declared by
+the `[SRV]` block; `sc` is the sidecar transport; `DB_URL` is its env var; the
+`@docs` line is the required documentation link.
 
 ## Types
 

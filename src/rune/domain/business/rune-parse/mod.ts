@@ -153,6 +153,10 @@ export interface SrvNode {
   /** Declared environment variable names (comma-separated after the 2nd colon). */
   envVars: string[];
   description: string;
+  /** REQUIRED documentation link — the indented `@docs <url>` line under the
+   * [SRV]. A spec with a [SRV] missing this is a hard parse error (surfaced by
+   * `rune check` and mirrored by the LSP). Empty only on a malformed spec. */
+  docsLink: string;
   line: number;
 }
 
@@ -190,6 +194,9 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
   let currentCse: CseNode | null = null;
   let lastStep: StepNode | BoundaryStepNode | null = null;
   let currentEnt: EntNode | null = null;
+  // The [SRV] whose description block is currently open — routes an indented
+  // `@docs <url>` line to its docsLink. Only "active" while descTarget === it.
+  let currentSrv: SrvNode | null = null;
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
@@ -295,9 +302,17 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
       const envVars = (envStr ?? "").split(",").map((s) => s.trim()).filter((s) =>
         s !== ""
       );
-      const node: SrvNode = { transport, name, envVars, description: "", line: i };
+      const node: SrvNode = {
+        transport,
+        name,
+        envVars,
+        description: "",
+        docsLink: "",
+        line: i,
+      };
       ast.srvs.push(node);
       descTarget = node;
+      currentSrv = node; // indented `@docs <url>` routes to node.docsLink
       continue;
     }
 
@@ -536,6 +551,31 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
       }
     }
 
+    // `@docs <url>` under an [SRV] is the REQUIRED documentation link — routed to
+    // docsLink, NOT appended to the prose description. Gated on descTarget still
+    // pointing at the current [SRV] so an `@docs`-looking line under a [DTO]/[TYP]
+    // stays plain prose (those tags don't carry a docs link).
+    if (
+      currentSrv && descTarget === currentSrv && indent === 4 &&
+      (trimmed === "@docs" || trimmed.startsWith("@docs "))
+    ) {
+      const url = trimmed.slice("@docs".length).trim();
+      if (url === "") {
+        ast.errors.push({
+          line: i,
+          message: `[SRV] ${currentSrv.name}: @docs needs a URL`,
+        });
+      } else if (currentSrv.docsLink) {
+        ast.errors.push({
+          line: i,
+          message: `[SRV] ${currentSrv.name}: duplicate @docs link`,
+        });
+      } else {
+        currentSrv.docsLink = url;
+      }
+      continue;
+    }
+
     // Description line: free-text prose at 4-space indent under [DTO]/[TYP]/[NON].
     // `descTarget` is only set by those declarations and is cleared by every step/
     // tag, so an indented line here is unambiguously prose — accept ANY characters
@@ -588,6 +628,17 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
     }
   }
 
+  // Every [SRV] MUST declare an `@docs <url>` link (hard error, mirrored by the
+  // LSP). It's the one piece of provenance a dev needs to wire the service.
+  for (const srv of ast.srvs) {
+    if (!srv.docsLink) {
+      ast.errors.push({
+        line: srv.line,
+        message: `[SRV] ${srv.name} requires an @docs <url> line`,
+      });
+    }
+  }
+
   ast.moduleDescription = modDesc.description.trim() || null;
   return ast;
 }
@@ -605,8 +656,17 @@ function countIndent(raw: string): number {
 }
 
 function stripInlineComment(raw: string): string {
-  const idx = raw.indexOf("//");
-  return idx === -1 ? raw : raw.slice(0, idx);
+  // A `//` only starts a comment when it follows whitespace or opens the line —
+  // the conventional ` // note` form. A `//` glued to a non-space char is left
+  // intact so URLs survive (`@docs https://x` / a URL in a prose description);
+  // `://` is never a comment.
+  let i = raw.indexOf("//");
+  while (i !== -1) {
+    const prev = raw[i - 1];
+    if (i === 0 || prev === " " || prev === "\t") return raw.slice(0, i);
+    i = raw.indexOf("//", i + 2);
+  }
+  return raw;
 }
 
 interface TagMatch {

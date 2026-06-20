@@ -71,9 +71,18 @@ a 4xx), not as a step that silently can't run.
 
 # precondition — "ticket not already paid" is a fault on the write, not a dep
 [REQ] checkout.payCard(PayDto): PaymentDto
-    db:payments.charge(ticketId, amount): receipt
+    db:payments.charge(ChargeDto): ReceiptDto   // boundary: service:noun.verb
         already-paid
+
+[SRV] sc:db: DB_URL                             // declares service "db" (sidecar)
+    the project's primary datastore
+    @docs https://docs.example.com/db           // REQUIRED documentation link
 ```
+
+`db:payments.charge` is a boundary call (single-colon `service:noun.verb`) to the
+service named `db`, declared by the `[SRV]` block above; `sc` is the sidecar
+transport, `DB_URL` its env var. The `@docs` line is required — a `[SRV]` without
+it is a parse error.
 
 ## Teardown flows for destructive endpoints
 

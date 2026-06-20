@@ -67,6 +67,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "srv_docs_line"
+        },
+        {
+          "type": "SYMBOL",
           "name": "boundary_line"
         },
         {
@@ -1051,6 +1055,27 @@
         "type": "PATTERN",
         "value": "[^\\n]+"
       }
+    },
+    "srv_docs_line": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "@docs"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "srv_spec"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
     },
     "dto_def_name": {
       "type": "PATTERN",

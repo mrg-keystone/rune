@@ -107,6 +107,11 @@ export function planManifest(
   runeText: string,
   existingFiles: Set<string>,
   opts: ManifestOptions = {},
+  // The project's shared `[SRV]` set, loaded from src/core/core.rune by the
+  // entrypoint. Merged below so a module's boundary steps resolve their service
+  // metadata (transport/env/docs) without re-declaring `[SRV]` locally. Pure:
+  // the loading happens in the entrypoint, keeping this planner I/O-free.
+  sharedSrvs?: Map<string, SrvNode>,
 ): ManifestPlan {
   // The DTO file-name slot is resolved from the artifact when supplied; falling
   // back to the engine's static binding keeps generated output byte-identical
@@ -173,14 +178,18 @@ export function planManifest(
   // object's meaning instead of discarding it (E12/E18).
   const nonByNoun = new Map(ast.nons.map((n) => [n.name, n]));
   // [SRV] declarations by name — adapter methods document their backing
-  // service/transport/env from these (E20).
-  const srvByName = new Map(ast.srvs.map((s) => [s.name, s]));
+  // service/transport/env from these (E20). Shared services from core.rune come
+  // first; a local `[SRV]` (the core spec itself, or a not-yet-migrated module)
+  // overrides on name collision.
+  const srvByName = new Map<string, SrvNode>(sharedSrvs ?? []);
+  for (const s of ast.srvs) srvByName.set(s.name, s);
   const types: TypeContext = {
     typMap,
     dtoByName,
     nameBinding,
     nonByNoun,
     srvByName,
+    coreSrvNames: new Set(sharedSrvs?.keys() ?? []),
   };
 
   // Collect intended files by element type. Poly nouns are gathered UP FRONT
@@ -216,6 +225,15 @@ export function planManifest(
     addDto(emit, module, dto, runePath, types);
   }
   for (const typ of ast.typs) addTyp(emit, module, typ, runePath, types);
+  // Shared service clients: only the core module (src/core/core.rune) declares
+  // `[SRV]`, and it generates one create-once client per service into
+  // src/core/data/<name>. Module specs reference these through their data
+  // adapters; they never re-emit them (their ast.srvs is empty under the
+  // core-only rule, and the module guard keeps a stray local `[SRV]` from
+  // minting a client outside core).
+  if (module === "core") {
+    for (const srv of ast.srvs) addCoreService(emit, srv, runePath);
+  }
   // Entrypoints: group [ENT]s by surface into one keep controller; compute each
   // ent's order/dependsOn/bind from the DTO field graph across all ents.
   if (ast.ents.length > 0) {
@@ -264,6 +282,20 @@ export function planManifest(
     }
   }
   if (ast.reqs.length > 0) {
+    // The shared services this module actually references (used boundary service
+    // names ∩ the merged [SRV] set) — surfaced in the module front-door so a
+    // reader sees its backing-service dependencies even though they are declared
+    // once in core.rune, not here.
+    const usedSrvs: SrvNode[] = [];
+    const seenSrv = new Set<string>();
+    for (const methods of nounMethods.values()) {
+      for (const m of methods) {
+        if (m.service && !seenSrv.has(m.service) && srvByName.has(m.service)) {
+          seenSrv.add(m.service);
+          usedSrvs.push(srvByName.get(m.service)!);
+        }
+      }
+    }
     addModRoot(
       emit,
       module,
@@ -271,7 +303,7 @@ export function planManifest(
       runePath,
       ast.nons,
       ast.typs,
-      ast.srvs,
+      usedSrvs,
       ast.moduleDescription,
     );
   }
@@ -306,6 +338,11 @@ interface TypeContext {
   nameBinding: Binding;
   nonByNoun: Map<string, NonNode>;
   srvByName: Map<string, SrvNode>;
+  /** Names of SHARED services (declared in core.rune, merged in via sharedSrvs).
+   * Only these get a `src/core/data/<name>` client import in an adapter — a
+   * legacy local `[SRV]` keeps the JSDoc-only behaviour (it has no shared client
+   * to point at). */
+  coreSrvNames: Set<string>;
 }
 
 function walkStepsForFiles(
@@ -528,6 +565,7 @@ function addAdapter(
       runePath,
       nonByNoun: types.nonByNoun,
       srvByName: types.srvByName,
+      sharedSrvNames: types.coreSrvNames,
     }),
   );
   // Cover every fault declared on ANY boundary step for this noun, not just the
@@ -577,6 +615,50 @@ function addTyp(
   const fileName = typFileName(typ.name, dtoNamesSameDir, types.nameBinding);
   const dir = typ.isCore ? "src/core/dto" : `src/${module}/dto`;
   emit("typ", `${dir}/${fileName}.ts`, renderTyp(typ, runePath, module, types));
+}
+
+// The shared client for one `[SRV]`, generated ONCE from core.rune into the
+// shared kernel's data slot src/core/data/<name>/mod.ts ("adapter for an
+// external system", mirroring the isCore dto/ path). A `[SRV]` carries no
+// methods — the per-noun data adapters hold the queries — so the client is a
+// connection/config seam: an `<Name>Service` class documenting its transport,
+// env vars, and @docs link for the dev to wire. create-once, so `sync` never
+// clobbers a filled-in client.
+function addCoreService(emit: Emit, srv: SrvNode, runePath: string): void {
+  const kebab = applyCase(srv.name, "kebab");
+  const cls = `${toPascal(srv.name)}Service`;
+  const env = srv.envVars.length ? ` — env: ${srv.envVars.join(", ")}` : "";
+  const doc = [`${srv.name} (transport ${srv.transport})${env}`];
+  if (srv.description) doc.push(srv.description);
+  if (srv.docsLink) doc.push(`@see ${srv.docsLink}`);
+  const lines = [
+    `// Generated by rune manifest from ${runePath}.`,
+    "// Shared service client. Scaffolded once; fill in the body. `sync` preserves this file.",
+    "",
+    "/**",
+    ...doc.map((d) => ` * ${d}`),
+    " */",
+    `export class ${cls} {`,
+    srv.envVars.length
+      ? `  // Wire this client from env: ${srv.envVars.join(", ")}`
+      : "  // Wire this client.",
+    "}",
+    "",
+  ];
+  emit("core-service", `src/core/data/${kebab}/mod.ts`, lines.join("\n"));
+  // The shared-kernel data slot requires a connectivity smoke test (canonical
+  // src/core/data/<service>/smk.test.ts). A placeholder mirroring the module
+  // adapter smk.test — the dev fills it in once the client is wired.
+  const test = [
+    `// Generated by rune manifest from ${runePath}.`,
+    "// Edit the body. Re-running manifest will not overwrite this file.",
+    "",
+    `Deno.test("${srv.name} — connectivity", () => {`,
+    `  // TODO: smoke test that ${cls} can reach ${srv.name} (transport ${srv.transport})`,
+    "});",
+    "",
+  ];
+  emit("core-service-test", `src/core/data/${kebab}/smk.test.ts`, test.join("\n"));
 }
 
 // Map a rune [TYP] primitive to a TS type + the class-validator decorator that
@@ -1788,7 +1870,7 @@ function addModRoot(
     `${n.name}${n.description ? `: ${n.description}` : ""}`));
   section("Type vocabulary (from [TYP]):", typs.map((t) =>
     `${t.name}: ${t.typeName}${t.description ? ` — ${t.description}` : ""}`));
-  section("Backing services (from [SRV]):", srvs.map((s) =>
+  section("Backing services (shared, from src/core/core.rune):", srvs.map((s) =>
     `${s.name} (${s.transport})${s.envVars.length ? `: ${s.envVars.join(", ")}` : ""}`));
   const moduleDoc = doc.length > 0 ? doc.join("\n") + "\n" : "";
   emit(
@@ -2071,6 +2153,11 @@ export const DEFAULT_POLICIES: Record<string, TemplatePolicy> = {
   "poly-impl-test": { lifecycle: "create-once", prunable: true },
   "dto": { lifecycle: "create-once", prunable: true },
   "typ": { lifecycle: "create-once", prunable: true },
+  // Shared service clients (src/core/data/<name>/mod.ts) + their smoke tests are
+  // dev-owned once scaffolded; prunable:false keeps a filled-in client safe even
+  // if a `[SRV]` is removed from core.rune (delete the orphan client by hand).
+  "core-service": { lifecycle: "create-once", prunable: false },
+  "core-service-test": { lifecycle: "create-once", prunable: false },
   "entrypoint-mod": { lifecycle: "create-once", prunable: true },
   "entrypoint-e2e": { lifecycle: "create-once", prunable: true },
   "mod-root": { lifecycle: "regenerate", prunable: true },
