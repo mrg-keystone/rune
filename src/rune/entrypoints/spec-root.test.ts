@@ -4,10 +4,10 @@ import { loadCoreSrvs, resolveRoot } from "./spec-root.ts";
 import { CORE_SPEC_REL } from "@rune/domain/business/rune-bindings/mod.ts";
 
 const CORE = `[MOD] core
-[SRV] sc:db: DB_URL
+[SRV] (SIDECAR)db: DB_URL
     the datastore
     @docs https://docs.example.com/db
-[SRV] hp:ex: EX_BASE_URL
+[SRV] (HTTP)ex: EX_BASE_URL
     external http
     @docs https://example.com/api`;
 
@@ -35,7 +35,7 @@ Deno.test("loadCoreSrvs — loads the shared [SRV] set from core.rune", async ()
       const srvs = await loadCoreSrvs(root, join(root, "src/tasks/tasks.rune"));
       assert(srvs !== undefined);
       assertEquals([...srvs!.keys()].sort(), ["db", "ex"]);
-      assertEquals(srvs!.get("db")!.transport, "sc");
+      assertEquals(srvs!.get("db")!.transport, "SIDECAR");
       assertEquals(srvs!.get("db")!.envVars, ["DB_URL"]);
     },
   );

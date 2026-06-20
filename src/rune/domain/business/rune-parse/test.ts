@@ -92,7 +92,7 @@ Deno.test("parse — [SRV] declares transport + name + env vars + description", 
       timeout
     [RET] ReceiptDto
 
-[SRV] sk:firebase: FIREBASE_API_KEY, FIREBASE_PROJECT_ID
+[SRV] (SDK)firebase: FIREBASE_API_KEY, FIREBASE_PROJECT_ID
     Firebase callable; charge() idempotent by idemKey
     @docs https://firebase.google.com/docs/functions`,
   );
@@ -106,7 +106,7 @@ Deno.test("parse — [SRV] declares transport + name + env vars + description", 
   // [SRV] node.
   assertEquals(ast.srvs.length, 1);
   const srv = ast.srvs[0];
-  assertEquals(srv.transport, "sk");
+  assertEquals(srv.transport, "SDK");
   assertEquals(srv.name, "firebase");
   assertEquals(srv.envVars, ["FIREBASE_API_KEY", "FIREBASE_PROJECT_ID"]);
   assertEquals(srv.description, "Firebase callable; charge() idempotent by idemKey");
@@ -135,13 +135,13 @@ Deno.test("parse — service: prefix vs Noun:: static are disambiguated", () => 
 });
 
 Deno.test("parse — [SRV] rejects an unknown transport", () => {
-  const ast = parse(`[SRV] xx:thing: A_KEY\n    @docs https://x.dev`);
+  const ast = parse(`[SRV] (BOGUS)thing: A_KEY\n    @docs https://x.dev`);
   assertEquals(ast.errors.length, 1);
   assertEquals(ast.errors[0].message.includes("unknown transport"), true);
 });
 
 Deno.test("parse — [SRV] without an @docs line is a hard error", () => {
-  const ast = parse(`[SRV] sk:firebase: A_KEY\n    the firebase backend`);
+  const ast = parse(`[SRV] (SDK)firebase: A_KEY\n    the firebase backend`);
   assertEquals(ast.srvs.length, 1);
   assertEquals(ast.srvs[0].docsLink, "");
   assertEquals(ast.errors.length, 1);
@@ -149,7 +149,7 @@ Deno.test("parse — [SRV] without an @docs line is a hard error", () => {
 });
 
 Deno.test("parse — [SRV] @docs with no URL is an error", () => {
-  const ast = parse(`[SRV] sk:firebase: A_KEY\n    @docs`);
+  const ast = parse(`[SRV] (SDK)firebase: A_KEY\n    @docs`);
   assertEquals(ast.srvs[0].docsLink, "");
   // both "@docs needs a URL" and the post-loop "requires an @docs" fire.
   assertEquals(ast.errors.some((e) => e.message.includes("needs a URL")), true);
@@ -157,7 +157,7 @@ Deno.test("parse — [SRV] @docs with no URL is an error", () => {
 
 Deno.test("parse — [SRV] duplicate @docs is an error", () => {
   const ast = parse(
-    `[SRV] sk:firebase: A_KEY\n    @docs https://a.dev\n    @docs https://b.dev`,
+    `[SRV] (SDK)firebase: A_KEY\n    @docs https://a.dev\n    @docs https://b.dev`,
   );
   // first wins; the second is flagged, never overwrites docsLink.
   assertEquals(ast.srvs[0].docsLink, "https://a.dev");

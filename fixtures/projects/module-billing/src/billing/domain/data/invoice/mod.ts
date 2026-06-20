@@ -10,7 +10,9 @@ export class Invoice {
   /**
    * @param issueDto a request to issue an invoice
    * @returns an issued invoice
-   * service: db (no [SRV] declared)
+   * service: db (transport SIDECAR) — env: DB_URL
+   * the primary datastore
+   * @see https://docs.example.com/db
    * @throws timeout
    */
   save(issueDto: IssueDto): Promise<InvoiceDto> {

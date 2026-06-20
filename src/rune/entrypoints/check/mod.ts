@@ -1,5 +1,6 @@
-import { resolve } from "#std/path";
+import { relative, resolve } from "#std/path";
 import { planManifest } from "@rune/domain/business/rune-manifest/mod.ts";
+import { loadCoreSrvs, resolveRoot } from "@rune/entrypoints/spec-root.ts";
 
 const RED = "\x1b[31m";
 const GREEN = "\x1b[32m";
@@ -27,7 +28,18 @@ export async function runCheck(args: string[]): Promise<number> {
     return 2;
   }
 
-  const plan = planManifest(runePath, text, new Set(), {});
+  // Resolve the project's shared services (core.rune) so boundary services
+  // resolve and strict service-presence is enforced — same as manifest/sync.
+  const absRune = resolve(runePath);
+  const root = resolveRoot(absRune);
+  const sharedSrvs = await loadCoreSrvs(root, absRune);
+  const plan = planManifest(
+    relative(root, absRune),
+    text,
+    new Set(),
+    { strictServices: true },
+    sharedSrvs,
+  );
   if (plan.errors.length === 0) {
     console.log(`${GREEN}${runePath}: OK — no errors${RESET}`);
     return 0;

@@ -122,17 +122,17 @@ lint).
 
 A service is declared once per spec by:
 
-    [SRV] <transport>:<service>: <ENV_VAR, ENV_VAR2>
+    [SRV] (TRANSPORT)<service>: <ENV_VAR, ENV_VAR2>
         <one-line prose description>
         @docs <url>
 
-`<transport>` is a **closed set**: `sk` (sdk) / `hp` (http) / `ws` (websocket)
-/ `sc` (sidecar).
+`<transport>` is a **closed set**: `SDK` / `HTTP` / `WEBSOCKET`
+/ `SIDECAR`.
 
 | Rule | Severity |
 |------|----------|
-| `[SRV]` format: `[SRV] <transport>:<service>: <ENV_VARS>` | ERROR |
-| Transport must be one of `sk` / `hp` / `ws` / `sc` | ERROR |
+| `[SRV]` format: `[SRV] (TRANSPORT)<service>: <ENV_VARS>` | ERROR |
+| Transport must be one of `SDK` / `HTTP` / `WEBSOCKET` / `SIDECAR` | ERROR |
 | One-line description required (4 spaces) | ERROR |
 | `@docs <url>` line required (4 spaces) | ERROR |
 
@@ -153,12 +153,12 @@ Worked example:
           timeout                                // fault
         task.toDto(): TaskDto
 
-    [SRV] sc:db: DB_URL                          // declares service "db" (sidecar)
+    [SRV] (SIDECAR)db: DB_URL                          // declares service "db" (sidecar)
         the project's primary datastore
         @docs https://docs.example.com/db        // REQUIRED documentation link
 
 Here `db:task.save` is a boundary call to the service named `db`, declared by
-the `[SRV]` block; `sc` is the sidecar transport; `DB_URL` is its env var; the
+the `[SRV]` block; `SIDECAR` is the sidecar transport; `DB_URL` is its env var; the
 `@docs` line is the required documentation link.
 
 ## Types

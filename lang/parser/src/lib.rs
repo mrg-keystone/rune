@@ -248,26 +248,34 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
             continue;
         }
 
-        // [SRV] <transport>:<name>: <ENV, ENV2> — a declared backing service,
+        // [SRV] (TRANSPORT)<name>: <ENV, ENV2> — a declared backing service,
         // plus optional indented continuation prose (its description).
         if let Some(rest) = trimmed.strip_prefix("[SRV]") {
             in_dto_block = false;
             in_typ_block = false;
             in_non_block = false;
             in_srv_block = true; // following indented prose = service description
-            let mut parts = rest.trim().splitn(3, ':');
-            let transport = parts.next().unwrap_or("").trim().to_string();
-            let name = parts.next().unwrap_or("").trim().to_string();
-            let env_str = parts.next().unwrap_or("").trim();
-            let env_vars: Vec<String> = env_str
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-            if !transport.is_empty() && !name.is_empty() {
-                results.push(ParsedLine { line_num, kind: LineKind::Srv { transport, name, env_vars, indent: actual_indent } });
-            } else {
-                results.push(ParsedLine { line_num, kind: LineKind::Unknown("[SRV] malformed — expected [SRV] <transport>:<name>: <ENV,…>".to_string()) });
+            // Parse the parenthesized transport prefix: `(SIDECAR)db: ENV`.
+            let parsed = rest.trim().strip_prefix('(').and_then(|r| {
+                let close = r.find(')')?;
+                let transport = r[..close].trim().to_string();
+                let mut np = r[close + 1..].trim().splitn(2, ':');
+                let name = np.next().unwrap_or("").trim().to_string();
+                let env_str = np.next().unwrap_or("").trim().to_string();
+                Some((transport, name, env_str))
+            });
+            match parsed {
+                Some((transport, name, env_str)) if !transport.is_empty() && !name.is_empty() => {
+                    let env_vars: Vec<String> = env_str
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    results.push(ParsedLine { line_num, kind: LineKind::Srv { transport, name, env_vars, indent: actual_indent } });
+                }
+                _ => {
+                    results.push(ParsedLine { line_num, kind: LineKind::Unknown("[SRV] malformed — expected [SRV] (TRANSPORT)<name>: <ENV,…>".to_string()) });
+                }
             }
             continue;
         }
@@ -977,12 +985,12 @@ mod tests {
 
     #[test]
     fn test_parse_srv() {
-        // [SRV] <transport>:<name>: <ENV,…> + a description line that mentions a
+        // [SRV] (TRANSPORT)<name>: <ENV,…> + a description line that mentions a
         // method call (put()) — both must parse cleanly (no Unknown).
-        let doc = "[SRV] sc:blobstore: BLOBSTORE_ENDPOINT, BLOBSTORE_BUCKET\n    sidecar store; put() is idempotent.";
+        let doc = "[SRV] (SIDECAR)blobstore: BLOBSTORE_ENDPOINT, BLOBSTORE_BUCKET\n    sidecar store; put() is idempotent.";
         let lines = parse_document(doc);
         assert!(matches!(&lines[0].kind, LineKind::Srv { transport, name, env_vars, .. }
-            if transport == "sc" && name == "blobstore"
+            if transport == "SIDECAR" && name == "blobstore"
             && env_vars == &vec!["BLOBSTORE_ENDPOINT".to_string(), "BLOBSTORE_BUCKET".to_string()]));
         assert!(matches!(&lines[1].kind, LineKind::Prose { .. }));
     }
@@ -991,7 +999,7 @@ mod tests {
     fn test_parse_srv_docs() {
         // The `@docs <url>` line under an [SRV] is its own kind; the `//` inside the
         // URL must NOT be stripped as an inline comment.
-        let doc = "[SRV] sk:firebase: API_KEY\n    @docs https://firebase.google.com/docs";
+        let doc = "[SRV] (SDK)firebase: API_KEY\n    @docs https://firebase.google.com/docs";
         let lines = parse_document(doc);
         assert!(matches!(&lines[0].kind, LineKind::Srv { name, .. } if name == "firebase"));
         assert!(matches!(&lines[1].kind, LineKind::SrvDocs { url, .. }

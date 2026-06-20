@@ -17,7 +17,7 @@ export class List {
   }
   /**
    * @param listDto a persisted list record
-   * service: db (transport sc) — env: DB_URL
+   * service: db (transport SIDECAR) — env: DB_URL
    * the project's primary datastore (sidecar)
    * @see https://docs.example.com/datastore
    * @throws timeout
@@ -34,7 +34,7 @@ export class List {
   /**
    * @param id a unique list identifier
    * @returns a persisted list record
-   * service: db (transport sc) — env: DB_URL
+   * service: db (transport SIDECAR) — env: DB_URL
    * the project's primary datastore (sidecar)
    * @see https://docs.example.com/datastore
    * @throws not-found

@@ -1,0 +1,18 @@
+[MOD] core
+
+// Shared services for the shop. Declared ONCE here; the catalog, orders, and
+// notify modules resolve their boundary services (db:, pay:, mail:) from this
+// spec — no per-module [SRV]. Each [SRV] generates a shared client at
+// src/core/data/<name>/mod.ts that the per-noun data adapters import.
+
+[SRV] (SIDECAR)db: DATABASE_URL
+    the shop's primary datastore (sidecar)
+    @docs https://docs.example.com/db
+
+[SRV] (SDK)pay: STRIPE_SECRET_KEY
+    payment gateway SDK
+    @docs https://stripe.com/docs/api
+
+[SRV] (HTTP)mail: MAIL_API_URL, MAIL_API_KEY
+    transactional email HTTP service
+    @docs https://docs.example.com/mail

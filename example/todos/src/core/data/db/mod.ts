@@ -2,7 +2,7 @@
 // Shared service client. Scaffolded once; fill in the body. `sync` preserves this file.
 
 /**
- * db (transport sc) — env: DB_URL
+ * db (transport SIDECAR) — env: DB_URL
  * the project's primary datastore (sidecar)
  * @see https://docs.example.com/datastore
  */

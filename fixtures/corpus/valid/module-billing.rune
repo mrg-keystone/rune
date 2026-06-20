@@ -17,3 +17,8 @@
     the amount
 [TYP] id: string
     the id
+
+[SRV] (SIDECAR)db: DB_URL
+    the primary datastore
+    @docs https://docs.example.com/db
+

@@ -13,7 +13,7 @@ function makeCtx(text: string): PipelineContext {
   };
 }
 
-const SRV_LINE = `[SRV] sc:db: DB_URL
+const SRV_LINE = `[SRV] (SIDECAR)db: DB_URL
     the datastore
     @docs https://docs.example.com/db`;
 
@@ -23,7 +23,7 @@ Deno.test("rune-service-core-only — flags [SRV] in a module spec", async () =>
   assert(result !== null);
   assertEquals(result!.length, 1);
   assert(result![0].includes("src/core/core.rune"));
-  assert(result![0].includes("sc:db"));
+  assert(result![0].includes("(SIDECAR)db"));
 });
 
 Deno.test("rune-service-core-only — allows [SRV] in core.rune", async () => {

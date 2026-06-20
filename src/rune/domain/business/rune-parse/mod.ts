@@ -6,8 +6,9 @@ import {
   TYP_MODIFIERS,
 } from "@rune/domain/business/rune-modifiers/mod.ts";
 
-// The closed set of service transports a [SRV] may declare.
-export const SRV_TRANSPORTS = ["sk", "hp", "ws", "sc"] as const;
+// The closed set of service transports a [SRV] may declare, written as a
+// parenthesized prefix: `[SRV] (SDK)stripe: KEY`.
+export const SRV_TRANSPORTS = ["SDK", "HTTP", "WEBSOCKET", "SIDECAR"] as const;
 export type SrvTransport = typeof SRV_TRANSPORTS[number];
 
 export interface RuneAst {
@@ -146,7 +147,7 @@ export interface NonNode {
 }
 
 export interface SrvNode {
-  /** Connection transport — one of SRV_TRANSPORTS (sk/hp/ws/sc). */
+  /** Connection transport — one of SRV_TRANSPORTS (SDK/HTTP/WEBSOCKET/SIDECAR). */
   transport: string;
   /** Service name referenced by `<name>:` boundary prefixes. */
   name: string;
@@ -278,14 +279,14 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
       continue;
     }
 
-    // [SRV] <transport>:<name>: <ENV, ENV2>  (the backing-service declaration).
+    // [SRV] (TRANSPORT)<name>: <ENV, ENV2>  (the backing-service declaration).
     if (trimmed.startsWith("[SRV]")) {
       const rest = trimmed.slice("[SRV]".length).trim();
-      const m = rest.match(/^([a-z]+):([A-Za-z_][A-Za-z0-9_-]*)(?::\s*(.*))?$/);
+      const m = rest.match(/^\(([A-Za-z]+)\)([A-Za-z_][A-Za-z0-9_-]*)(?::\s*(.*))?$/);
       if (!m) {
         ast.errors.push({
           line: i,
-          message: "[SRV] malformed — expected [SRV] <transport>:<name>: <ENV,…>",
+          message: "[SRV] malformed — expected [SRV] (TRANSPORT)<name>: <ENV,…>",
         });
         descTarget = null;
         continue;

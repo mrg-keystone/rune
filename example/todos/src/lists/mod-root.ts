@@ -9,7 +9,7 @@
 //   taskId: string — an id of a task placed on the list
 //
 // Backing services (shared, from src/core/core.rune):
-//   db (sc): DB_URL
+//   db (SIDECAR): DB_URL
 // Public API surface for module "lists".
 
 export { create } from "./domain/coordinators/list-create/mod.ts";

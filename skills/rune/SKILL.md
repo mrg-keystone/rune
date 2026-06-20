@@ -103,7 +103,7 @@ spec (the `db:` above resolves from here automatically):
 ```
 // src/core/core.rune
 [MOD] core
-[SRV] sc:db: DB_URL                           # declares service "db" (sidecar)
+[SRV] (SIDECAR)db: DB_URL                           # declares service "db" (sidecar)
     the project's primary datastore           # description required, indented 4
     @docs https://docs.example.com/db         # REQUIRED @docs <url> line
 ```
@@ -121,19 +121,19 @@ loads the project's core spec:
 ```
 // src/core/core.rune
 [MOD] core
-[SRV] <transport>:<service>: <ENV_VAR, ENV_VAR2>   # transport: sk/hp/ws/sc
+[SRV] (TRANSPORT)<service>: <ENV_VAR, ENV_VAR2>   # transport: SDK/HTTP/WEBSOCKET/SIDECAR
     one-line prose description                      # indented 4
     @docs <url>                                     # REQUIRED, indented 4
 ```
 
 Each `[SRV]` in core.rune generates a shared client at
 `src/core/data/<service>/mod.ts` (a `<Name>Service` class) that the per-noun
-data adapters import and construct. `transport` is a closed set — `sk` (sdk) /
-`hp` (http) / `ws` (websocket) / `sc` (sidecar). An **undeclared** service prefix
+data adapters import and construct. `transport` is a closed set — `SDK` /
+`HTTP` / `WEBSOCKET` / `SIDECAR`. An **undeclared** service prefix
 is a spec error (`rune-service-presence`), and a `[SRV]` declared anywhere other
 than core.rune is an error too (`rune-service-core-only`). The OLD fixed kinds
 `db:`/`fs:`/`mq:`/`ex:`/`os:`/`lg:` are gone as builtins — `db:` is now just a
-service *named* `db` that needs a matching `[SRV] sc:db: DB_URL` in core.rune. The
+service *named* `db` that needs a matching `[SRV] (SIDECAR)db: DB_URL` in core.rune. The
 `@docs <url>` line is **required** on every `[SRV]`; one missing it is a hard
 parse error (`[SRV] <name> requires an @docs <url> line`, from
 `rune check`/`sync`, mirrored by the LSP). Codegen surfaces the url as an

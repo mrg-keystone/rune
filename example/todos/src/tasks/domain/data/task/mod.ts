@@ -17,7 +17,7 @@ export class Task {
   }
   /**
    * @param taskDto a persisted task record
-   * service: db (transport sc) — env: DB_URL
+   * service: db (transport SIDECAR) — env: DB_URL
    * the project's primary datastore (sidecar)
    * @see https://docs.example.com/datastore
    * @throws timeout
@@ -34,7 +34,7 @@ export class Task {
   /**
    * @param id a unique task identifier
    * @returns a persisted task record
-   * service: db (transport sc) — env: DB_URL
+   * service: db (transport SIDECAR) — env: DB_URL
    * the project's primary datastore (sidecar)
    * @see https://docs.example.com/datastore
    * @throws not-found

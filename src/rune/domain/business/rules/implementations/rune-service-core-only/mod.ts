@@ -25,7 +25,7 @@ export async function check(
   if (ast.srvs.length === 0) return null;
 
   return ast.srvs.map((s) =>
-    `[SRV] ${s.transport}:${s.name} declared in a module spec (line ${
+    `[SRV] (${s.transport})${s.name} declared in a module spec (line ${
       s.line + 1
     }) — shared services must be declared once in ${CORE_SPEC_REL}`
   );

@@ -26,3 +26,8 @@
 
 [TYP] items: string
     the items
+
+[SRV] (SIDECAR)db: DB_URL
+    the primary datastore
+    @docs https://docs.example.com/db
+

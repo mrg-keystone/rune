@@ -27,7 +27,7 @@ const MODULE_SPEC = `[MOD] checkout
     z`;
 
 const CORE_SPEC = `[MOD] core
-[SRV] sk:firebase: FIREBASE_API_KEY
+[SRV] (SDK)firebase: FIREBASE_API_KEY
     Firebase callable
     @docs https://firebase.google.com/docs/functions`;
 

@@ -19,3 +19,8 @@
     the message
 [TYP] id: string
     the id
+
+[SRV] (HTTP)ex: EX_URL
+    external http service
+    @docs https://docs.example.com/ex
+

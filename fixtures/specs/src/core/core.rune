@@ -4,6 +4,6 @@
 // modules both resolve their db: boundary against this single [SRV]. Generates
 // the shared client at src/core/data/db/.
 
-[SRV] sc:db: DB_URL
+[SRV] (SIDECAR)db: DB_URL
     the project's primary datastore (sidecar)
     @docs https://docs.example.com/datastore

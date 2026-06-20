@@ -18,25 +18,30 @@ export function resolveRoot(absRune: string): string {
   return specDir;
 }
 
-/** Load the project's shared `[SRV]` set from `<root>/src/core/core.rune`.
+/** Load the project's shared `[SRV]` set from the core spec.
  *
- * Returns the services by name, or `undefined` when there is no core spec, it
- * declares no services, or `targetAbs` IS the core spec itself (a spec never
- * merges its own declarations). Pure read — the planners stay I/O-free and the
- * entrypoints do this loading, mirroring how they read the target spec text. */
+ * Looks in two places, in order: the canonical `<root>/src/core/core.rune`, and
+ * a flat `<root>/core.rune` sibling (so a plain `spec/` folder of `.rune` files
+ * resolves too). Returns the services by name, or `undefined` when there is no
+ * core spec, it declares no services, or `targetAbs` IS the core spec itself (a
+ * spec never merges its own declarations). Pure read — the planners stay
+ * I/O-free; the entrypoints do this loading, like they read the target text. */
 export async function loadCoreSrvs(
   root: string,
   targetAbs: string,
 ): Promise<Map<string, SrvNode> | undefined> {
-  const corePath = join(root, CORE_SPEC_REL);
-  if (resolve(corePath) === resolve(targetAbs)) return undefined;
-  let text: string;
-  try {
-    text = await Deno.readTextFile(corePath);
-  } catch {
-    return undefined; // no core spec in this project
+  const candidates = [join(root, CORE_SPEC_REL), join(root, "core.rune")];
+  for (const corePath of candidates) {
+    if (resolve(corePath) === resolve(targetAbs)) continue; // never self-merge
+    let text: string;
+    try {
+      text = await Deno.readTextFile(corePath);
+    } catch {
+      continue; // not at this location
+    }
+    const ast = parse(text);
+    if (ast.srvs.length === 0) return undefined;
+    return new Map(ast.srvs.map((s) => [s.name, s]));
   }
-  const ast = parse(text);
-  if (ast.srvs.length === 0) return undefined;
-  return new Map(ast.srvs.map((s) => [s.name, s]));
+  return undefined; // no core spec in this project
 }

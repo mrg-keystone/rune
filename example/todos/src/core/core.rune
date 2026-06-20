@@ -4,10 +4,10 @@
 // its boundary services (db:..., ex:...) from this spec. Each [SRV] generates a
 // shared client under src/core/services/<name>/.
 
-[SRV] sc:db: DB_URL
+[SRV] (SIDECAR)db: DB_URL
     the project's primary datastore (sidecar)
     @docs https://docs.example.com/datastore
 
-[SRV] hp:ex: EX_BASE_URL
+[SRV] (HTTP)ex: EX_BASE_URL
     an external HTTP service
     @docs https://example.com/api/docs

@@ -28,7 +28,7 @@ enriched; no grammar change, no breaking change:
   E34 smk boundary list · E35 poly test skeletons · E36 int-test provenance ·
   E46 mod-root glossary · E48 poly base docs. Non-breaking; achievable.
 **SHIPPED — Tier 2 grammar (built in worktree, integrated, GREEN):**
-- `[SRV] <transport>:<name>: <ENV,…>` + `[MOD] name: desc` parsing; `matchBoundary`
+- `[SRV] (TRANSPORT)<name>: <ENV,…>` + `[MOD] name: desc` parsing; `matchBoundary`
   rewritten to a single-colon `service:` prefix (no fixed kinds); `BoundaryStepNode.
   tag`→`service`; `SrvNode` + `RuneAst.srvs`/`moduleDescription`.
 - tree-sitter `srv` tag (keywords.json + generate-core + grammar.js/json + WASM +
@@ -379,7 +379,7 @@ export class Task {
 
 **E20 · Service/transport/env method + class doc** `[adapter-method-service-jsdoc, adapter-method-service, srv-description-to-adapter-doc, adapter-class-service-header, data-adapter-service-meta]` — `[SRV]` · doc-comment · **needs-SRV**. Per-method (service is per-method): `service: <name> (transport <t>)`, the `[SRV]` description, wrapped `Connection env:` list, then `@throws`.
 
-**E21 · Transport connection scaffold** `[srv-connection-scaffolding, adapter-conn-stub]` — `[SRV].transport` · code-stub · **needs-SRV**. Drive `sk`=SDK client / `hp`=base-URL+fetch / `ws`=socket / `sc`=sidecar. **Keep comment-only until the data-adapter DI/config convention is settled** (a `private readonly base = config.firebase.apiKey` references an unimported `config` → compile break). Requires E27 (config sub-objects) first.
+**E21 · Transport connection scaffold** `[srv-connection-scaffolding, adapter-conn-stub]` — `[SRV].transport` · code-stub · **needs-SRV**. Drive `SDK`=SDK client / `HTTP`=base-URL+fetch / `WEBSOCKET`=socket / `SIDECAR`=sidecar. **Keep comment-only until the data-adapter DI/config convention is settled** (a `private readonly base = config.firebase.apiKey` references an unimported `config` → compile break). Requires E27 (config sub-objects) first.
 
 **E22 · `@throws` + call provenance per method** — covered by E13; the call-ref form becomes `service:noun.verb` once `[SRV]` lands (no rework).
 
@@ -586,7 +586,7 @@ Static-`[PLY]` (`isStatic`): `// rune: static dispatch verb (Provider::pick)`.
 
 **E52 · `.env.example` (new file)** `[srv-env-example-file, env-example-from-services]` — `[SRV].envVars` · code-stub · **needs-SRV**. Dedup env vars across services; group per `[SRV]` with transport + description header.
 
-**E53 · `deno.json` transport deps** `[deno-json-srv-transport-deps]` — `[SRV].transport` · code-stub · **needs-SRV** (+ a package field for `sk`). Only `sk` adds a dep; `hp`/`ws`/`sc` use built-in `fetch`/`WebSocket` (no entry). `ensureImportMap` is the only renderer consuming zero spec signal today.
+**E53 · `deno.json` transport deps** `[deno-json-srv-transport-deps]` — `[SRV].transport` · code-stub · **needs-SRV** (+ a package field for `SDK`). Only `SDK` adds a dep; `HTTP`/`WEBSOCKET`/`SIDECAR` use built-in `fetch`/`WebSocket` (no entry). `ensureImportMap` is the only renderer consuming zero spec signal today.
 
 **E54 · `bootstrap/mod.ts` emulator inventory** `[main-module-emulator-inventory]` — `SurfaceModule[]` · header · changes-emitted-code (created-once). Pass `surfaces` into `renderMain` (already in scope at `sync:525`); print real `/docs/<module> (<surface>)` per surface instead of the literal `<module>` token. Update `sync/test.ts:78` call.
 

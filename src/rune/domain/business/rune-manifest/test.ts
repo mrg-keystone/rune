@@ -1511,7 +1511,7 @@ Deno.test("planManifest — mod-root front-door doc + [MOD] desc + glossary (E10
 [NON] order
     a created order in flight
 
-[SRV] sk:firebase: FIREBASE_API_KEY, FIREBASE_PROJECT_ID
+[SRV] (SDK)firebase: FIREBASE_API_KEY, FIREBASE_PROJECT_ID
     Firebase callable
     @docs https://firebase.google.com/docs/functions`;
   const plan = planManifest("checkout.rune", rune, new Set());
@@ -1525,7 +1525,7 @@ Deno.test("planManifest — mod-root front-door doc + [MOD] desc + glossary (E10
   assertStringIncludes(mr.content, "// Type vocabulary (from [TYP]):");
   assertStringIncludes(mr.content, "//   item: string — the item to order");
   assertStringIncludes(mr.content, "// Backing services (shared, from src/core/core.rune):");
-  assertStringIncludes(mr.content, "//   firebase (sk): FIREBASE_API_KEY, FIREBASE_PROJECT_ID");
+  assertStringIncludes(mr.content, "//   firebase (SDK): FIREBASE_API_KEY, FIREBASE_PROJECT_ID");
   // int-test carries the recipe with spec-line provenance (E33/E36)
   const it = [...plan.toCreate, ...plan.toRegenerate].find((f) =>
     f.path.endsWith("order-create/int.test.ts")
@@ -1641,10 +1641,10 @@ Deno.test("planManifest — a noun that is BOTH [PLY] and a boundary keeps its a
 
 Deno.test("planManifest — core.rune generates shared service clients", () => {
   const rune = `[MOD] core
-[SRV] sc:db: DB_URL
+[SRV] (SIDECAR)db: DB_URL
     the datastore
     @docs https://docs.example.com/db
-[SRV] hp:ex: EX_BASE_URL
+[SRV] (HTTP)ex: EX_BASE_URL
     external http
     @docs https://example.com/api`;
   const plan = planManifest("src/core/core.rune", rune, new Set());
@@ -1653,7 +1653,7 @@ Deno.test("planManifest — core.rune generates shared service clients", () => {
   const db = all.find((f) => f.path === "src/core/data/db/mod.ts");
   assert(db !== undefined);
   assertStringIncludes(db!.content, "export class DbService {");
-  assertStringIncludes(db!.content, "db (transport sc) — env: DB_URL");
+  assertStringIncludes(db!.content, "db (transport SIDECAR) — env: DB_URL");
   assertStringIncludes(db!.content, "@see https://docs.example.com/db");
   const ex = all.find((f) => f.path === "src/core/data/ex/mod.ts");
   assert(ex !== undefined);
@@ -1663,7 +1663,7 @@ Deno.test("planManifest — core.rune generates shared service clients", () => {
 Deno.test("planManifest — module spec resolves boundary services from sharedSrvs", () => {
   const sharedSrvs = new Map<string, SrvNode>([
     ["db", {
-      transport: "sc",
+      transport: "SIDECAR",
       name: "db",
       envVars: ["DB_URL"],
       description: "datastore",
@@ -1697,5 +1697,45 @@ Deno.test("planManifest — module spec resolves boundary services from sharedSr
   // mod-root lists the shared service it references.
   const mr = all.find((f) => f.path === "src/tasks/mod-root.ts");
   assertStringIncludes(mr!.content, "Backing services (shared, from src/core/core.rune):");
-  assertStringIncludes(mr!.content, "db (sc): DB_URL");
+  assertStringIncludes(mr!.content, "db (SIDECAR): DB_URL");
+});
+
+Deno.test("planManifest — strictServices errors on an undeclared boundary service", () => {
+  const rune = `[MOD] catalog
+[REQ] product.add(InDto): OutDto
+    cache:product.save(InDto): void
+    [RET] OutDto
+[DTO] InDto: id
+    x
+[DTO] OutDto: id
+    y
+[TYP] id: string
+    z`;
+  // Raw codegen (no strictServices) tolerates an undeclared service.
+  assertEquals(
+    planManifest("src/catalog/catalog.rune", rune, new Set()).errors,
+    [],
+  );
+  // strictServices (what check/sync/manifest set) makes it a hard error.
+  const strict = planManifest("src/catalog/catalog.rune", rune, new Set(), {
+    strictServices: true,
+  });
+  assert(strict.errors.some((e) => e.includes('undeclared service "cache"')));
+  // Declaring it via core.rune (sharedSrvs) clears the error.
+  const shared = new Map<string, SrvNode>([
+    ["cache", {
+      transport: "SIDECAR",
+      name: "cache",
+      envVars: ["CACHE_URL"],
+      description: "",
+      docsLink: "https://x",
+      line: 0,
+    }],
+  ]);
+  assertEquals(
+    planManifest("src/catalog/catalog.rune", rune, new Set(), {
+      strictServices: true,
+    }, shared).errors,
+    [],
+  );
 });

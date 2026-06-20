@@ -2,5 +2,5 @@
 // Edit the body. Re-running manifest will not overwrite this file.
 
 Deno.test("ex — connectivity", () => {
-  // TODO: smoke test that ExService can reach ex (transport hp)
+  // TODO: smoke test that ExService can reach ex (transport HTTP)
 });

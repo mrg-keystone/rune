@@ -10,7 +10,7 @@
 //   status: string — the delivery status of the notification
 //
 // Backing services (shared, from src/core/core.rune):
-//   ex (hp): EX_BASE_URL
+//   ex (HTTP): EX_BASE_URL
 // Public API surface for module "notify".
 
 export { send } from "./domain/coordinators/notification-send/mod.ts";

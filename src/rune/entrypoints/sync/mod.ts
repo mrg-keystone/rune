@@ -132,7 +132,13 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
 
   const existingFiles = await collectFiles(root);
   const sharedSrvs = await loadCoreSrvs(root, absRune);
-  const plan = planSync(relRune, runeText, existingFiles, opts ?? {}, sharedSrvs);
+  const plan = planSync(
+    relRune,
+    runeText,
+    existingFiles,
+    { ...(opts ?? {}), strictServices: true },
+    sharedSrvs,
+  );
 
   if (plan.errors.length > 0) {
     console.error(`${RED}parse error in ${relRune}:${RESET}`);

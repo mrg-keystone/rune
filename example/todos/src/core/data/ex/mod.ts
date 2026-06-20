@@ -2,7 +2,7 @@
 // Shared service client. Scaffolded once; fill in the body. `sync` preserves this file.
 
 /**
- * ex (transport hp) — env: EX_BASE_URL
+ * ex (transport HTTP) — env: EX_BASE_URL
  * an external HTTP service
  * @see https://example.com/api/docs
  */

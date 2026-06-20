@@ -91,12 +91,12 @@
 [DTO] IdDto: providerName, externalId
     unique identifier combining provider and external ID
 
-[SRV] hp:ex: EX_BASE_URL
+[SRV] (HTTP)ex: EX_BASE_URL
     the external recording provider's HTTP API
     @docs https://example.com/provider/api
-[SRV] sc:db: DB_URL
+[SRV] (SIDECAR)db: DB_URL
     the metadata datastore (sidecar)
     @docs https://docs.example.com/datastore
-[SRV] sc:os: OS_ENDPOINT
+[SRV] (SIDECAR)os: OS_ENDPOINT
     the binary object storage for recording data
     @docs https://docs.example.com/object-storage

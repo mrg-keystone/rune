@@ -1,0 +1,36 @@
+[MOD] catalog
+
+[REQ] product.add(NewProductDto): ProductDto
+    id::generate(): id
+    [NEW] product
+    product.fill(name): product
+    db:product.save(ProductDto): void
+      timeout
+    product.toDto(): ProductDto
+
+[REQ] product.restock(StockDto): ProductDto
+    db:product.load(id): ProductDto
+      not-found
+    product.addStock(quantity): product
+    db:product.save(ProductDto): void
+      timeout
+    product.toDto(): ProductDto
+
+[TYP] id: string
+    a unique product identifier
+[TYP] name: string
+    the product display name
+[TYP] priceCents: number
+    unit price in cents
+[TYP] quantity: number
+    a count of units in stock
+
+[DTO] NewProductDto: name, priceCents
+    input to add a product to the catalog
+[DTO] StockDto: id, quantity
+    input to restock an existing product
+[DTO] ProductDto: id, name, priceCents, quantity
+    a persisted product record
+
+[NON] product
+    a sellable item in the catalog

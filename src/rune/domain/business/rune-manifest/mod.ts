@@ -79,6 +79,11 @@ export interface ManifestOptions {
   /** Per-role lifecycle/prune policy, e.g. from artifact.codegen.policies.
    * Merged over DEFAULT_POLICIES; defaults preserve current behavior. */
   policies?: Record<string, TemplatePolicy>;
+  /** Enforce that every boundary `service:noun.verb(...)` resolves to a declared
+   * [SRV] (shared from core.rune or local) — an undeclared service becomes a
+   * plan error. The user-facing entrypoints (check/sync/manifest/dev) set this;
+   * raw codegen callers (studio preview, golden capture) leave it off. */
+  strictServices?: boolean;
 }
 
 /** Map a loaded artifact to the engine's options: layout bindings, codegen
@@ -191,6 +196,35 @@ export function planManifest(
     srvByName,
     coreSrvNames: new Set(sharedSrvs?.keys() ?? []),
   };
+
+  // STRICT service resolution (entrypoint policy): every boundary
+  // `service:noun.verb(...)` must resolve to a declared [SRV] — shared (from
+  // core.rune, merged into srvByName) or local. An undeclared service is a hard
+  // error surfaced by `rune check`/`manifest`/`sync`/`dev`. Raw codegen callers
+  // (studio preview, golden capture) leave opts.strictServices off.
+  if (opts.strictServices) {
+    const usedServices = new Map<string, number>(); // service -> first line
+    const collectUsedServices = (
+      steps: StepLike[] | CseNode["steps"],
+    ): void => {
+      for (const s of steps) {
+        if (s.kind === "boundary") {
+          if (!usedServices.has(s.service)) usedServices.set(s.service, s.line);
+        } else if (s.kind === "ply") {
+          for (const c of s.cases) collectUsedServices(c.steps);
+        }
+      }
+    };
+    for (const req of ast.reqs) collectUsedServices(req.steps);
+    for (const [service, line] of usedServices) {
+      if (!srvByName.has(service)) {
+        plan.errors.push(
+          `${runePath}:${line + 1}: undeclared service "${service}" — declare ` +
+            `it as \`[SRV] (TRANSPORT)${service}: <ENV,…>\` in src/core/core.rune`,
+        );
+      }
+    }
+  }
 
   // Collect intended files by element type. Poly nouns are gathered UP FRONT
   // (across all [REQ]s, including nested cases) so the business-class guard in

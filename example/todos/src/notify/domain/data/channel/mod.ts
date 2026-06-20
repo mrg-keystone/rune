@@ -13,7 +13,7 @@ export class Channel {
   /**
    * @param sendDto input to send a notification
    * @returns proof that a notification was delivered
-   * service: ex (transport hp) — env: EX_BASE_URL
+   * service: ex (transport HTTP) — env: EX_BASE_URL
    * an external HTTP service
    * @see https://example.com/api/docs
    * @throws timeout
@@ -25,7 +25,7 @@ export class Channel {
   /**
    * @param sendDto input to send a notification
    * @returns proof that a notification was delivered
-   * service: ex (transport hp) — env: EX_BASE_URL
+   * service: ex (transport HTTP) — env: EX_BASE_URL
    * an external HTTP service
    * @see https://example.com/api/docs
    * @throws timeout

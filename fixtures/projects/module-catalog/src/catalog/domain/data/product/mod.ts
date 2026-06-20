@@ -10,7 +10,9 @@ export class Product {
   /**
    * @param listDto a paged product listing request
    * @returns a page of products
-   * service: db (no [SRV] declared)
+   * service: db (transport SIDECAR) — env: DB_URL
+   * the primary datastore
+   * @see https://docs.example.com/db
    * @throws timeout
    */
   query(listDto: ListDto): Promise<ProductsDto> {

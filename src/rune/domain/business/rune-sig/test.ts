@@ -174,7 +174,7 @@ Deno.test("renderImpl — adapter announces its I/O-boundary role + [NON]", () =
 Deno.test("renderImpl — adapter method documents its [SRV] service (E20)", () => {
   const srvByName = new Map([
     ["firebase", {
-      transport: "sk",
+      transport: "SDK",
       name: "firebase",
       envVars: ["FIREBASE_API_KEY", "FIREBASE_PROJECT_ID"],
       description: "Firebase callable; charge() idempotent",
@@ -200,7 +200,7 @@ Deno.test("renderImpl — adapter method documents its [SRV] service (E20)", () 
   });
   assertStringIncludes(
     impl,
-    "service: firebase (transport sk) — env: FIREBASE_API_KEY, FIREBASE_PROJECT_ID",
+    "service: firebase (transport SDK) — env: FIREBASE_API_KEY, FIREBASE_PROJECT_ID",
   );
   assertStringIncludes(impl, "Firebase callable; charge() idempotent");
   assertStringIncludes(impl, "@see https://firebase.google.com/docs/functions");
@@ -237,8 +237,8 @@ Deno.test("renderImpl — no shared-service import when service is unresolved", 
 
 Deno.test("renderImpl — multiple services: one import + ctor param each, sorted", () => {
   const srvByName = new Map([
-    ["db", { transport: "sc", name: "db", envVars: ["DB_URL"], description: "", docsLink: "https://x", line: 0 }],
-    ["ex", { transport: "hp", name: "ex", envVars: ["EX_URL"], description: "", docsLink: "https://y", line: 0 }],
+    ["db", { transport: "SIDECAR", name: "db", envVars: ["DB_URL"], description: "", docsLink: "https://x", line: 0 }],
+    ["ex", { transport: "HTTP", name: "ex", envVars: ["EX_URL"], description: "", docsLink: "https://y", line: 0 }],
   ]);
   const impl = renderImpl("task", [
     { verb: "save", params: ["TaskDto"], output: "void", isStatic: false, faults: [], service: "db" },

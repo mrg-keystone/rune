@@ -119,6 +119,27 @@
       "line": 8
     }
   ],
-  "srvs": [],
+  "srvs": [
+    {
+      "transport": "HTTP",
+      "name": "ex",
+      "envVars": [
+        "EX_URL"
+      ],
+      "description": "external http service",
+      "docsLink": "https://docs.example.com/ex",
+      "line": 25
+    },
+    {
+      "transport": "SIDECAR",
+      "name": "db",
+      "envVars": [
+        "DB_URL"
+      ],
+      "description": "the primary datastore",
+      "docsLink": "https://docs.example.com/db",
+      "line": 29
+    }
+  ],
   "errors": []
 }

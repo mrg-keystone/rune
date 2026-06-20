@@ -149,6 +149,17 @@
       "line": 14
     }
   ],
-  "srvs": [],
+  "srvs": [
+    {
+      "transport": "HTTP",
+      "name": "ex",
+      "envVars": [
+        "EX_URL"
+      ],
+      "description": "external http service",
+      "docsLink": "https://docs.example.com/ex",
+      "line": 28
+    }
+  ],
   "errors": []
 }

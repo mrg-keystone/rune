@@ -468,11 +468,11 @@ impl Backend {
                 // service-presence (boundary → declared service) is a
                 // project-wide rule left to `rune lint`, not the single-file LSP.
                 LineKind::Srv { transport, .. } => {
-                    let valid = ["sk", "hp", "ws", "sc"];
+                    let valid = ["SDK", "HTTP", "WEBSOCKET", "SIDECAR"];
                     if !valid.contains(&transport.as_str()) {
                         diagnostics.push(diag_err(
                             line_num,
-                            format!("[SRV] unknown transport \"{}\" — expected sk/hp/ws/sc", transport),
+                            format!("[SRV] unknown transport \"{}\" — expected SDK/HTTP/WEBSOCKET/SIDECAR", transport),
                         ));
                     }
                     consecutive_empty = 0;
@@ -1365,7 +1365,7 @@ mod tests {
     /// `rune check`). With the line present, no @docs diagnostic appears.
     #[test]
     fn srv_without_docs_is_flagged() {
-        let text = "[SRV] sk:firebase: API_KEY\n    the backend";
+        let text = "[SRV] (SDK)firebase: API_KEY\n    the backend";
         let diags = Backend::compute_diagnostics(text);
         assert!(
             diags.iter().any(|d| d.message.contains("requires an @docs")),
@@ -1376,7 +1376,7 @@ mod tests {
 
     #[test]
     fn srv_with_docs_is_clean() {
-        let text = "[SRV] sk:firebase: API_KEY\n    the backend\n    @docs https://x.dev/api";
+        let text = "[SRV] (SDK)firebase: API_KEY\n    the backend\n    @docs https://x.dev/api";
         let diags = Backend::compute_diagnostics(text);
         assert!(
             !diags.iter().any(|d| d.message.contains("@docs")),

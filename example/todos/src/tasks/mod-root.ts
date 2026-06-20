@@ -9,7 +9,7 @@
 //   done: boolean — whether the task has been completed
 //
 // Backing services (shared, from src/core/core.rune):
-//   db (sc): DB_URL
+//   db (SIDECAR): DB_URL
 // Public API surface for module "tasks".
 
 export { create } from "./domain/coordinators/task-create/mod.ts";

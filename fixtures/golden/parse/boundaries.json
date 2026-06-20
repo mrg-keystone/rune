@@ -158,6 +158,67 @@
     }
   ],
   "nons": [],
-  "srvs": [],
+  "srvs": [
+    {
+      "transport": "SIDECAR",
+      "name": "db",
+      "envVars": [
+        "DB_URL"
+      ],
+      "description": "the primary datastore",
+      "docsLink": "https://docs.example.com/db",
+      "line": 29
+    },
+    {
+      "transport": "SIDECAR",
+      "name": "fs",
+      "envVars": [
+        "FS_ROOT"
+      ],
+      "description": "file storage",
+      "docsLink": "https://docs.example.com/fs",
+      "line": 33
+    },
+    {
+      "transport": "SIDECAR",
+      "name": "mq",
+      "envVars": [
+        "MQ_URL"
+      ],
+      "description": "message queue",
+      "docsLink": "https://docs.example.com/mq",
+      "line": 37
+    },
+    {
+      "transport": "HTTP",
+      "name": "ex",
+      "envVars": [
+        "EX_URL"
+      ],
+      "description": "external http service",
+      "docsLink": "https://docs.example.com/ex",
+      "line": 41
+    },
+    {
+      "transport": "SIDECAR",
+      "name": "os",
+      "envVars": [
+        "OS_ENDPOINT"
+      ],
+      "description": "object storage",
+      "docsLink": "https://docs.example.com/os",
+      "line": 45
+    },
+    {
+      "transport": "SIDECAR",
+      "name": "lg",
+      "envVars": [
+        "LOG_URL"
+      ],
+      "description": "log sink",
+      "docsLink": "https://docs.example.com/lg",
+      "line": 49
+    }
+  ],
   "errors": []
 }

@@ -501,6 +501,37 @@
       "line": 63
     }
   ],
-  "srvs": [],
+  "srvs": [
+    {
+      "transport": "HTTP",
+      "name": "ex",
+      "envVars": [
+        "EX_URL"
+      ],
+      "description": "external http service",
+      "docsLink": "https://docs.example.com/ex",
+      "line": 93
+    },
+    {
+      "transport": "SIDECAR",
+      "name": "db",
+      "envVars": [
+        "DB_URL"
+      ],
+      "description": "the primary datastore",
+      "docsLink": "https://docs.example.com/db",
+      "line": 97
+    },
+    {
+      "transport": "SIDECAR",
+      "name": "os",
+      "envVars": [
+        "OS_ENDPOINT"
+      ],
+      "description": "object storage",
+      "docsLink": "https://docs.example.com/os",
+      "line": 101
+    }
+  ],
   "errors": []
 }

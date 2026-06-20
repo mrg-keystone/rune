@@ -22,3 +22,12 @@
     the amount
 [TYP] token: string
     the token
+
+[SRV] (HTTP)ex: EX_URL
+    external http service
+    @docs https://docs.example.com/ex
+
+[SRV] (SIDECAR)db: DB_URL
+    the primary datastore
+    @docs https://docs.example.com/db
+

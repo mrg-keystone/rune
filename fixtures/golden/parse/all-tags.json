@@ -117,6 +117,17 @@
       "line": 8
     }
   ],
-  "srvs": [],
+  "srvs": [
+    {
+      "transport": "SIDECAR",
+      "name": "db",
+      "envVars": [
+        "DB_URL"
+      ],
+      "description": "the primary datastore",
+      "docsLink": "https://docs.example.com/db",
+      "line": 29
+    }
+  ],
   "errors": []
 }

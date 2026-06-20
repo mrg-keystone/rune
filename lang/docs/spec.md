@@ -84,10 +84,10 @@ Use `[RET]` to return a value created earlier in the flow. This is useful when t
     os:storage.save(id, data): void      // side effect - returns void
     [RET] IdDto                          // return the DTO created earlier
 
-[SRV] sc:db: DB_URL                      // backs db:metadata.set
+[SRV] (SIDECAR)db: DB_URL                      // backs db:metadata.set
     the project's primary datastore
     @docs https://docs.example.com/db
-[SRV] sk:os: OBJECT_STORE_URL            // backs os:storage.save
+[SRV] (SDK)os: OBJECT_STORE_URL            // backs os:storage.save
     object storage for recording blobs
     @docs https://docs.example.com/storage
 ```
@@ -105,7 +105,7 @@ The service name in the prefix **must** be declared once, in the project's share
 
 **Boundary constraints:** Parameters and return types must be DTOs or primitives (`string`, `number`, `boolean`, `void`, `Uint8Array`). Custom types are not allowed at system boundaries.
 
-Example: `db:task.save(TaskDto): void` (backed by `[SRV] sc:db: DB_URL`).
+Example: `db:task.save(TaskDto): void` (backed by `[SRV] (SIDECAR)db: DB_URL`).
 
 ### `[SRV]` — backing services (shared, in `src/core/core.rune`)
 
@@ -114,22 +114,22 @@ Services are **shared infrastructure**: every service referenced by a `service:`
 ```
 // src/core/core.rune
 [MOD] core
-[SRV] sc:db: DB_URL
+[SRV] (SIDECAR)db: DB_URL
     the project's primary datastore
     @docs https://docs.example.com/db
 ```
 
 Each `[SRV]` generates a shared client at `src/core/data/<service>/mod.ts` (a `<Name>Service` class). A module's per-noun data adapter imports and constructs that shared client for any boundary it calls.
 
-- Format: `[SRV] <transport>:<service>: <ENV_VAR, ENV_VAR2>`
-- `transport` is a closed set: `sk` (sdk), `hp` (http), `ws` (websocket), `sc` (sidecar)
+- Format: `[SRV] (TRANSPORT)<service>: <ENV_VAR, ENV_VAR2>`
+- `transport` is a closed set: `SDK`, `HTTP`, `WEBSOCKET`, `SIDECAR`
 - `<service>` is the name used in `service:` boundary prefixes (here `db:` in `db:task.save`)
 - The trailing list names one or more environment variables (comma-separated) the generated adapter reads
 - A one-line prose description is **required** on the next line, indented 4 spaces
 - An `@docs <url>` line is **required**, indented 4 spaces and within the 80-column limit — its URL survives the inline-comment stripper. An `[SRV]` missing it is a hard parse error (`[SRV] <name> requires an @docs <url> line`). `rune codegen` surfaces the URL as an `@see <url>` JSDoc tag on the generated data-adapter method
 - An undeclared `service:` prefix — one with no matching `[SRV]` — is a spec error
 
-Here `db:task.save` is a boundary call to the service named `db`, declared by the `[SRV]` block; `sc` is the sidecar transport; `DB_URL` is its env var; the `@docs` line is the required documentation link.
+Here `db:task.save` is a boundary call to the service named `db`, declared by the `[SRV]` block; `SIDECAR` is the sidecar transport; `DB_URL` is its env var; the `@docs` line is the required documentation link.
 
 ### Polymorphic steps
 
@@ -149,7 +149,7 @@ When a step Noun names an interface rather than a concrete class, the step is po
           not-found timed-out
     [CTR] metadata
 
-[SRV] hp:ex: PROVIDER_API_URL              // backs ex:provider.*
+[SRV] (HTTP)ex: PROVIDER_API_URL              // backs ex:provider.*
     the external recording provider's API
     @docs https://docs.example.com/provider
 ```
@@ -345,7 +345,7 @@ The LSP enforces these rules:
 - Every `service:` prefix must have a matching `[SRV]` declaration in the project's `src/core/core.rune`; an undeclared service is an error
 - `[SRV]` may be declared ONLY in `src/core/core.rune` — one in any other spec is an error (`rune-service-core-only`)
 - Every `[SRV]` must have a description line and an `@docs <url>` line; a missing `@docs` line is a hard parse error
-- An `[SRV]` transport must be one of `sk`, `hp`, `ws`, `sc`
+- An `[SRV]` transport must be one of `SDK`, `HTTP`, `WEBSOCKET`, `SIDECAR`
 
 ### Type validation
 
