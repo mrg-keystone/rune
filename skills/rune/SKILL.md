@@ -95,6 +95,14 @@ The essentials:
     a persisted task
 [NON] task                                    # declares a noun + prose
     a single todo item
+```
+
+Services are SHARED — declared once in `src/core/core.rune`, never in a module
+spec (the `db:` above resolves from here automatically):
+
+```
+// src/core/core.rune
+[MOD] core
 [SRV] sc:db: DB_URL                           # declares service "db" (sidecar)
     the project's primary datastore           # description required, indented 4
     @docs https://docs.example.com/db         # REQUIRED @docs <url> line
@@ -417,8 +425,9 @@ These are the ones that cause "won't parse / won't lint" surprises:
 - **Boundary step `service:noun.verb` (single colon)** calls a declared service;
   its params/returns must be DTOs or primitives (`string`/`number`/`boolean`/
   `void`/`Uint8Array`). The `service:` prefix MUST have a matching `[SRV]` block
-  in the same spec (undeclared = spec error). There are **no builtin boundary
-  kinds** — `db:`/`fs:`/`ex:`/… are just service names you declare (see
+  in `src/core/core.rune` (shared across all specs; undeclared = spec error, and
+  `[SRV]` outside core.rune = error). There are **no builtin boundary kinds** —
+  `db:`/`fs:`/`ex:`/… are just service names you declare in core.rune (see
   **Services**).
 - **`[TYP]` resolves to a primitive** (`string`/`number`/`boolean`/`void`/
   `Uint8Array`/`Class`/`Primitive` + generics), never to a DTO.
