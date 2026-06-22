@@ -2,10 +2,10 @@
 
 You are working across one or both of these local repos:
 
-- **keep** — `/Users/raphaelcastro/Documents/programming/keep`. A Deno backend framework
+- **keep** — `/Users/raphaelcastro/Documents/programming/rune/packages/keep`. A Deno backend framework
   (`@mrg-keystone/keep` on JSR, built on `@danet/core`): DI bootstrap, auth, auto Swagger docs,
   an in-process API client, and a per-module **cake** UI. Main branch: `main`.
-- **rune** — `/Users/raphaelcastro/Documents/programming/rune`. A DSL toolchain: you write a
+- **rune** — `/Users/raphaelcastro/Documents/programming/rune/packages/rune`. A DSL toolchain: you write a
   small `.rune` spec; `rune sync` generates a typed Deno/TS module whose HTTP entrypoints are
   keep controllers. Branch: `develop`. Run the CLI from the repo as
   `deno run -A src/bootstrap/mod.ts <cmd> [args]` (commands: `check`, `sync`, `manifest`,
@@ -111,7 +111,7 @@ OR-bind arrays).
 - keep is published to JSR; generated rune projects pin `jsr:@mrg-keystone/keep@^1`. Any keep
   feature that rune's generated code depends on must exist in keep FIRST. For local verification
   of unpublished keep features, remap `"@mrg-keystone/keep"` in the test project's `deno.json`
-  to `/Users/raphaelcastro/Documents/programming/keep/src/bootstrap/mod.ts` (the committed e2e
+  to `/Users/raphaelcastro/Documents/programming/rune/packages/keep/src/bootstrap/mod.ts` (the committed e2e
   fixtures already do this).
 - Scratch projects for verification go under `/tmp`, never inside either repo.
 - `MANUAL_KEY=<anything>` env silences keep's signing-key warning when booting test servers.

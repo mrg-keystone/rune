@@ -1,6 +1,6 @@
 # Task 02 — Contract auto-wiring at compose time + `stub` metadata
 
-Repo: **keep** (`/Users/raphaelcastro/Documents/programming/keep`). Read `00-context.md` first.
+Repo: **keep** (`/Users/raphaelcastro/Documents/programming/rune/packages/keep`). Read `00-context.md` first.
 No prerequisites. Later tasks (03–06) build on this one — its shapes are load-bearing.
 
 ## Goal

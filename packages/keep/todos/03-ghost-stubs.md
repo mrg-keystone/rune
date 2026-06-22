@@ -1,9 +1,9 @@
 # Task 03 — Ghost stub module generation + evaporation
 
-Repo: **rune** (`/Users/raphaelcastro/Documents/programming/rune`). Read `00-context.md` first.
+Repo: **rune** (`/Users/raphaelcastro/Documents/programming/rune/packages/rune`). Read `00-context.md` first.
 **Prerequisite: task 02 is complete in the local keep checkout** (the `stub` @Endpoint option
 and the `$`-fallback must exist). Verify before starting:
-`grep -n "stub" /Users/raphaelcastro/Documents/programming/keep/src/foundation/domain/business/endpoint-decorator/mod.ts`
+`grep -n "stub" /Users/raphaelcastro/Documents/programming/rune/packages/keep/src/foundation/domain/business/endpoint-decorator/mod.ts`
 must show the option.
 
 ## Goal
@@ -63,12 +63,12 @@ module produces the field. Business code never references it.
 
 Fresh project under `/tmp`:
 
-1. Copy `/Users/raphaelcastro/Documents/programming/keep/e2e/checkout/src/checkout/checkout.rune`
+1. Copy `/Users/raphaelcastro/Documents/programming/rune/packages/keep/e2e/checkout/src/checkout/checkout.rune`
    to `/tmp/stubproj/checkout.rune`; run
    `deno run -A src/bootstrap/mod.ts sync /tmp/stubproj/checkout.rune`.
 2. `bootstrap/stubs.ts` exists with a `mint-member-id` endpoint, `stub: true`.
 3. **Remap keep to local** in `/tmp/stubproj/deno.json`: change `"@mrg-keystone/keep"` to
-   `/Users/raphaelcastro/Documents/programming/keep/src/bootstrap/mod.ts` (the published JSR
+   `/Users/raphaelcastro/Documents/programming/rune/packages/keep/src/bootstrap/mod.ts` (the published JSR
    version may not have task 02 yet). Fill the four coordinator bodies (copy from
    keep `e2e/checkout/src/checkout/domain/coordinators/*/mod.ts`).
 4. Boot (`MANUAL_KEY=k deno run -A bootstrap/mod.ts`): `/docs/stubs` serves an cake page;

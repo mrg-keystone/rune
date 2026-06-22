@@ -1,6 +1,6 @@
 # Task 06 — System map at `/docs/_map`
 
-Repo: **keep** (`/Users/raphaelcastro/Documents/programming/keep`). Read `00-context.md` first.
+Repo: **keep** (`/Users/raphaelcastro/Documents/programming/rune/packages/keep`). Read `00-context.md` first.
 **Prerequisite: task 02 complete** (producers index). Task 04's composed fixture makes the best
 verification target — if it exists, use it; otherwise compose two modules ad hoc.
 

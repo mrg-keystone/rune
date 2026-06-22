@@ -1,6 +1,6 @@
 # Task 04 — Lifecycle acceptance fixture (committed CI proof)
 
-Repo: **keep** (`/Users/raphaelcastro/Documents/programming/keep`). Read `00-context.md` first.
+Repo: **keep** (`/Users/raphaelcastro/Documents/programming/rune/packages/keep`). Read `00-context.md` first.
 **Prerequisite: task 02 complete** (auto-wiring + synthetic ordering must exist locally).
 
 ## Goal

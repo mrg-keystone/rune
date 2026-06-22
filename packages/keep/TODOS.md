@@ -5,13 +5,13 @@
 > `todos/NN-*.md` is a complete, self-contained brief for a zero-context worker agent).
 > This file remains as the human-readable overview; the folder is the source of truth.
 
-Sequential. Each item ends with its verification step. keep ships before rune within any item that spans both repos. Repos: `~/Documents/programming/keep` (this one) and `~/Documents/programming/rune`.
+Sequential. Each item ends with its verification step. keep ships before rune within any item that spans both repos. Repos: `~/Documents/programming/rune/packages/keep` (this one) and `~/Documents/programming/rune/packages/rune`.
 
 - [ ] **1. Layer 1 — `rune sync` generates isolation seeds in the per-surface e2e test** (rune)
   - [ ] In `src/rune/domain/business/rune-manifest/mod.ts`, thread data into the e2e renderer: `addEntrypointSurface` already holds `process: Map<EntNode, EntProcess>`; also pass a `typMap` (name → typeName, built from `ast.typs` in `planManifest`) so placeholders are typed.
   - [ ] In `renderEntrypointE2e`, collect `$name` refs across the surface's ents' binds (string and array values), map each to a placeholder by `[TYP]` type (`string → "<name>-stub"`, `number → 7`, `boolean → true`), and emit `overrides: { seeds: { ... } }` in the generated `exerciseEndpoints` call. Emit nothing when there are no `$` inputs so existing modules regenerate byte-identically.
   - [ ] Add `rune-manifest/test.ts` cases: a `[TYP:ext]` spec yields seeds in the generated e2e; a spec without ext inputs yields the unchanged template.
-  - [ ] Run `cd ~/Documents/programming/rune && deno test -A src/rune/domain/business/rune-manifest/`.
+  - [ ] Run `cd ~/Documents/programming/rune/packages/rune && deno test -A src/rune/domain/business/rune-manifest/`.
   - [ ] **Verify**: in keep, delete `e2e/checkout/src/checkout/entrypoints/http/e2e.test.ts`, regenerate via `deno run -A src/bootstrap/mod.ts manifest e2e/checkout/src/checkout/checkout.rune` (from the rune repo), confirm the regenerated test seeds `memberId`, then `RUNE_E2E=1 deno task test:e2e:checkout` runs it green with zero hand-written glue.
 
 - [ ] **2. Layer 3 — contract auto-wiring at compose time + `stub` metadata** (keep, ships first)

@@ -1,6 +1,6 @@
 # Task 01 — `rune sync` generates isolation seeds in the per-surface e2e test
 
-Repo: **rune** (`/Users/raphaelcastro/Documents/programming/rune`). Read `00-context.md` first.
+Repo: **rune** (`/Users/raphaelcastro/Documents/programming/rune/packages/rune`). Read `00-context.md` first.
 
 ## Goal
 
@@ -55,7 +55,7 @@ In the **keep** repo:
 1. `rm e2e/checkout/src/checkout/entrypoints/http/e2e.test.ts` (it is create-once; deleting
    forces regeneration).
 2. From the rune repo:
-   `deno run -A src/bootstrap/mod.ts manifest /Users/raphaelcastro/Documents/programming/keep/e2e/checkout/src/checkout/checkout.rune`
+   `deno run -A src/bootstrap/mod.ts manifest /Users/raphaelcastro/Documents/programming/rune/packages/keep/e2e/checkout/src/checkout/checkout.rune`
 3. Confirm the regenerated file seeds `memberId` (read it).
 4. From keep: `RUNE_E2E=1 deno task test:e2e:checkout` — the generated test (previously ignored
    without `RUNE_E2E`) now RUNS and passes, because the seed satisfies the `$memberId` input.
