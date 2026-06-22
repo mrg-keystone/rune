@@ -1,0 +1,55 @@
+[MOD] checkout
+
+[ENT] http.start(StartDto): TicketDto
+[ENT:card] http.payCard(PayDto): PaymentDto
+[ENT:cash] http.payCash(PayDto): PaymentDto
+[ENT] http.fulfill(FulfillDto): DoneDto
+[ENT:optional] http.survey(SurveyDto): ThanksDto
+
+[REQ] ticket.open(StartDto): TicketDto
+    [NEW] ticket
+    ticket.toDto(): TicketDto
+
+[REQ] payment.charge(PayDto): PaymentDto
+    [NEW] payment
+    payment.toDto(): PaymentDto
+
+[REQ] delivery.complete(FulfillDto): DoneDto
+    [NEW] delivery
+    delivery.toDto(): DoneDto
+
+[REQ] feedback.collect(SurveyDto): ThanksDto
+    [NEW] feedback
+    feedback.toDto(): ThanksDto
+
+[DTO] StartDto: item, memberId
+    what to buy and who buys it
+[DTO] TicketDto: ticketId
+    the opened checkout ticket
+[DTO] PayDto: ticketId
+    the ticket to pay
+[DTO] PaymentDto: paymentId
+    a settled payment
+[DTO] FulfillDto: paymentId
+    the payment to fulfill
+[DTO] DoneDto: delivered
+    delivery confirmation
+[DTO] SurveyDto: rating
+    feedback on the purchase
+[DTO] ThanksDto: thanked
+    survey acknowledgement
+
+[TYP:ext] memberId: string
+    minted by the members module
+[TYP] item: string
+    a thing to buy
+[TYP] ticketId: string
+    a checkout ticket identifier
+[TYP] paymentId: string
+    a payment identifier
+[TYP] delivered: boolean
+    whether delivery completed
+[TYP] rating: number
+    a 1-5 satisfaction score
+[TYP] thanked: boolean
+    whether the survey was acknowledged

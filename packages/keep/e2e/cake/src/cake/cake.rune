@@ -1,0 +1,72 @@
+[MOD] cake
+
+[ENT] http.driveToStore(DriveDto): ArrivalDto
+[ENT] http.groceryShop(ShopDto): CartDto
+[ENT] http.checkout(CheckoutDto): ReceiptDto
+[ENT] http.mixIngredients(MixDto): BatterDto
+[ENT] http.bake(BakeDto): CakeDto
+[ENT] http.cut(CutDto): SlicesDto
+
+[REQ] arrival.reach(DriveDto): ArrivalDto
+    [NEW] arrival
+    arrival.toDto(): ArrivalDto
+
+[REQ] cart.fill(ShopDto): CartDto
+    [NEW] cart
+    cart.toDto(): CartDto
+
+[REQ] receipt.pay(CheckoutDto): ReceiptDto
+    [NEW] receipt
+    receipt.toDto(): ReceiptDto
+
+[REQ] batter.mix(MixDto): BatterDto
+    [NEW] batter
+    batter.toDto(): BatterDto
+
+[REQ] confection.bake(BakeDto): CakeDto
+    [NEW] confection
+    confection.toDto(): CakeDto
+
+[REQ] slices.cut(CutDto): SlicesDto
+    [NEW] slices
+    slices.toDto(): SlicesDto
+
+[DTO] DriveDto: destination
+    where to drive to buy ingredients
+[DTO] ArrivalDto: storeId
+    the store you arrived at
+[DTO] ShopDto: storeId
+    the store to shop at
+[DTO] CartDto: cartId
+    the filled shopping cart
+[DTO] CheckoutDto: cartId
+    the cart to check out
+[DTO] ReceiptDto: ingredientsId
+    proof the ingredients were bought
+[DTO] MixDto: ingredientsId
+    the ingredients to mix
+[DTO] BatterDto: batterId
+    the mixed batter
+[DTO] BakeDto: batterId
+    the batter to bake
+[DTO] CakeDto: cakeId
+    the baked cake
+[DTO] CutDto: cakeId
+    the cake to cut
+[DTO] SlicesDto: sliceCount
+    how many slices the cake yielded
+
+[TYP] destination: string
+    a place to drive to
+[TYP] storeId: string
+    a grocery store identifier
+[TYP] cartId: string
+    a shopping cart identifier
+[TYP] ingredientsId: string
+    a purchased-ingredients identifier
+[TYP] batterId: string
+    a mixed-batter identifier
+[TYP] cakeId: string
+    a baked-cake identifier
+[TYP] sliceCount: number
+    a count of cake slices

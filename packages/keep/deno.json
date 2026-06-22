@@ -1,0 +1,64 @@
+{
+  "name": "@mrg-keystone/keep",
+  "version": "1.22.0",
+  "description": "Opinionated Deno backend framework: DI bootstrap, token/Firebase auth & identity, auto Swagger docs, in-process API client, and Fresh frontend embedding. Built on @danet/core.",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/bootstrap/mod.ts",
+    "./assert": "./src/assert/mod.ts",
+    "./vite": "./src/vite/dev-reconnect.ts"
+  },
+  "publish": {
+    "exclude": [
+      "**/*.test.ts",
+      "**/test.ts",
+      "**/*.testkit.ts",
+      "**/switch-probe.ts",
+      "context.md",
+      "docs/",
+      "**/*.png",
+      "e2e/",
+      "examples/",
+      "TODOS.md",
+      "todos/",
+      "skills/"
+    ]
+  },
+  "exclude": [
+    "e2e/cake/",
+    "e2e/checkout/"
+  ],
+  "tasks": {
+    "check:jsr": "deno run --allow-net --allow-read scripts/check-jsr-deps.ts && deno publish --dry-run --allow-dirty --no-provenance --allow-slow-types",
+    "test": "deno test -A --unstable-raw-imports",
+    "test:e2e": "deno test -A --unstable-raw-imports --config e2e/cake/deno.json e2e/cake/ && deno test -A --unstable-raw-imports --config e2e/checkout/deno.json e2e/checkout/",
+    "test:e2e:checkout": "deno test -A --unstable-raw-imports --config e2e/checkout/deno.json e2e/checkout/",
+    "cake": "deno run -A npm:playwright install chromium chromium-headless-shell && KEEP_BROWSER=1 KEEP_HEADED=1 deno test -A --unstable-raw-imports --config e2e/cake/deno.json e2e/cake/cake.e2e.test.ts",
+    "test:browser": "KEEP_BROWSER=1 deno test -A --unstable-raw-imports src/foundation/domain/business/emulator-ui/browser.test.ts src/foundation/domain/business/map-ui/browser.test.ts",
+    "test:smoke": "KEEP_PLAYWRIGHT_SMOKE=1 deno test -A --unstable-raw-imports src/foundation/domain/coordinators/exercise-harness/smk.test.ts",
+    "example": "deno run -A examples/in-process-client/main.ts"
+  },
+  "imports": {
+    "#reflect-metadata": "npm:reflect-metadata@0.1.13",
+    "reflect-metadata": "npm:reflect-metadata@0.1.13",
+    "class-validator": "npm:class-validator@^0.14",
+    "class-transformer": "npm:class-transformer@^0.5",
+    "@mrg-keystone/keep": "./src/bootstrap/mod.ts",
+    "@danet/core": "jsr:@danet/core@2",
+    "#openapi3-ts": "npm:openapi3-ts@4.5.0",
+    "#danet/core": "jsr:@danet/core@2",
+    "#danet/swagger": "jsr:@danet/swagger@^2.1.1",
+    "#danet/swagger/decorators": "jsr:@danet/swagger@^2.1.1/decorators",
+    "#playwright": "npm:playwright@^1.49",
+    "#hono": "jsr:@hono/hono@4.6.3",
+    "#assert": "jsr:@std/assert",
+    "#zod": "npm:zod@3",
+    "#jose": "npm:jose@5",
+    "@types": "./src/foundation/dto/types.ts",
+    "@foundation/": "./src/foundation/"
+  },
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  }
+}
