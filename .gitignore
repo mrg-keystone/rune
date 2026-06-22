@@ -1,8 +1,16 @@
-# Monorepo root scratch — each package has its own .gitignore for package-local
-# artifacts (packages/rune/.gitignore, packages/keep/.gitignore).
-dist/
-.playwright-mcp/
+# build / deps
 node_modules/
+rune-studio/_fresh/
+dist/
+out/
+lang/target/
+
+# generated
+src/core/dto/lsp-config.ts
+
+# scratch / os
+.playwright-mcp/
+.DS_Store
 .env
 .env*
 *.log

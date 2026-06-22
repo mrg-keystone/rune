@@ -4,19 +4,27 @@ name: release-rune
 #   - merge into `main`   -> rolling `latest` release (what install.sh pulls by default)
 #   - push to `develop`   -> rolling `develop` release (RUNE_VERSION=develop)
 #   - push a `vX.Y.Z` tag -> pinned snapshot release
-# Builds (cross-compile + codesign) are rune-specific and run inside
-# packages/rune; the release itself is mrg-keystone/actions/gh-release.
+# Builds (cross-compile + codesign) are rune-specific and run at the repo root
+# (rune IS the root package); the release itself is mrg-keystone/actions/gh-release.
 #
-# `paths-ignore` stops keep-only pushes (incl. keep's auto-bump commit) from
-# rebuilding rune's 3 binary targets. NOTE: GitHub does not apply paths-ignore
-# to TAG pushes, so `v*` snapshot releases still build. If a `v*` tag is ever
-# unexpectedly skipped, move the tag trigger into its own workflow file.
+# `paths-ignore` stops pushes that touch ONLY keep-owned or non-binary facets
+# (keep source, keep's skill, the e2e/examples/docs/todos facets, incl. keep's
+# auto-bump commit) from rebuilding rune's 3 binary targets. The rune binary's
+# real inputs are src/, lang/, keywords.json, skills/rune, scripts/, and the gen
+# scripts — none of which are ignored here. NOTE: GitHub does not apply
+# paths-ignore to TAG pushes, so `v*` snapshot releases still build. If a `v*`
+# tag is ever unexpectedly skipped, move the tag trigger into its own workflow.
 on:
   push:
     branches: [main, develop]
     tags: ["v*"]
     paths-ignore:
-      - "packages/keep/**"
+      - "keep/**"
+      - "skills/keep/**"
+      - "e2e/**"
+      - "examples/**"
+      - "docs/**"
+      - "todos/**"
   workflow_dispatch:
 
 permissions:
@@ -30,9 +38,6 @@ jobs:
   build:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: packages/rune
     strategy:
       fail-fast: false
       matrix:
@@ -78,9 +83,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.target }}
-          # upload-artifact paths are relative to the workspace root, not the
-          # job's working-directory.
-          path: packages/rune/rune-${{ matrix.target }}.tar.gz*
+          # upload-artifact paths are relative to the workspace (repo) root.
+          path: rune-${{ matrix.target }}.tar.gz*
           retention-days: 3
 
   release:
@@ -94,6 +98,6 @@ jobs:
       # (flat SKILL.md, not a skill tarball) — keep it byte-stable.
       pack-skills: false
       extra-assets: |
-        packages/rune/scripts/install.sh
-        packages/rune/scripts/uninstall.sh
-        packages/rune/skills/rune/SKILL.md
+        scripts/install.sh
+        scripts/uninstall.sh
+        skills/rune/SKILL.md

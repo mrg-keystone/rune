@@ -1,17 +1,19 @@
 name: publish-keep
 
-# keep (packages/keep) -> JSR (@mrg-keystone/keep) + a rolling `keep-latest`
+# keep (keep/) -> JSR (@mrg-keystone/keep) + a rolling `keep-latest`
 # GitHub release carrying keep's Claude skill + installer.
 #
-# Path-filtered so only keep changes trigger it. The JSR reusable auto-bumps
-# packages/keep/deno.json and commits "release: vX (auto-bump)" back to main;
-# that commit touches only packages/keep/** so it re-enters HERE as an
-# idempotent no-op (version already published) and does NOT rebuild rune.
+# Path-filtered to keep-owned facets: keep's source (-> JSR) and keep's skill at
+# skills/keep (-> the keep-latest release). The JSR reusable auto-bumps
+# keep/deno.json and commits "release: vX (auto-bump)" back to main; that commit
+# touches only keep/** so it re-enters HERE as an idempotent no-op (version
+# already published) and does NOT rebuild rune.
 on:
   push:
     branches: [main]
     paths:
-      - "packages/keep/**"
+      - "keep/**"
+      - "skills/keep/**"
 
 permissions:
   contents: write
@@ -20,20 +22,20 @@ jobs:
   publish:
     uses: mrg-keystone/actions/.github/workflows/jsr-publish.yml@main
     with:
-      working-directory: packages/keep
+      working-directory: keep
     secrets:
       JSR_TOKEN: ${{ secrets.JSR_TOKEN }}
 
-  # The gh-release reusable's auto-pack only globs root-level skills/*/, which
-  # does not exist in this monorepo. Pack keep's skill explicitly and hand it
-  # over as an artifact.
+  # skills/ now holds BOTH skills (skills/rune + skills/keep); the gh-release
+  # reusable's auto-pack would glob all of skills/*/. Pack ONLY keep's skill
+  # explicitly from skills/keep and hand it over as an artifact.
   pack-skill:
     runs-on: ubuntu-latest
     needs: publish
     steps:
       - uses: actions/checkout@v4
       - name: Pack keep skill
-        run: tar -C packages/keep/skills/keep -czf keep-skill.tar.gz .
+        run: tar -C skills/keep -czf keep-skill.tar.gz .
       - uses: actions/upload-artifact@v4
         with:
           name: keep-skill
@@ -52,4 +54,4 @@ jobs:
       artifact-pattern: keep-skill
       pack-skills: false
       extra-assets: |
-        packages/keep/scripts/install.sh
+        keep/scripts/install.sh
