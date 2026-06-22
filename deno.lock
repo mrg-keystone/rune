@@ -12,6 +12,8 @@
     "jsr:@std/internal@^1.0.14": "1.0.14",
     "jsr:@std/path@*": "1.1.5",
     "jsr:@std/path@1.0.6": "1.0.6",
+    "jsr:@std/semver@1": "1.0.8",
+    "jsr:@std/yaml@*": "1.0.12",
     "npm:@anatine/zod-openapi@2.2.6": "2.2.6_openapi3-ts@4.5.0_zod@3.23.8",
     "npm:awesome-phonenumber@7.1.0": "7.1.0",
     "npm:class-transformer@0.5": "0.5.1",
@@ -79,6 +81,12 @@
       "dependencies": [
         "jsr:@std/internal"
       ]
+    },
+    "@std/semver@1.0.8": {
+      "integrity": "dc830e8b8b6a380c895d53fbfd1258dc253704ca57bbe1629ac65fd7830179b7"
+    },
+    "@std/yaml@1.0.12": {
+      "integrity": "7deabca4545bcedd07c5f69ea53acea71b8b4c67562f224e17b90d75944cb20c"
     }
   },
   "npm": {
