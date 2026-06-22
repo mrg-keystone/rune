@@ -56,13 +56,14 @@ install_skill() {
 }
 
 # install_keep_skill — rune and keep ship as a coupled pair, so refresh the keep
-# skill (always keep's rolling `latest`) alongside rune's, into the same skills
-# dir. Best-effort: a keep-release hiccup must NOT fail the rune install; no-op
-# without Claude Code. ($tmp is set below, before this is ever called.)
+# skill (keep's rolling `keep-latest` release in the rune monorepo) alongside
+# rune's, into the same skills dir. Best-effort: a keep-release hiccup must NOT
+# fail the rune install; no-op without Claude Code. ($tmp is set below, before
+# this is ever called.)
 install_keep_skill() {
   [ -d "$HOME/.claude" ] || return 0
   echo "Refreshing the coupled keep skill…"
-  if curl -fsSL "https://github.com/mrg-keystone/keep/releases/download/latest/install.sh" \
+  if curl -fsSL "https://github.com/mrg-keystone/rune/releases/download/keep-latest/install.sh" \
        -o "$tmp/keep-install.sh" 2>/dev/null; then
     CLAUDE_SKILLS_DIR="$SKILLS_DIR" sh "$tmp/keep-install.sh" \
       || echo "rune: keep skill not refreshed (rune itself is installed)." >&2
