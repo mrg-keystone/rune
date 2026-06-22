@@ -70,6 +70,7 @@
       ],
       "description": "a request to charge a card",
       "isCore": false,
+      "isOpen": false,
       "line": 11
     },
     {
@@ -79,6 +80,7 @@
       ],
       "description": "an authorization from the gateway",
       "isCore": false,
+      "isOpen": false,
       "line": 14
     },
     {
@@ -89,6 +91,7 @@
       ],
       "description": "the settled charge",
       "isCore": false,
+      "isOpen": false,
       "line": 17
     }
   ],

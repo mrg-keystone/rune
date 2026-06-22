@@ -116,12 +116,32 @@ function assertInstance<T extends object>(
       context,
     );
   }
-  // whitelist strips properties with no decorator — the DTO class is the
-  // contract; undeclared data does not ride between classes. Fields meant to
-  // carry free-form data are generated with @Allow().
+  // whitelist strips properties with no decorator — the DTO class is the contract; undeclared
+  // data does not ride between classes. Fields meant to carry free-form data are generated with
+  // @Allow().
+  //
+  // A [DTO:open] class (rune's opaque-inbound-payload marker `static __keepOpen = true`) passes
+  // THIS DTO's own undeclared fields: we validate strictly (whitelist on) — so declared fields,
+  // and any declared *nested* DTO, keep their own contract — then re-attach the inbound payload's
+  // extra top-level fields afterwards. We snapshot those BEFORE validation because the whitelist
+  // strip mutates `instance`, which may be the same object as `plain`. Absent marker ⇒ plain
+  // strict whitelist, so behaviour degrades gracefully across the rune/keep release boundary. The
+  // marker takes effect at the asserted seam; an open DTO used only as a nested field is governed
+  // by its parent's contract (class-validator's whitelist is one tree-wide flag).
+  const open = (cls as { __keepOpen?: boolean }).__keepOpen === true;
+  const openSrc: Record<string, unknown> | null =
+    open && typeof plain === "object" && plain !== null && !Array.isArray(plain)
+      ? { ...(plain as Record<string, unknown>) }
+      : null;
   const errors = validateSync(instance, { whitelist: true });
   if (errors.length > 0) {
     throw new RuneAssertError(cls.name, flatten(errors, ""), context);
+  }
+  if (openSrc) {
+    const inst = instance as Record<string, unknown>;
+    for (const k of Object.keys(openSrc)) {
+      if (!(k in inst)) inst[k] = openSrc[k];
+    }
   }
   return instance;
 }

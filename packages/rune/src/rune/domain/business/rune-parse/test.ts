@@ -22,6 +22,26 @@ Deno.test("parse — duplicate [MOD] is an error", () => {
   assertEquals(ast.errors[0].message.includes("duplicate"), true);
 });
 
+Deno.test("parse — [MOD] accepts a kebab-case name", () => {
+  const ast = parse("[MOD] user-api");
+  assertEquals(ast.module, "user-api");
+  assertEquals(ast.errors, []);
+});
+
+Deno.test("parse — [MOD] digit-leading name is an error", () => {
+  const ast = parse("[MOD] 2module");
+  assertEquals(ast.module, null);
+  assertEquals(ast.errors.length, 1);
+  assertEquals(ast.errors[0].message.includes("invalid name"), true);
+});
+
+Deno.test("parse — [MOD] name with illegal punctuation is an error", () => {
+  const ast = parse(`[MOD] my"module`);
+  assertEquals(ast.module, null);
+  assertEquals(ast.errors.length, 1);
+  assertEquals(ast.errors[0].message.includes("invalid name"), true);
+});
+
 Deno.test("parse — bare [REQ]", () => {
   const ast = parse("[REQ] recording.set(GetRecordingDto): IdDto");
   assertEquals(ast.reqs.length, 1);
@@ -462,5 +482,23 @@ Deno.test("parse — descriptions are free text (periods, @, parentheticals)", (
   assertEquals(
     ast.dtos.find((d) => d.name === "OutDto")?.description,
     "an operational alert to rafac@monsterrg.com (see config)",
+  );
+});
+
+Deno.test("parse — [DTO] modifiers: :open and :core accepted, a typo is a hard error", () => {
+  const open = parse(`[MOD] m\n[DTO:open] X: a\n[TYP] a: string`);
+  assertEquals(open.errors, []);
+  assertEquals(open.dtos[0].isOpen, true);
+  assertEquals(open.dtos[0].isCore, false);
+
+  const core = parse(`[MOD] m\n[DTO:core] X: a\n[TYP] a: string`);
+  assertEquals(core.errors, []);
+  assertEquals(core.dtos[0].isCore, true);
+  assertEquals(core.dtos[0].isOpen, false);
+
+  const typo = parse(`[MOD] m\n[DTO:opne] X: a\n[TYP] a: string`);
+  assertEquals(
+    typo.errors.some((e) => e.message.includes('unknown modifier "opne"')),
+    true,
   );
 });

@@ -42,6 +42,7 @@
       ],
       "description": "a request to issue an invoice",
       "isCore": false,
+      "isOpen": false,
       "line": 7
     },
     {
@@ -52,6 +53,7 @@
       ],
       "description": "an issued invoice",
       "isCore": false,
+      "isOpen": false,
       "line": 10
     }
   ],

@@ -11,6 +11,13 @@ import {
 export const SRV_TRANSPORTS = ["SDK", "HTTP", "WEBSOCKET", "SIDECAR"] as const;
 export type SrvTransport = typeof SRV_TRANSPORTS[number];
 
+// A [MOD] name becomes a `src/<module>/` directory AND is camel/pascal-cased
+// into a JS identifier alias in the generated bootstrap registry. Constrain it
+// to the same identifier shape [SRV] names use — a letter/underscore start, then
+// letters, digits, `-`, `_` — so a digit-leading or punctuated name can't slip
+// through and emit a registry that won't parse or type-check.
+export const MOD_NAME_RE = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+
 export interface RuneAst {
   module: string | null;
   /** Optional [MOD] description (`[MOD] name: prose…` + indented continuation). */
@@ -115,6 +122,9 @@ export interface DtoNode {
   properties: string[];
   description: string;
   isCore: boolean;
+  /** [DTO:open] — opaque inbound payload: declared fields are validated, undeclared
+   * fields pass through (the generated class carries a marker keep's assert reads). */
+  isOpen: boolean;
   line: number;
 }
 
@@ -268,6 +278,13 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
       if (name === "") {
         ast.errors.push({ line: i, message: "[MOD] missing name" });
         descTarget = null;
+      } else if (!MOD_NAME_RE.test(name)) {
+        ast.errors.push({
+          line: i,
+          message:
+            `[MOD] invalid name "${name}" — must start with a letter or "_" and use only letters, digits, "-", "_"`,
+        });
+        descTarget = null;
       } else if (ast.module !== null) {
         ast.errors.push({ line: i, message: `duplicate [MOD]: already set to "${ast.module}"` });
         descTarget = null;
@@ -371,6 +388,19 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
     const dtoTag = rec.match(trimmed, "dto");
     if (dtoTag) {
       const isCore = dtoTag.modifier === "core";
+      // [DTO:open] — opaque inbound payload: validate the declared fields but let undeclared
+      // ones ride through (keep's assert reads the generated marker and re-attaches them).
+      const isOpen = dtoTag.modifier === "open";
+      // A modifier that is neither :core nor :open is a typo (e.g. [DTO:opne]) — error loudly
+      // rather than silently degrading to a strict DTO that would strip an inbound payload's
+      // fields at runtime with no warning. Mirrors the [REQ] modifier guard.
+      if (dtoTag.modifier && !isCore && !isOpen) {
+        ast.errors.push({
+          line: i,
+          message:
+            `[DTO] unknown modifier "${dtoTag.modifier}" — expected :core or :open`,
+        });
+      }
       const colon = dtoTag.rest.indexOf(":");
       if (colon === -1) {
         ast.errors.push({ line: i, message: "[DTO] missing properties" });
@@ -381,7 +411,7 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
           .split(",")
           .map((p) => p.trim())
           .filter((p) => p.length > 0);
-        const node: DtoNode = { name, properties: props, description: "", isCore, line: i };
+        const node: DtoNode = { name, properties: props, description: "", isCore, isOpen, line: i };
         ast.dtos.push(node);
         descTarget = node;
       }
@@ -607,7 +637,7 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
 
   // Every property used in a [DTO] must resolve to a declared type — no untyped
   // (`unknown`) fields. It may be a [TYP], a nested [DTO] (named directly or via
-  // the <Name>Dto convention), after stripping the optional `?` and plural `(s)`
+  // the <Name>Dto convention), after stripping the optional `?` and plural `(s)`/`(s?)`
   // modifiers. (TYP names cover both module and :core typs.)
   const typNames = new Set(ast.typs.map((t) => t.name));
   const dtoNames = new Set(ast.dtos.map((d) => d.name));
@@ -616,7 +646,7 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
       .join("");
   for (const dto of ast.dtos) {
     for (const prop of dto.properties) {
-      const clean = prop.replace(/\(s\)/g, "").replace(/\?/g, "").trim();
+      const clean = prop.replace(/\(s\??\)/g, "").replace(/\?/g, "").trim();
       const resolved = typNames.has(clean) || dtoNames.has(clean) ||
         dtoNames.has(`${pascal(clean)}Dto`);
       if (!resolved) {

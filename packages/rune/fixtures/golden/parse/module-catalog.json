@@ -41,6 +41,7 @@
       ],
       "description": "a paged product listing request",
       "isCore": false,
+      "isOpen": false,
       "line": 7
     },
     {
@@ -50,6 +51,7 @@
       ],
       "description": "a page of products",
       "isCore": false,
+      "isOpen": false,
       "line": 10
     }
   ],

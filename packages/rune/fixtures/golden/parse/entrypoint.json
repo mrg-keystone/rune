@@ -87,6 +87,7 @@
       ],
       "description": "a new order to create",
       "isCore": false,
+      "isOpen": false,
       "line": 15
     },
     {
@@ -97,6 +98,7 @@
       ],
       "description": "a created order",
       "isCore": false,
+      "isOpen": false,
       "line": 17
     },
     {
@@ -106,6 +108,7 @@
       ],
       "description": "a payment for an order",
       "isCore": false,
+      "isOpen": false,
       "line": 19
     },
     {
@@ -115,6 +118,7 @@
       ],
       "description": "a receipt for a payment",
       "isCore": false,
+      "isOpen": false,
       "line": 21
     }
   ],

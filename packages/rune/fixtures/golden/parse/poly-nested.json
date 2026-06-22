@@ -83,6 +83,7 @@
       ],
       "description": "a message to deliver",
       "isCore": false,
+      "isOpen": false,
       "line": 13
     },
     {
@@ -92,6 +93,7 @@
       ],
       "description": "a delivery receipt",
       "isCore": false,
+      "isOpen": false,
       "line": 16
     }
   ],

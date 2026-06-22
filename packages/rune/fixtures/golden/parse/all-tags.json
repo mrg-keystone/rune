@@ -59,6 +59,7 @@
       ],
       "description": "the order the customer wants to place",
       "isCore": false,
+      "isOpen": false,
       "line": 14
     },
     {
@@ -68,6 +69,7 @@
       ],
       "description": "a computed price",
       "isCore": false,
+      "isOpen": false,
       "line": 17
     },
     {
@@ -77,6 +79,7 @@
       ],
       "description": "a persisted order identifier",
       "isCore": false,
+      "isOpen": false,
       "line": 20
     },
     {
@@ -87,6 +90,7 @@
       ],
       "description": "the receipt returned to the customer",
       "isCore": false,
+      "isOpen": false,
       "line": 23
     }
   ],

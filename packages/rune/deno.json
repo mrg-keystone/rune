@@ -40,6 +40,9 @@
     "src/providers/",
     "src/submit/",
     "src/sync/",
-    "src/todos/"
+    "src/todos/",
+    "example/",
+    "fixtures/",
+    "rune-studio/"
   ]
 }

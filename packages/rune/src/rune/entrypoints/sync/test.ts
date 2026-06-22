@@ -1,10 +1,11 @@
-import { assertEquals, assertStringIncludes } from "#std/assert";
+import { assert, assertEquals, assertStringIncludes } from "#std/assert";
 import { join } from "#std/path";
 import {
   ensureBootstrap,
   ensureHealRules,
   renderAppRegistry,
   renderMain,
+  runSync,
   scanSurfaceModules,
 } from "./mod.ts";
 
@@ -485,3 +486,181 @@ Deno.test("ensureHealRules — honors KEEP_FIXTURES_DIR override", async () => {
     await Deno.remove(root, { recursive: true });
   }
 });
+
+// ---- alias safety: collisions, illegal chars, commented exports --------------
+//
+// The rendered registry imports each surface under its alias and lists it in the
+// modules array, so every alias must be a UNIQUE, VALID identifier or the file is
+// a `Duplicate identifier` / parse error that silently drops a module.
+
+// Parse the import bindings + the modules-array entries out of a rendered
+// registry, so a test can assert they line up (no duplicates, no dropped module).
+function registryShape(out: string): { aliases: string[]; arrayEntries: string[] } {
+  const aliases: string[] = [];
+  for (const m of out.matchAll(/import \{ .* as (\S+) \} from /g)) {
+    aliases.push(m[1]);
+  }
+  const arr = out.slice(out.indexOf("export const modules = ["));
+  const arrayEntries: string[] = [];
+  for (const line of arr.split("\n")) {
+    const t = line.trim().replace(/,$/, "");
+    if (t && !t.startsWith("//") && !t.startsWith("...") && t !== "export const modules = [" && t !== "]" && t !== "];") {
+      arrayEntries.push(t);
+    }
+  }
+  return { aliases, arrayEntries };
+}
+
+// A valid TS identifier (the binding form `import { x as <id> }` requires it).
+const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+Deno.test("scanSurfaceModules — colliding camel/pascal aliases are disambiguated, no module dropped", async () => {
+  const root = await tempProject();
+  try {
+    // camel('foo-bar')+pascal('http')+'Module' === 'foo'+pascal('bar-http')+'Module'
+    // === 'fooBarHttpModule' for both surfaces.
+    await addSurface(root, "foo-bar", "http", "httpModule");
+    await addSurface(root, "foo", "bar-http", "barHttpModule");
+    const found = await scanSurfaceModules(root);
+    assertEquals(found.length, 2, "both surfaces are discovered");
+    const aliases = found.map((s) => s.alias);
+    assertEquals(new Set(aliases).size, 2, `aliases must be unique, got ${aliases}`);
+    for (const a of aliases) assert(IDENT.test(a), `alias not a valid identifier: ${a}`);
+
+    // The rendered registry imports BOTH (every discovered surface is registered)
+    // with no duplicate binding and one array entry per surface.
+    const out = renderAppRegistry(found);
+    const { aliases: imported, arrayEntries } = registryShape(out);
+    assertEquals(new Set(imported).size, 2, "no duplicate import binding");
+    assertEquals(arrayEntries.length, 2, "every surface in the modules array");
+    assertEquals(new Set(arrayEntries).size, 2, "no surface shadowed in the array");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("scanSurfaceModules — sibling modules differing only by separator get unique aliases", async () => {
+  const root = await tempProject();
+  try {
+    // 'user-api' and 'user_api' both camel to 'userApi' → same alias before dedupe.
+    await addSurface(root, "user-api", "rest", "restModule");
+    await addSurface(root, "user_api", "rest", "restModule");
+    const found = await scanSurfaceModules(root);
+    assertEquals(found.length, 2);
+    const aliases = found.map((s) => s.alias);
+    assertEquals(new Set(aliases).size, 2, `aliases must be unique, got ${aliases}`);
+    const { aliases: imported } = registryShape(renderAppRegistry(found));
+    assertEquals(new Set(imported).size, 2, "no duplicate import binding");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("scanSurfaceModules — a commented-out export is not read as the export name", async () => {
+  const root = await tempProject();
+  try {
+    const dir = join(root, "src", "checkout", "entrypoints", "http");
+    await Deno.mkdir(dir, { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, "mod.ts"),
+      "// export const legacyHttpModule = endpointModule();\n" +
+        "export const currentModule = endpointModule();\n",
+    );
+    const [s] = await scanSurfaceModules(root);
+    assertEquals(s.exportName, "currentModule");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("scanSurfaceModules — a digit-leading module name yields a valid identifier alias", async () => {
+  const root = await tempProject();
+  try {
+    await addSurface(root, "2module", "http", "httpModule");
+    const [s] = await scanSurfaceModules(root);
+    assert(IDENT.test(s.alias), `alias not a valid identifier: ${s.alias}`);
+    // The rendered array entry must also be a valid identifier (it references the alias).
+    const { arrayEntries } = registryShape(renderAppRegistry([s]));
+    for (const e of arrayEntries) assert(IDENT.test(e), `array entry not valid: ${e}`);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("renderAppRegistry — a quote in a module name does not break the import string literal", () => {
+  const out = renderAppRegistry([
+    {
+      module: 'my"module',
+      surface: "http",
+      exportName: "httpModule",
+      alias: "myModuleHttpModule",
+    },
+  ]);
+  const importLine = out.split("\n").find((l) => l.startsWith("import "))!;
+  // The alias side must be a clean identifier, and the specifier a single closed
+  // string literal: exactly two unescaped quotes delimiting it.
+  assertStringIncludes(importLine, "as myModuleHttpModule } from ");
+  const fromIdx = importLine.indexOf(" from ");
+  const specifier = importLine.slice(fromIdx + 6).replace(/;$/, "");
+  assertEquals(JSON.parse(specifier), '@/src/my"module/entrypoints/http/mod.ts');
+});
+
+Deno.test("runSync --regen — no success log when the .new write fails", async () => {
+  const root = await Deno.makeTempDir();
+  const logs: string[] = [];
+  const errs: string[] = [];
+  const origLog = console.log;
+  const origErr = console.error;
+  console.log = (...a: unknown[]) => logs.push(a.map(String).join(" "));
+  console.error = (...a: unknown[]) => errs.push(a.map(String).join(" "));
+  try {
+    await Deno.mkdir(join(root, "specs"), { recursive: true });
+    const runePath = join(root, "specs", "orders.rune");
+    await Deno.writeTextFile(runePath, REGEN_SPEC);
+    // First sync scaffolds (and moves the spec into src/orders/).
+    assertEquals(await runSync([runePath, "--root", root, "--no-run"]), 0);
+    const movedRune = join(root, "src", "orders", "orders.rune");
+    const target = join("src", "orders", "domain", "business", "cart", "mod.ts");
+    const targetAbs = join(root, target);
+    // Hand-edit the body so --regen takes the `.new` branch.
+    await Deno.writeTextFile(targetAbs, await Deno.readTextFile(targetAbs) + "\n// hand edit\n");
+    // Make the parent read-only so writing the `.new` sibling fails.
+    const parent = join(root, "src", "orders", "domain", "business", "cart");
+    await Deno.chmod(parent, 0o500);
+    logs.length = 0;
+    errs.length = 0;
+    const code = await runSync(
+      [movedRune, "--root", root, "--regen", targetAbs, "--no-run"],
+    );
+    await Deno.chmod(parent, 0o700); // restore so cleanup can remove it
+    assertEquals(code, 2, "a failed regen write exits 2");
+    assertEquals(await exists(`${targetAbs}.new`), false, "no .new was written");
+    assertEquals(
+      logs.some((l) => l.includes("wrote") && l.includes(".new")),
+      false,
+      `success log must NOT print on a failed write; logs: ${JSON.stringify(logs)}`,
+    );
+    assertEquals(errs.some((e) => e.includes(".new")), true, "the error is reported");
+  } finally {
+    console.log = origLog;
+    console.error = origErr;
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+const REGEN_SPEC = `[MOD] orders
+[REQ] orders.place(PlaceDto): OrderDto
+    cart.total(): money
+    [RET] OrderDto
+
+
+[NON] cart
+    the shopping cart
+[TYP] money: number
+    a monetary amount
+
+[DTO] PlaceDto: money
+    place-order input
+[DTO] OrderDto: money
+    the resulting order
+`;

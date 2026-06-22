@@ -770,9 +770,13 @@ function renderDto(
     // A property may carry the documented modifiers: `(s)` (array of the base
     // type, property name pluralized — `taskId(s)` -> `taskIds: taskId[]`) and
     // `?` (optional). Resolve the base name to its [TYP] for the field type.
-    const optional = raw.includes("?");
-    const array = /\(s\)/.test(raw);
-    const base = raw.replace(/\(s\)/g, "").replace(/\?/g, "").trim();
+    // `(s?)` — array whose ELEMENTS may be null (dirty inbound data); distinct from a whole-field
+    // `?` (optional). Strip the array token first so a trailing `?` still reads as whole-optional.
+    const lenientArray = /\(s\?\)/.test(raw);
+    const array = lenientArray || /\(s\)/.test(raw);
+    const withoutArray = raw.replace(/\(s\??\)/g, "");
+    const optional = withoutArray.includes("?");
+    const base = withoutArray.replace(/\?/g, "").trim();
     const name = array ? `${base}s` : base;
     const decorators: string[] = [];
     // Per-field doc/provenance comments emitted ABOVE the decorator stack so a
@@ -795,11 +799,20 @@ function renderDto(
       hasNested = true;
       if (nested.name !== dto.name) nestedImports.add(nested.name);
       if (nested.description) lead.push(`/** ${nested.description} */`);
-      if (array) lead.push(`// rune: ${base}(s) — array of [DTO] ${nested.name}`);
-      validators.add("ValidateNested");
-      decorators.push(
-        array ? "@ValidateNested({ each: true })" : "@ValidateNested()",
-      );
+      if (array) {
+        lead.push(
+          `// rune: ${base}(${lenientArray ? "s?" : "s"}) — array of [DTO] ${nested.name}` +
+            (lenientArray ? " (elements not validated — may be null)" : ""),
+        );
+      }
+      // `(s?)` keeps @IsArray() (pushed above) but drops @ValidateNested so a null/dirty element
+      // passes — class-validator has no per-element "nullable", so leniency = no element check.
+      if (!lenientArray) {
+        validators.add("ValidateNested");
+        decorators.push(
+          array ? "@ValidateNested({ each: true })" : "@ValidateNested()",
+        );
+      }
       decorators.push(`@Type(() => ${nested.name})`);
       const ts = array ? `${nested.name}[]` : nested.name;
       return { name, ts, decorators, optional, lead };
@@ -833,7 +846,12 @@ function renderDto(
     if (typ?.isExternal) {
       lead.push("// rune: [TYP:ext] — supplied by another module / the caller");
     }
-    if (array) lead.push(`// rune: ${base}(s) — array of [TYP] ${base}`);
+    if (array) {
+      lead.push(
+        `// rune: ${base}(${lenientArray ? "s?" : "s"}) — array of [TYP] ${base}` +
+          (lenientArray ? " (elements not validated — may be null)" : ""),
+      );
+    }
     // The [TYP]'s constraint modifiers, in source order. `int` REPLACES the
     // IsNumber base check (class-validator's IsInt subsumes it). Alongside the
     // validators we accumulate ONE merged @ApiProperty options object (E27).
@@ -860,8 +878,11 @@ function renderDto(
       const spec = TYP_MODIFIERS.get(id);
       if (!spec?.decorator) continue; // ext/core — placement, not validation
       if (id === "int") baseDec = null;
-      validators.add(spec.decorator);
-      constraints.push(array ? spec.eachCall(value) : spec.call(value));
+      // `(s?)` is lenient: skip per-element validators (they would reject a null element).
+      if (!lenientArray) {
+        validators.add(spec.decorator);
+        constraints.push(array ? spec.eachCall(value) : spec.call(value));
+      }
       // Schema hints — only keys/values valid on @danet/swagger's Schema.
       if (id === "min") api.push(`minimum: ${value}`);
       else if (id === "max") api.push(`maximum: ${value}`);
@@ -870,7 +891,9 @@ function renderDto(
       else if (id === "nonempty" && !array) api.push("minLength: 1");
     }
     if (typ?.typeName === "Uint8Array") api.push(`type: "string"`, `format: "binary"`);
-    if (baseDec) {
+    // `(s?)` arrays keep only @IsArray() (emitted above) — the element type check is dropped so
+    // dirty inbound data (e.g. a null in pathway_tags) is tolerated instead of hard-422ing.
+    if (baseDec && !lenientArray) {
       validators.add(baseDec);
       decorators.push(array ? `@${baseDec}({ each: true })` : `@${baseDec}()`);
     }
@@ -921,12 +944,29 @@ function renderDto(
   lines.push("/**");
   if (dto.description) lines.push(` * ${dto.description}`);
   lines.push(dto.isCore ? " * @public cross-module contract" : " * @internal");
+  if (dto.isOpen) {
+    lines.push(
+      " * @remarks [DTO:open] — opaque inbound payload: the declared fields below (and any",
+      " * declared nested DTO) are validated; this DTO's undeclared fields ride through.",
+    );
+  }
   lines.push(" */");
-  const dtoTag = dto.isCore ? "[DTO:core]" : "[DTO]";
+  const dtoTag = dto.isOpen
+    ? "[DTO:open]"
+    : dto.isCore
+    ? "[DTO:core]"
+    : "[DTO]";
   lines.push(
     `// rune declares: ${dtoTag} ${dto.name}: ${dto.properties.join(", ")}`,
   );
   lines.push(`export class ${dto.name} {`);
+  if (dto.isOpen) {
+    // keep's assert reads this marker: it validates the declared fields strictly, then re-attaches
+    // this payload's undeclared top-level fields, so an opaque inbound body rides through. Delete
+    // it for strict mode.
+    lines.push("  static readonly __keepOpen = true;");
+    if (fields.length) lines.push("");
+  }
   fields.forEach((f, i) => {
     if (i > 0) lines.push("");
     for (const d of f.lead) lines.push(`  ${d}`);
@@ -1480,8 +1520,8 @@ function renderCoordinator(
 // Exported for rune-stubs, which mirrors the same producer/consumer matching.
 export function dtoFieldNames(dto: DtoNode): string[] {
   return dto.properties.map((raw) => {
-    const array = /\(s\)/.test(raw);
-    const base = raw.replace(/\(s\)/g, "").replace(/\?/g, "").trim();
+    const array = /\(s\??\)/.test(raw);
+    const base = raw.replace(/\(s\??\)/g, "").replace(/\?/g, "").trim();
     return array ? `${base}s` : base;
   });
 }

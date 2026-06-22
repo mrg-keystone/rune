@@ -1739,3 +1739,67 @@ Deno.test("planManifest — strictServices errors on an undeclared boundary serv
     [],
   );
 });
+
+Deno.test("planManifest — (s?) lenient array keeps @IsArray, drops element validation", () => {
+  const rune = `[MOD] webhook
+
+[REQ] webhook.ingest(InDto): OutDto
+    id::create(name): id
+
+[DTO] InDto: tag(s), pathwayTag(s?)
+    desc
+
+[TYP] id: string
+    desc
+[TYP] name: string
+    desc
+[TYP] tag: string
+    desc
+[TYP] pathwayTag: string
+    desc`;
+  const plan = planManifest("specs/webhook.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const dto = plan.toCreate.find((f) => f.path === "src/webhook/dto/in.ts");
+  assert(dto, "in.ts DTO must be generated");
+  const c = dto!.content;
+  // Both array fields are present and named (pluralized).
+  assertStringIncludes(c, "tags!: string[]");
+  assertStringIncludes(c, "pathwayTags!: string[]");
+  // Both enforce array-ness.
+  assertStringIncludes(c, "@IsArray()");
+  // Only the STRICT (s) field validates element type — exactly one @IsString each-form.
+  const eachCount = (c.match(/@IsString\(\{ each: true \}\)/g) || []).length;
+  assertEquals(eachCount, 1, "only the strict tag(s) field emits @IsString each-form");
+  // The (s?) field is marked lenient in its provenance comment.
+  assertStringIncludes(c, "(s?)");
+  assertStringIncludes(c, "elements not validated");
+});
+
+Deno.test("planManifest — [DTO:open] emits the keep-open marker + provenance, validates declared fields", () => {
+  const rune = `[MOD] webhook
+
+[REQ] webhook.ingest(EventDto): OutDto
+    id::create(callId): id
+
+[DTO:open] EventDto: callId, status
+    an opaque third-party webhook payload
+
+[TYP] id: string
+    desc
+[TYP] callId: string
+    desc
+[TYP] status: string
+    desc`;
+  const plan = planManifest("specs/webhook.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const dto = plan.toCreate.find((f) => f.path === "src/webhook/dto/event.ts");
+  assert(dto, "event.ts DTO must be generated");
+  const c = dto!.content;
+  // The marker keep's assert reads, and the provenance tag.
+  assertStringIncludes(c, "static readonly __keepOpen = true;");
+  assertStringIncludes(c, "[DTO:open]");
+  // Declared fields are still validated and typed.
+  assertStringIncludes(c, "@IsString()");
+  assertStringIncludes(c, "callId!: string;");
+  assertStringIncludes(c, "status!: string;");
+});

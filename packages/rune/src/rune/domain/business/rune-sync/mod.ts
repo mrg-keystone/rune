@@ -160,10 +160,18 @@ function walkSteps(
     } else if (step.kind === "boundary") {
       dirs.add(`src/${module}/domain/data/${applyCase(step.noun, "kebab")}`);
     } else if (step.kind === "ply") {
-      dirs.add(
-        `src/${module}/domain/business/${applyCase(step.noun, "kebab")}`,
-      );
-      for (const cse of step.cases) walkSteps(cse.steps, module, dirs);
+      const featureDir =
+        `src/${module}/domain/business/${applyCase(step.noun, "kebab")}`;
+      dirs.add(featureDir);
+      for (const cse of step.cases) {
+        // Predict each DECLARED variant folder so only a REMOVED [CSE] arm's
+        // implementations/<case>/ becomes an orphan (classify keys these at the
+        // case-folder level rather than collapsing them to the feature dir).
+        dirs.add(
+          `${featureDir}/implementations/${applyCase(cse.name, "kebab")}`,
+        );
+        walkSteps(cse.steps, module, dirs);
+      }
     }
   }
 }
@@ -180,6 +188,20 @@ function classify(path: string, module: string): Slot | null {
   if (!path.startsWith(prefix)) return null;
   const parts = path.split("/"); // ["src", module, ...]
 
+  // src/<module>/domain/business/<noun>/implementations/<case>/... — a [PLY] variant folder.
+  // Keyed at the case-folder level (not collapsed to the feature dir) so a removed [CSE] arm is
+  // an orphan even though its parent [PLY] feature dir is still predicted. Must precede the
+  // general business branch below.
+  if (
+    parts[2] === "domain" && parts[3] === "business" &&
+    parts[5] === "implementations" && parts.length >= 7
+  ) {
+    return {
+      kind: "dir",
+      dir: parts.slice(0, 7).join("/"),
+      category: "business",
+    };
+  }
   // src/<module>/domain/(business|data|coordinators)/<feature>/...
   if (
     parts[2] === "domain" &&
@@ -204,6 +226,47 @@ function classify(path: string, module: string): Slot | null {
   // src/<module>/dto/<name>.ts
   if (parts[2] === "dto" && parts.length === 4 && path.endsWith(".ts")) {
     return { kind: "file" };
+  }
+  return null;
+}
+
+// ---- poly-mod barrel staleness (the sync entrypoint reads the file + does the I/O) ----
+
+/** The variant a generated poly-mod barrel re-exports, e.g.
+ * `export { default } from "./implementations/wyn/mod.ts";` → "wyn". Returns null when
+ * the barrel has been hand-rewritten into a shape we can't statically read (a runtime
+ * switch, several re-exports) — the caller then skips it rather than warn falsely. */
+export function parseBarrelTarget(barrelContent: string): string | null {
+  // Strip comments first so a dev who rewrote the barrel into a runtime switch but kept the old
+  // generated line as a comment doesn't get the commented-out path read as the live re-export
+  // (which would fire a false staleness warning). No `//` appears in the re-export path itself.
+  const live = barrelContent
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/\/\/[^\n]*/g, " ");
+  const m = live.match(
+    /from\s+["']\.\/implementations\/([A-Za-z0-9_-]+)\/mod\.ts["']/,
+  );
+  return m ? m[1] : null;
+}
+
+/** The warning when a create-once poly-mod barrel points at a variant the spec no
+ * longer declares, OR whose folder is gone (e.g. a --force prune just removed the
+ * arm). `variantExists` is the caller's on-disk check. null when the barrel is fine.
+ * The barrel is dev-owned/create-once, so sync never rewrites it — it tells the dev to
+ * repoint it (same posture as the stale heal-rules note). */
+export function polyBarrelNote(
+  dir: string,
+  target: string,
+  declaredCases: Set<string>,
+  variantExists: boolean,
+): string | null {
+  if (!variantExists) {
+    return `${dir}/poly-mod.ts re-exports ./implementations/${target}/mod.ts which no longer exists ` +
+      `— repoint the barrel by hand to a current variant`;
+  }
+  if (!declaredCases.has(target)) {
+    return `${dir}/poly-mod.ts re-exports ./implementations/${target} which no [CSE] declares ` +
+      `— repoint the barrel by hand`;
   }
   return null;
 }

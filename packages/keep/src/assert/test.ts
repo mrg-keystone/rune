@@ -265,3 +265,66 @@ Deno.test("RUNE_ASSERT=off — assert becomes a passthrough", async () => {
 Deno.test("RUNE_ASSERT unset — assert enforces", async () => {
   assertEquals(await runSwitchProbe({}), "enforced");
 });
+
+Deno.test("assert — [DTO:open] marker keeps undeclared fields, still validates declared", () => {
+  // rune emits `static readonly __keepOpen = true` for a [DTO:open] class. assert reads it and
+  // validates with whitelist:false, so an opaque inbound payload's extras ride through intact.
+  class OpenEventDto {
+    static readonly __keepOpen = true;
+    @IsString()
+    callId!: string;
+  }
+  const out = assert(OpenEventDto, {
+    callId: "c1",
+    extra: 1,
+    nested: { a: true },
+  }) as unknown as Record<string, unknown>;
+  assertEquals(out.callId, "c1");
+  assertEquals(out.extra, 1, "undeclared scalar must survive (open)");
+  assertEquals(out.nested, { a: true }, "undeclared object must survive (open)");
+
+  // The declared field is still validated — a bad value 422s even on an open DTO.
+  assertThrows(
+    () => assert(OpenEventDto, { callId: 123 }),
+    RuneAssertError,
+  );
+
+  // Without the marker, the same extras are stripped (today's strict default).
+  class StrictEventDto {
+    @IsString()
+    callId!: string;
+  }
+  const strict = assert(StrictEventDto, { callId: "c1", extra: 1 }) as unknown as Record<
+    string,
+    unknown
+  >;
+  assertEquals("extra" in strict, false, "strict DTO strips undeclared fields");
+});
+
+Deno.test("assert — [DTO:open] re-attaches its own extras but a declared nested DTO keeps its strict contract", () => {
+  class InnerDto {
+    @IsString()
+    name!: string;
+  }
+  class OpenOuterDto {
+    static readonly __keepOpen = true;
+    @IsString()
+    id!: string;
+    @ValidateNested()
+    @Type(() => InnerDto)
+    inner!: InnerDto;
+  }
+  const out = assert(OpenOuterDto, {
+    id: "x",
+    extraTop: "ride", // the open DTO's own undeclared field → survives
+    inner: { name: "n", secret: "strip" }, // a declared strict nested DTO → its extra is stripped
+  }) as unknown as Record<string, unknown>;
+  assertEquals(out.id, "x");
+  assertEquals(out.extraTop, "ride", "the open DTO's own undeclared field rides through");
+  // out.inner is an InnerDto instance; compare its own props structurally. `secret` must be gone.
+  assertEquals(
+    { ...(out.inner as object) },
+    { name: "n" },
+    "a declared nested DTO keeps its own strict contract — its extra field is stripped",
+  );
+});

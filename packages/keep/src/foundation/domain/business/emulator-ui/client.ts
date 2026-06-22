@@ -112,6 +112,9 @@ export const emulatorCss: string = String.raw`
   .tabpane.active{display:block}
   textarea{display:block;width:100%;min-height:4.6rem;background:#0e1117;color:#e6e9ef;border:1px solid #2c3142;border-radius:6px;font-family:ui-monospace,monospace;font-size:.82rem;line-height:1.5;padding:.55rem .6rem;resize:none;overflow:auto}
   textarea.bad{border-color:#6e2a2f}
+  .body-tools{display:flex;align-items:center;gap:.6rem;margin-bottom:.4rem;flex-wrap:wrap}
+  .raw-toggle{display:flex;align-items:center;gap:.3rem;font-size:.74rem;color:#9aa3b2;cursor:pointer;user-select:none}
+  .raw-toggle input{margin:0}
   .json-err{color:#ff7b72;font-size:.74rem;margin-top:.25rem}
   .json-err:empty{display:none}
   .params{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.45rem}
@@ -126,6 +129,7 @@ export const emulatorCss: string = String.raw`
   .pill{font-size:.7rem;font-weight:700;padding:.1rem .45rem;border-radius:99px;text-transform:none;letter-spacing:0;font-variant-numeric:tabular-nums}
   .pill.s2{background:#11261a;color:#7ee787}.pill.s3{background:#13233a;color:#9ecbff}
   .pill.s4{background:#2d2410;color:#e3b341}.pill.s5{background:#2a1215;color:#ff7b72}.pill.net{background:#2a1215;color:#ff7b72}
+  .pill.ref{background:#2d2410;color:#e3b341}
   .ms{font-size:.72rem;color:#6b7394;text-transform:none;font-variant-numeric:tabular-nums}
   .resp-empty{color:#4d5468;font-size:.78rem;font-style:italic;background:#0e1117;border:1px dashed #1b1f29;border-radius:6px;padding:.55rem .6rem}
   .heal{margin-top:.55rem;background:#1d180c;border:1px solid #5e4a2b;border-radius:6px;padding:.5rem .6rem}
@@ -272,7 +276,7 @@ export const emulatorClientJs: string = String.raw`
   var restoredAt = null;
 
   function freshState() {
-    return { v: 1, status: {}, captured: {}, meta: {}, userVars: {}, bodies: {}, paramVals: {}, expanded: {}, skips: {}, setup: [], asserts: {}, prev: {}, savedAt: 0 };
+    return { v: 1, status: {}, captured: {}, meta: {}, userVars: {}, bodies: {}, raw: {}, paramVals: {}, expanded: {}, skips: {}, setup: [], asserts: {}, prev: {}, savedAt: 0 };
   }
   function loadState() {
     try {
@@ -284,6 +288,7 @@ export const emulatorClientJs: string = String.raw`
       if (!state.setup) state.setup = [];     // sessions saved before module setup existed
       if (!state.asserts) state.asserts = {}; // sessions saved before expectations existed
       if (!state.prev) state.prev = {};       // sessions saved before response diffing existed
+      if (!state.raw) state.raw = {};         // sessions saved before opaque-body mode existed
     } catch (e) { /* corrupted state is discarded */ }
   }
 
@@ -351,7 +356,7 @@ export const emulatorClientJs: string = String.raw`
   });
 
   // ── reference resolution ({{step.field}} / {{userVar}}) ────────────────────
-  var REF_RE = /\{\{\s*([^{}]+?)\s*\}\}/g;
+  var REF_RE = /(\\?)\{\{\s*([^{}]+?)\s*\}\}/g;   // group 1 = optional \ escape, group 2 = ref
   var WHOLE_REF_RE = /^\{\{\s*([^{}]+?)\s*\}\}$/;
   var REF_TEST = /\{\{[^{}]+\}\}/;   // stateless "contains a reference" check
 
@@ -435,22 +440,51 @@ export const emulatorClientJs: string = String.raw`
     return walkPath(state.captured[parts[0]], parts.slice(1));
   }
 
+  // A {{token}} only counts as a REFERENCE the cake should resolve (and, when it can't, report
+  // as "missing" + block the send) when it is STRUCTURALLY one: a {{$input}}, a
+  // {{module:endpoint.field}}, an {{a||b}} alternative, a known environment {{name}}, or an
+  // {{endpoint.field}} whose head is a real producer/capture. Anything else — a bare
+  // {{ReservationCustomerFirstName}} sitting in a pasted third-party payload — is left as
+  // literal text, so a realistic webhook fixture is not mistaken for unfilled references.
+  function isRefShape(ref) {
+    if (ref.indexOf("||") >= 0) return true;
+    if (ref.charAt(0) === "$") return true;
+    if (ref.indexOf(":") >= 0) return true;
+    if (hasOwn(globals.vars, ref)) return true;
+    if (ref.indexOf(".") >= 0) {
+      var head = ref.split(".")[0];
+      // hasOwn on EVERY lookup — a bare byId[head] would treat inherited Object.prototype names
+      // ("constructor", "toString", "valueOf", "__proto__", …) in a payload as real producers.
+      if (hasOwn(byId, head) || hasOwn(state.captured, head) || hasOwn(globals.captured, head)) return true;
+    }
+    return false;
+  }
+
   // Resolution is recursive (depth-capped): a variable's value may itself be a reference —
   // e.g. the environment var thingId = "{{alpha:create.id}}" tracks alpha's latest capture.
+  // A leading backslash escapes the braces: \{{x}} resolves to the literal text {{x}}.
   function resolveString(s, missing, depth) {
     depth = depth || 0;
     var whole = s.match(WHOLE_REF_RE);
     if (whole) {
-      var r = lookupRef(whole[1]);
-      if (!r.found) { missing.push(whole[1]); return s; }
+      var wref = whole[1];
+      var r = lookupRef(wref);
+      if (!r.found) {
+        if (isRefShape(wref)) missing.push(wref);   // a real ref we can't resolve yet → block + heal
+        return s;                                    // unknown shape → keep the literal token
+      }
       if (typeof r.value === "string" && REF_TEST.test(r.value) && depth < 4) {
         return resolveString(r.value, missing, depth + 1);
       }
       return r.value;                          // typed: numbers/objects pass through intact
     }
-    return s.replace(REF_RE, function (m, ref) {
+    return s.replace(REF_RE, function (m, esc, ref) {
+      if (esc) return m.slice(1);                    // \{{…}} → drop the backslash, keep {{…}} literal
       var r = lookupRef(ref);
-      if (!r.found) { missing.push(ref); return m; }
+      if (!r.found) {
+        if (isRefShape(ref)) missing.push(ref);
+        return m;                                    // unknown shape / unresolved literal → leave as-is
+      }
       var v = typeof r.value === "string" ? r.value : JSON.stringify(r.value);
       return REF_TEST.test(v) && depth < 4 ? String(resolveString(v, missing, depth + 1)) : v;
     });
@@ -520,6 +554,13 @@ export const emulatorClientJs: string = String.raw`
   // overrideText (a setup step's frozen body) replaces the live editor text when present.
   function resolveBody(ep, overrideText) {
     var text = overrideText !== undefined ? overrideText : bodyText(ep);
+    // Opaque-body mode: send the body EXACTLY as written — no JSON.parse, no templating, no
+    // re-serialization — so a real third-party payload goes out byte-for-byte (a non-JSON body, or
+    // JSON whose exact bytes a webhook signature covers, is preserved). Checked BEFORE JSON.parse so
+    // an opaque body that isn't JSON isn't rejected. Setup-step snapshots (overrideText) still template.
+    if (overrideText === undefined && state.raw && state.raw[ep.id]) {
+      return { rawText: text, missing: [], raw: true };
+    }
     var parsed;
     try { parsed = JSON.parse(text); }
     catch (e) { return { error: "invalid JSON — " + e.message, missing: [] }; }
@@ -562,7 +603,7 @@ export const emulatorClientJs: string = String.raw`
     if (hasBody(ep)) {
       lines.push("-H " + shq("content-type: application/json"));
       var r = resolveBody(ep);
-      lines.push("-d " + shq(r.error ? bodyText(ep) : JSON.stringify(r.value)));
+      lines.push("-d " + shq(r.error ? bodyText(ep) : r.raw ? r.rawText : JSON.stringify(r.value)));
     }
     return lines.join(" \\" + "\n  ");
   }
@@ -659,8 +700,15 @@ export const emulatorClientJs: string = String.raw`
     }
     return out + esc(text.slice(last));
   }
-  function markMissing(html) {
-    return html.replace(/\{\{[^{}]+\}\}/g, function (m) { return '<span class="j-miss">' + m + "</span>"; });
+  // Paint ONLY the tokens that are actually unresolved references (the 'missing' set) red;
+  // literal {{ }} left in an opaque / known-ref-gated body stay as ordinary text, not alarms.
+  function markMissing(html, missing) {
+    if (!missing || !missing.length) return html;
+    var set = {};
+    missing.forEach(function (ref) { set[ref] = true; });
+    return html.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, function (m, ref) {
+      return set[ref] ? '<span class="j-miss">' + m + "</span>" : m;
+    });
   }
   function agoText(ts) {
     var s = Math.max(0, Math.round((Date.now() - ts) / 1000));
@@ -848,7 +896,14 @@ export const emulatorClientJs: string = String.raw`
             "</span>" +
           "</div>" +
           (hasBody(ep)
-            ? '<div class="tabpane" data-pane="body"><textarea spellcheck="false"></textarea><div class="json-err"></div></div>'
+            ? '<div class="tabpane" data-pane="body">' +
+                '<div class="body-tools">' +
+                  '<label class="raw-toggle" title="send this body exactly as written — do not scan it for {{ }} references (for opaque third-party payloads / webhook fixtures)">' +
+                    '<input type="checkbox" class="raw-body"> opaque — send as-is</label>' +
+                  '<button class="mini load-file" title="replace the body with the contents of a local file, e.g. a saved webhook fixture">Load from file…</button>' +
+                  '<input type="file" class="file-input" accept=".json,application/json,text/plain" hidden>' +
+                "</div>" +
+                '<textarea spellcheck="false"></textarea><div class="json-err"></div></div>'
             : "") +
           '<div class="tabpane" data-pane="send"><pre class="resolved"></pre><div class="resolved-note"></div></div>' +
           '<div class="tabpane" data-pane="curl"><pre class="curl"></pre></div>' +
@@ -955,6 +1010,54 @@ export const emulatorClientJs: string = String.raw`
         save();
         renderRequest(ep);
       });
+      // Opaque-body toggle: send the body as-is, never templating its {{ }}.
+      var rawToggle = li.querySelector(".raw-body");
+      if (rawToggle) {
+        rawToggle.checked = !!(state.raw && state.raw[ep.id]);
+        rawToggle.addEventListener("change", function () {
+          if (!state.raw) state.raw = {};
+          if (rawToggle.checked) state.raw[ep.id] = true;
+          else delete state.raw[ep.id];
+          // Marking opaque clears a stale "unresolved refs" block left by a prior send.
+          if (rawToggle.checked && state.meta[ep.id] && state.meta[ep.id].unresolved) {
+            delete state.meta[ep.id];
+            delete state.status[ep.id];
+          }
+          save();
+          updateAll();
+        });
+      }
+      // Load-from-file: drop a saved fixture / real payload straight into the body.
+      var fileBtn = li.querySelector(".load-file");
+      var fileInput = li.querySelector(".file-input");
+      if (fileBtn && fileInput) {
+        fileBtn.addEventListener("click", function (e) { e.stopPropagation(); fileInput.click(); });
+        fileInput.addEventListener("change", function () {
+          var f = fileInput.files && fileInput.files[0];
+          fileInput.value = "";               // allow re-picking the same file later
+          if (!f) return;
+          var reader = new FileReader();
+          reader.onload = function () {
+            state.bodies[ep.id] = String(reader.result);
+            ta.value = state.bodies[ep.id];
+            autosize(ta);
+            // A loaded document is almost always an opaque payload — default it to raw so the
+            // first send is not blocked by literal {{ }} inside it. Still user-overridable.
+            if (!state.raw) state.raw = {};
+            state.raw[ep.id] = true;
+            if (rawToggle) rawToggle.checked = true;
+            if (state.meta[ep.id] && state.meta[ep.id].unresolved) {
+              delete state.meta[ep.id];
+              delete state.status[ep.id];
+            }
+            save();
+            updateAll();
+            banner("info", "Loaded " + esc(f.name) + " — marked opaque (sent as-is). Untick “opaque” to template it.");
+          };
+          reader.onerror = function () { banner("err", "Could not read " + esc(f.name) + "."); };
+          reader.readAsText(f);
+        });
+      }
     }
     li.querySelectorAll(".params input").forEach(function (inp) {
       inp.value = paramVal(ep, inp.dataset.param);
@@ -1270,6 +1373,15 @@ export const emulatorClientJs: string = String.raw`
     var out = [];
     if (meta.missing && meta.missing.length) {
       meta.missing.forEach(function (ref) { diagnoseMissingRef(ep, ref, out); });
+      // Escape hatch: if those {{ }} are literal payload data (a third-party webhook fixture), not
+      // references, mark the body opaque and send it as-is instead of hunting for producers/inputs.
+      if (hasBody(ep)) {
+        out.push({
+          label: "Mark this body opaque — send as-is, don't template {{ }}",
+          why: "if these are literal payload data, not references",
+          action: { kind: "set-raw" },
+        });
+      }
       return out;
     }
     var body = meta.body;
@@ -1283,6 +1395,23 @@ export const emulatorClientJs: string = String.raw`
         diagnoseSlug(ep, msg, out);
         return out;
       }
+    }
+    // A 5xx is the server's handler blowing up, not a problem with your request — and for a fresh
+    // scaffold that is almost always the generated throw new Error of "not implemented". Say so,
+    // so an unfilled stub reads as a to-do ("isn't built yet"), not as "I broke it". (danet hides
+    // the thrown message behind a generic 500, so we key on the status; if the message does leak,
+    // upgrade the wording.)
+    if (meta.http >= 500) {
+      var raw500 = typeof meta.body === "object" ? JSON.stringify(meta.body) : String(meta.body || "");
+      var unimpl = /not[\s_-]*implemented/i.test(raw500);
+      out.push({
+        label: unimpl
+          ? "This step isn't implemented yet — fill in its handler"
+          : "The handler raised (HTTP " + meta.http + ") — check its body, not your request",
+        why: unimpl
+          ? 'it still throws "not implemented" (a fresh scaffold step)'
+          : "an unhandled error inside the endpoint",
+      });
     }
     return out;
   }
@@ -1320,6 +1449,16 @@ export const emulatorClientJs: string = String.raw`
     } else if (a.kind === "focus-input") {
       var box = document.querySelector('[data-gvar="' + a.target + '"]');
       if (box) { box.focus(); box.scrollIntoView({ block: "center" }); }
+    } else if (a.kind === "set-raw") {
+      if (!state.raw) state.raw = {};
+      state.raw[ep.id] = true;
+      var rawT = rows[ep.id] && rows[ep.id].querySelector(".raw-body");
+      if (rawT) rawT.checked = true;
+      delete state.meta[ep.id];
+      delete state.status[ep.id];
+      save();
+      renderRequest(ep);
+      send(ep);   // re-send now that it's opaque — no templating, no block
     }
   }
 
@@ -1442,6 +1581,7 @@ export const emulatorClientJs: string = String.raw`
     // The URL line is escaped but not JSON-highlighted (ports would light up as numbers).
     var html = '<span class="j-url">' + esc(ep.method + " " + urlFor(ep, missing)) + "</span>";
 
+    var litCount = 0;
     if (hasBody(ep)) {
       var r = resolveBody(ep);
       if (r.error) {
@@ -1454,13 +1594,29 @@ export const emulatorClientJs: string = String.raw`
       }
       if (ta) ta.classList.remove("bad");
       if (errEl) errEl.textContent = "";
+      if (r.raw) {
+        // Opaque: show the body EXACTLY as it will be sent (verbatim text) — no ref state, no
+        // re-formatting, no waiting note.
+        resolvedEl.innerHTML = html + "\n" + esc(r.rawText);
+        noteEl.textContent = "opaque body — sent as-is (verbatim), not templated";
+        if (dotEl) dotEl.className = "tab-dot";
+        li.querySelector(".curl").textContent = curlFor(ep);
+        return;
+      }
       missing = missing.concat(r.missing);
       html += "\n" + hlJson(JSON.stringify(r.value, null, 2));
+      // Tokens still present after resolution that are NOT blocking refs are literal text we kept
+      // as-is — count them so a payload full of {{ }} reads as "kept literal", not swallowed.
+      JSON.stringify(r.value).replace(/\{\{\s*([^{}]+?)\s*\}\}/g, function (m, ref) {
+        if (missing.indexOf(ref) < 0) litCount++;
+        return m;
+      });
     }
-    resolvedEl.innerHTML = markMissing(html);
+    resolvedEl.innerHTML = markMissing(html, missing);
+    var litNote = litCount ? litCount + " literal {{ }} kept as-is" : "";
     noteEl.textContent = missing.length
-      ? "waiting for " + missing.map(function (m) { return "{{" + m + "}}"; }).join(", ")
-      : "";
+      ? "waiting for " + missing.map(function (m) { return "{{" + m + "}}"; }).join(", ") + (litNote ? " · " + litNote : "")
+      : litNote;
     // The tab dot signals reference state at a glance: amber = something unresolved, green = all
     // references resolved, hidden = nothing to resolve.
     if (dotEl) {
@@ -1495,6 +1651,9 @@ export const emulatorClientJs: string = String.raw`
     if (meta.http) {
       var cls = meta.http < 300 ? "s2" : meta.http < 400 ? "s3" : meta.http < 500 ? "s4" : "s5";
       pill.innerHTML = '<span class="pill ' + cls + '">HTTP ' + meta.http + "</span>";
+    } else if (meta.unresolved) {
+      // An authoring problem (a {{ref}} we could not resolve), NOT a transport failure — say so.
+      pill.innerHTML = '<span class="pill ref">unresolved refs</span>';
     } else {
       pill.innerHTML = '<span class="pill net">network error</span>';
     }
@@ -1567,7 +1726,7 @@ export const emulatorClientJs: string = String.raw`
     mini.className = "status-mini" + (st === "fail" ? " fail" : "");
     if (st === "run") mini.textContent = "running…";
     else if (meta && (st === "ok" || st === "fail")) {
-      mini.textContent = (meta.http ? "HTTP " + meta.http : "network error") + " · " + meta.ms + " ms" +
+      mini.textContent = (meta.http ? "HTTP " + meta.http : meta.unresolved ? "unresolved refs" : "network error") + " · " + meta.ms + " ms" +
         (firstAssertFailure(meta) ? " · expect ✗" : "");
     } else if (cycleMembers[ep.id] && !isReady) {
       mini.textContent = "dependency cycle: " + cycleMembers[ep.id].join(" → ") + " — fix dependsOn";
@@ -2215,13 +2374,13 @@ export const emulatorClientJs: string = String.raw`
       if (r.error) return blocked("its request body is " + r.error);
       missing = r.missing.slice();
       init.headers["content-type"] = "application/json";
-      init.body = JSON.stringify(r.value);
+      init.body = r.raw ? r.rawText : JSON.stringify(r.value);
     }
     var url = urlFor(ep, missing, override && override.params);
     if (missing.length) {
       var who = missing.map(function (m) { return "{{" + m + "}}"; }).join(", ");
       // record the failure shape so the heal rules can diagnose it
-      state.meta[ep.id] = { http: 0, ms: 0, body: "unresolved: " + who, missing: missing.slice() };
+      state.meta[ep.id] = { http: 0, ms: 0, body: "unresolved: " + who, missing: missing.slice(), unresolved: true };
       state.status[ep.id] = "fail";
       save();
       updateAll();

@@ -1,11 +1,20 @@
 import { basename, dirname, join, relative, resolve } from "#std/path";
-import { planSync } from "@rune/domain/business/rune-sync/mod.ts";
+import {
+  parseBarrelTarget,
+  planSync,
+  polyBarrelNote,
+} from "@rune/domain/business/rune-sync/mod.ts";
 import {
   artifactToOptions,
   type ManifestOptions,
 } from "@rune/domain/business/rune-manifest/mod.ts";
 import { loadArtifact } from "@rune/domain/business/artifact/mod.ts";
-import { isProjectSpec } from "@rune/domain/business/rune-bindings/mod.ts";
+import { applyCase, isProjectSpec } from "@rune/domain/business/rune-bindings/mod.ts";
+import {
+  type CseNode,
+  parse,
+  type StepLike,
+} from "@rune/domain/business/rune-parse/mod.ts";
 import {
   planInputDiagnostics,
   planStubs,
@@ -168,18 +177,22 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
     const abs = join(root, relTarget);
     const existing = await readMaybe(abs);
     if (existing === null) {
-      await write(root, relTarget, planned.content, ioErrors, written);
-      console.log(`  ${CYAN}created ${relTarget}${RESET}`);
+      // Only report success when the write actually landed; a failed write adds
+      // to ioErrors below, and a success log would contradict the error + exit 2.
+      if (await write(root, relTarget, planned.content, ioErrors, written)) {
+        console.log(`  ${CYAN}created ${relTarget}${RESET}`);
+      }
     } else if (existing === planned.content) {
       console.log(
         `  ${CYAN}${relTarget} already matches the spec — nothing to do${RESET}`,
       );
     } else {
       const newRel = `${relTarget}.new`;
-      await write(root, newRel, planned.content, ioErrors, written);
-      console.log(
-        `  ${CYAN}wrote ${newRel} — diff it into ${relTarget}, then delete the .new${RESET}`,
-      );
+      if (await write(root, newRel, planned.content, ioErrors, written)) {
+        console.log(
+          `  ${CYAN}wrote ${newRel} — diff it into ${relTarget}, then delete the .new${RESET}`,
+        );
+      }
     }
     if (ioErrors.length > 0) {
       for (const e of ioErrors) console.error(`  ${RED}${e}${RESET}`);
@@ -261,6 +274,14 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
     const healNotes = await ensureHealRules(root, ioErrors, written);
     for (const n of healNotes) console.log(`\n  ${CYAN}${n}${RESET}`);
 
+    // Warn when a create-once poly-mod barrel re-exports a [PLY] variant the spec no
+    // longer declares (or whose folder a --force prune just removed). The barrel is
+    // dev-owned so sync never rewrites it — and its dangling re-export sits outside the
+    // composed-app graph `deno check` / the run-all gate traverse, so this is the only
+    // place that silent break surfaces.
+    const barrelNotes = await ensurePolyBarrels(root, plan.module, runeText);
+    for (const n of barrelNotes) console.log(`\n  ${YELLOW}${n}${RESET}`);
+
     // Composition diagnostics: unproducible $inputs (plural-convention misses)
     // and required fields nothing fills — the two shapes that turn the
     // headless walk red. Printed every sync while they remain.
@@ -288,6 +309,44 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
   }
 
   return ioErrors.length > 0 ? 2 : 0;
+}
+
+/** Warn (never rewrite — it's create-once) when a [PLY] feature's poly-mod barrel
+ * re-exports a variant the spec no longer declares, or whose folder is gone. The pure
+ * decision lives in rune-sync (parseBarrelTarget / polyBarrelNote); this does the I/O. */
+async function ensurePolyBarrels(
+  root: string,
+  module: string,
+  runeText: string,
+): Promise<string[]> {
+  const ast = parse(runeText);
+  const features: { dir: string; cases: Set<string> }[] = [];
+  const collect = (steps: StepLike[] | CseNode["steps"]): void => {
+    for (const step of steps) {
+      if (step.kind === "ply") {
+        features.push({
+          dir: `src/${module}/domain/business/${applyCase(step.noun, "kebab")}`,
+          cases: new Set(step.cases.map((c) => applyCase(c.name, "kebab"))),
+        });
+        for (const c of step.cases) collect(c.steps);
+      }
+    }
+  };
+  for (const req of ast.reqs) collect(req.steps);
+
+  const notes: string[] = [];
+  for (const f of features) {
+    const barrel = await readMaybe(join(root, f.dir, "poly-mod.ts"));
+    if (barrel === null) continue;
+    const target = parseBarrelTarget(barrel);
+    if (target === null) continue; // hand-rewritten barrel — can't statically check
+    const exists =
+      (await readMaybe(join(root, f.dir, "implementations", target, "mod.ts"))) !==
+        null;
+    const note = polyBarrelNote(f.dir, target, f.cases, exists);
+    if (note) notes.push(note);
+  }
+  return notes;
 }
 
 // Import aliases the generated code relies on; the consuming project's deno.json
@@ -404,7 +463,25 @@ const pascal = (s: string): string => {
   return c.charAt(0).toUpperCase() + c.slice(1);
 };
 
-/** Find every generated keep surface module in the project tree. */
+// Coerce an alias candidate into a valid JS/TS identifier: drop every character
+// that can't appear in an identifier (so module/surface names with quotes,
+// spaces, or other punctuation can't break the import binding) and prefix a `_`
+// when the result would start with a digit. A normal camel/pascal alias is
+// unchanged; empty residue falls back to `surfaceModule`.
+const safeIdent = (s: string): string => {
+  const stripped = s.replace(/[^A-Za-z0-9_$]/g, "");
+  const prefixed = /^[0-9]/.test(stripped) ? `_${stripped}` : stripped;
+  return prefixed || "surfaceModule";
+};
+
+// Strip line and block comments before scanning a mod.ts for its export name so
+// a commented-out `export const …Module` can't be read as the real one.
+const stripComments = (text: string): string =>
+  text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+
+/** Find every generated keep surface module in the project tree. Aliases are
+ * always valid identifiers and unique across surfaces, so the rendered registry
+ * type-checks even when module/surface names collide or carry illegal chars. */
 export async function scanSurfaceModules(
   root: string,
 ): Promise<SurfaceModule[]> {
@@ -421,21 +498,34 @@ export async function scanSurfaceModules(
       }
       // The generated convention is `export const <surface>Module = endpointModule(…)`,
       // but the file is dev-owned — read the actual export name when it diverges.
-      const exportName = text.match(/export const (\w+Module)\b/)?.[1] ??
-        `${camel(surface)}Module`;
+      // Comments are stripped first so a commented-out export isn't read as it.
+      const exportName =
+        stripComments(text).match(/export const (\w+Module)\b/)?.[1] ??
+          `${camel(surface)}Module`;
       found.push({
         module: mod,
         surface,
         exportName,
-        alias: `${camel(mod)}${pascal(surface)}Module`,
+        alias: safeIdent(`${camel(mod)}${pascal(surface)}Module`),
       });
     }
   }
-  return found.sort((a, b) =>
+  found.sort((a, b) =>
     a.module === b.module
       ? a.surface.localeCompare(b.surface)
       : a.module.localeCompare(b.module)
   );
+  // Disambiguate alias collisions (distinct surfaces whose names camel/pascal to
+  // the same identifier, e.g. foo-bar/http vs foo/bar-http): the registry imports
+  // each surface under its alias, so a duplicate is a `Duplicate identifier`
+  // compile error that silently drops a module. Suffix the 2nd+ occurrence.
+  const seen = new Map<string, number>();
+  for (const s of found) {
+    const n = seen.get(s.alias) ?? 0;
+    seen.set(s.alias, n + 1);
+    if (n > 0) s.alias = `${s.alias}_${n + 1}`;
+  }
+  return found;
 }
 
 async function listDirs(dir: string): Promise<string[]> {
@@ -463,8 +553,14 @@ export function renderAppRegistry(
     "",
   ];
   for (const s of surfaces) {
+    // The module/surface segments are dev-controlled directory names; JSON-encode
+    // the specifier so a `"` (or other quote) in a name can't break the string
+    // literal (the alias itself is already a sanitized identifier).
+    const specifier = JSON.stringify(
+      `@/src/${s.module}/entrypoints/${s.surface}/mod.ts`,
+    );
     L.push(
-      `import { ${s.exportName} as ${s.alias} } from "@/src/${s.module}/entrypoints/${s.surface}/mod.ts";`,
+      `import { ${s.exportName} as ${s.alias} } from ${specifier};`,
     );
   }
   if (ghostStubs) {

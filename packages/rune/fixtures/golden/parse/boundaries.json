@@ -115,6 +115,7 @@
       ],
       "description": "what to sync",
       "isCore": false,
+      "isOpen": false,
       "line": 14
     },
     {
@@ -124,6 +125,7 @@
       ],
       "description": "an identifier",
       "isCore": false,
+      "isOpen": false,
       "line": 17
     },
     {
@@ -134,6 +136,7 @@
       ],
       "description": "a stored record",
       "isCore": false,
+      "isOpen": false,
       "line": 20
     },
     {
@@ -143,6 +146,7 @@
       ],
       "description": "the sync result",
       "isCore": false,
+      "isOpen": false,
       "line": 23
     }
   ],
