@@ -1,45 +1,45 @@
-name: release
+name: release-rune
 
-# Deploy model (implemented by the org reusable gh-release workflow):
-#   - merge into `main`        -> rebuilds the rolling `latest` release (the one
-#                                 `install.sh` pulls by default). This is the deploy.
-#   - push to `develop`        -> rebuilds the rolling `develop` release (install
-#                                 with RUNE_VERSION=develop); does NOT become
-#                                 "latest", so it never disturbs stable users.
-#   - push a `vX.Y.Z` tag      -> a pinned snapshot release (install with
-#                                 RUNE_VERSION=vX.Y.Z); does NOT become "latest".
+# Deploy model (unchanged from rune's pre-monorepo release.yml):
+#   - merge into `main`   -> rolling `latest` release (what install.sh pulls by default)
+#   - push to `develop`   -> rolling `develop` release (RUNE_VERSION=develop)
+#   - push a `vX.Y.Z` tag -> pinned snapshot release
+# Builds (cross-compile + codesign) are rune-specific and run inside
+# packages/rune; the release itself is mrg-keystone/actions/gh-release.
 #
-# Builds stay here (cross-compile + codesign are rune-specific); the release
-# itself — tag resolution, ensure-rolling-never-delete, single-upload of all
-# assets — is mrg-keystone/actions/gh-release.
+# `paths-ignore` stops keep-only pushes (incl. keep's auto-bump commit) from
+# rebuilding rune's 3 binary targets. NOTE: GitHub does not apply paths-ignore
+# to TAG pushes, so `v*` snapshot releases still build. If a `v*` tag is ever
+# unexpectedly skipped, move the tag trigger into its own workflow file.
 on:
   push:
     branches: [main, develop]
     tags: ["v*"]
+    paths-ignore:
+      - "packages/keep/**"
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-rune-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ${{ matrix.os }}
-    # Generous ceiling so a real hang fails fast instead of burning a runner.
-    # (This governs EXECUTION time, not queue wait — the old Intel job was
-    # killed by GitHub's 24h *queue* limit because macos-13 runners were
-    # unavailable; x86_64-darwin is CROSS-COMPILED on macos-latest instead.)
     timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: packages/rune
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: macos-latest
             target: aarch64-apple-darwin
-          - os: macos-latest            # was macos-13; cross-compiled from arm64
+          - os: macos-latest # cross-compiled from arm64 (macos-13 runners unavailable)
             target: x86_64-apple-darwin
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
@@ -49,8 +49,6 @@ jobs:
         with:
           deno-version: v2.x
 
-      # Build for matrix.target explicitly (instead of `deno task build`, which is
-      # host-only) so we can cross-compile x86_64-apple-darwin on an arm64 runner.
       - name: Add Rust target
         run: rustup target add ${{ matrix.target }}
 
@@ -80,7 +78,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.target }}
-          path: rune-${{ matrix.target }}.tar.gz*
+          # upload-artifact paths are relative to the workspace root, not the
+          # job's working-directory.
+          path: packages/rune/rune-${{ matrix.target }}.tar.gz*
           retention-days: 3
 
   release:
@@ -94,6 +94,6 @@ jobs:
       # (flat SKILL.md, not a skill tarball) — keep it byte-stable.
       pack-skills: false
       extra-assets: |
-        scripts/install.sh
-        scripts/uninstall.sh
-        skills/rune/SKILL.md
+        packages/rune/scripts/install.sh
+        packages/rune/scripts/uninstall.sh
+        packages/rune/skills/rune/SKILL.md
