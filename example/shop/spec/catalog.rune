@@ -9,7 +9,7 @@
     product.toDto(): ProductDto
 
 [REQ] product.restock(StockDto): ProductDto
-    dx:product.load(id): ProductDto
+    db:product.load(id): ProductDto
       not-found
     product.addStock(quantity): product
     db:product.save(ProductDto): void
