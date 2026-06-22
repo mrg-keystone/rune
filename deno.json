@@ -1,0 +1,12 @@
+{
+  "workspace": [
+    "./packages/rune",
+    "./packages/keep"
+  ],
+  "tasks": {
+    "verify": "cd packages/rune && deno task verify",
+    "build:rune": "cd packages/rune && deno task build",
+    "test:keep": "cd packages/keep && deno task test",
+    "check:keep-jsr": "cd packages/keep && deno task check:jsr"
+  }
+}

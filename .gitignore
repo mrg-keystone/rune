@@ -1,0 +1,8 @@
+# Monorepo root scratch — each package has its own .gitignore for package-local
+# artifacts (packages/rune/.gitignore, packages/keep/.gitignore).
+dist/
+.playwright-mcp/
+node_modules/
+.env
+.env*
+*.log

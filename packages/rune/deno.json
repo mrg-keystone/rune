@@ -25,8 +25,7 @@
     "class-validator": "npm:class-validator@^0.14",
     "class-transformer": "npm:class-transformer@^0.5",
     "reflect-metadata": "npm:reflect-metadata@0.1.13",
-    "@mrg-keystone/keep": "jsr:@mrg-keystone/keep@^1",
-    "#assert": "jsr:@mrg-keystone/keep@^1/assert",
+    "#assert": "../keep/src/assert/mod.ts",
     "#api-doc": "jsr:@danet/swagger@^2.1.1/decorators"
   },
   "compilerOptions": {
