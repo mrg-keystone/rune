@@ -14,13 +14,12 @@ const RESET = "\x1b[0m";
 
 const CORE_TEMPLATE = `[MOD] core
 
-// Shared services — declare each one ONCE here; every module resolves its
-// boundary calls (db:...) from this spec. Each [SRV] generates a shared client
-// under src/core/data/<name>/, which the per-noun data adapters import.
-
-[SRV] (SIDECAR)db: DB_URL
-    the project's primary datastore (sidecar)
-    @docs https://docs.example.com/datastore
+// Shared services live here. Declare each ONCE; every module resolves its
+// boundary calls against this spec, and each [SRV] generates a client under
+// src/core/data/<name>/. Add one when you need it:
+//   [SRV] (SIDECAR)<name>: <ENV_VAR>
+//       one-line description
+//       @docs <url>
 `;
 
 // `rune init <project-name>` — scaffold a fresh project SKELETON in the spec/
