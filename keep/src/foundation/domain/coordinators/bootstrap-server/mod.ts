@@ -314,12 +314,14 @@ export class BootstrapServer {
       await Promise.race([
         pollOnce(),
         new Promise<void>((resolve) => {
-          bootTimer.id = setTimeout(resolve, BOOT_REVOCATION_POLL_TIMEOUT_MS);
+          // Deno's setTimeout returns a numeric id; cast guards against Node's
+          // `Timeout` typings leaking in under some toolchains (JSR publish check).
+          bootTimer.id = setTimeout(resolve, BOOT_REVOCATION_POLL_TIMEOUT_MS) as unknown as number;
         }),
       ]).finally(() => {
         if (bootTimer.id !== undefined) clearTimeout(bootTimer.id);
       });
-      revocationPoller = setInterval(pollOnce, revocationPollMs);
+      revocationPoller = setInterval(pollOnce, revocationPollMs) as unknown as number;
       // Don't keep the process (or test runner) alive on the poll timer alone.
       try {
         Deno.unrefTimer(revocationPoller);
