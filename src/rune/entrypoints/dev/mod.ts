@@ -94,6 +94,19 @@ function errMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+// A watched .rune path can VANISH between the FS event and the cycle that
+// handles it — moved into its module by a sync (the `spec/` → `src/<module>/`
+// relocation) or deleted by the author. Such a path is a REMOVAL, not a spec to
+// read, so the cycle drops it instead of reporting a (false) read error.
+async function specExists(abs: string): Promise<boolean> {
+  try {
+    await Deno.stat(abs);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // The same parse + rules `rune check` runs, returning the error strings instead
 // of printing them — they travel to the page banner via the status file.
 async function checkSpec(root: string, rel: string): Promise<string[]> {
@@ -278,10 +291,31 @@ export async function runDev(args: string[]): Promise<number> {
     if (!plan) return; // all noise → no cycle (keeps idle truly silent)
 
     if (plan.specs.length > 0) {
+      // A spec can VANISH between the FS event and this cycle — moved into its
+      // module by a sync (the `spec/` → `src/<module>/` relocation) or deleted by
+      // the author. A missing spec is a REMOVAL, not a syntax error: drop it so it
+      // never raises a false "spec errors — app NOT restarted" banner. (dev's own
+      // sync suppresses these paths; this also covers an EXTERNAL sync/move/rm.)
+      const liveSpecs: string[] = [];
+      let removed = false;
+      for (const rel of plan.specs) {
+        if (await specExists(join(root, rel))) liveSpecs.push(rel);
+        else removed = true;
+      }
+      if (liveSpecs.length === 0) {
+        // Nothing left to check/sync. If a spec was removed (moved/deleted), the
+        // project changed → restart so the running app reflects it; else noise.
+        if (removed) {
+          console.log(`${CYAN}rune dev: spec removed — restarting app${RESET}`);
+          await writeStatus(true, []);
+          await restartChild();
+        }
+        return;
+      }
       // Spec path: check first. Errors go to the status file ONLY — no sync, no
       // restart; the last good server keeps serving while the page shows them.
       const errors: string[] = [];
-      for (const rel of plan.specs) errors.push(...await checkSpec(root, rel));
+      for (const rel of liveSpecs) errors.push(...await checkSpec(root, rel));
       if (errors.length > 0) {
         console.error(`${BOLD}${RED}rune dev: spec errors — app NOT restarted${RESET}`);
         for (const e of errors) console.error(`  ${RED}${e}${RESET}`);
@@ -289,7 +323,7 @@ export async function runDev(args: string[]): Promise<number> {
         return;
       }
       const written: string[] = [];
-      for (const rel of plan.specs) {
+      for (const rel of liveSpecs) {
         console.log(`${BOLD}${CYAN}rune dev: spec saved → sync ${rel}${RESET}`);
         const code = await runSync(["--root", root, join(root, rel)], written);
         if (code !== 0) {
