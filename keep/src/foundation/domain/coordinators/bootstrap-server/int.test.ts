@@ -486,5 +486,68 @@ Deno.test("bootstrapServer - accepts an array of modules (composed root, per-mod
   await server.stop();
 });
 
+// A stub infra whose revocation poll is SLOW and reports break-glass ON. It lets us prove that
+// the boot-time revocation poll is genuinely awaited: if create() returns before the first poll
+// settles, the revokeAll flag is still its initial `false` and a cached bearer wrongly authorizes.
+function startSlowRevokeInfra(
+  s: TestSigner,
+  revocationDelayMs: number,
+): { url: string; stop: () => Promise<void> } {
+  const server = Deno.serve(
+    { port: 0, onListen: () => {} },
+    async (req) => {
+      const { pathname } = new URL(req.url);
+      if (pathname === "/keys/jwks") return Response.json(s.jwks);
+      if (pathname === "/revocation/status") {
+        await new Promise((r) => setTimeout(r, revocationDelayMs));
+        return Response.json({ revokeAll: true });
+      }
+      if (pathname === "/manualToken/exchange") {
+        return Response.json({
+          bearer: await s.sign({ source: "exchanged", claims: {} }),
+        });
+      }
+      return new Response("not found", { status: 404 });
+    },
+  );
+  const { port } = server.addr as Deno.NetAddr;
+  return { url: `http://127.0.0.1:${port}`, stop: () => server.shutdown() };
+}
+
+Deno.test("boot awaits the revocation poll: revokeAll is fresh before the first request", async () => {
+  // The poll takes ~150ms and reports revokeAll ON. By the time bootstrapServer() returns, the
+  // flag MUST already reflect that — so a network request carrying a cached session bearer is
+  // rejected (force re-exchange), not authorized against the stale initial revokeAll=false.
+  const infra = startSlowRevokeInfra(signer, 150);
+  Deno.env.set("INFRA_BASE_URL", infra.url);
+  try {
+    const port = portCounter++;
+    const server = await bootstrapServer("test-app", GuardModule, {
+      port,
+      swagger: false,
+    });
+    const remote = {
+      remoteAddr: { transport: "tcp", hostname: "203.0.113.5", port: 1 },
+    };
+    const token = await sessionBearer();
+    const res = await server.handler(
+      new Request("http://app/secret", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+      // deno-lint-ignore no-explicit-any
+      remote as any,
+    );
+    assertEquals(
+      res.status,
+      401,
+      "break-glass was ON at boot — the cached bearer must be rejected on the first request",
+    );
+    await server.stop();
+  } finally {
+    Deno.env.delete("INFRA_BASE_URL");
+    await infra.stop();
+  }
+});
+
 // POST /docs/_run is covered comprehensively in run-endpoint.int.test.ts
 // (localhost report, 403 off-host + no-conn, seeds, forced cycle, dryRun).

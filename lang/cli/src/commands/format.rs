@@ -48,7 +48,11 @@ fn format_content(content: &str) -> String {
             }
             in_block = false;
             after_step = false;
-            in_poly = false;
+            // Do NOT reset in_poly here: a blank line is legal/cosmetic inside a
+            // [PLY] body, so it must not collapse the poly block. The block is
+            // closed when the next non-blank step returns to REQ-level indent
+            // (handled below via the `in_poly && orig_indent >= 6` check) or by a
+            // [REQ]/[DTO]/[TYP]/[NON]/[NEW]/[RET] tag.
             continue;
         }
 
@@ -94,8 +98,14 @@ fn format_content(content: &str) -> String {
             };
             lines.push(format!("{}{}", " ".repeat(indent), trimmed));
             after_step = true;
-        } else if after_step && is_fault_line(trimmed) {
-            // Faults at 6 spaces (or 10 inside a poly case)
+        } else if after_step && orig_indent >= 6 && is_fault_line(trimmed) {
+            // Faults at 6 spaces (or 10 inside a poly case). Only a line that the
+            // author ALREADY placed at fault level (indent >= 6) is treated as a
+            // fault — this mirrors the parser, which only recognizes a Fault at
+            // actual_indent >= 6 (parser lib.rs). Free-text prose after a step
+            // (typically at the description indent 4) is all-lowercase too, so
+            // without this guard it would be misclassified as a fault and
+            // re-indented to 6, fabricating fault names and changing meaning.
             let indent = if in_poly { 10 } else { 6 };
             lines.push(format!("{}{}", " ".repeat(indent), trimmed));
         } else if in_block && (trimmed.starts_with("//") || !trimmed.contains(':')) {
@@ -162,9 +172,13 @@ mod tests {
 
     #[test]
     fn formats_faults_at_six_spaces() {
-        let content = "[REQ] test.run(In): Out\n    db:storage.save(): void\nnot-found";
+        // A fault the author placed at a real fault position (indent >= 6)
+        // normalizes to exactly 6 spaces. (We do NOT promote an indent-0 line to
+        // a fault — that would fabricate faults from prose; see R5. The parser
+        // only recognizes a Fault at actual_indent >= 6.)
+        let content = "[REQ] test.run(In): Out\n    db:storage.save(): void\n        not-found";
         let formatted = format_content(content);
-        assert!(formatted.contains("\n      not-found"));
+        assert!(formatted.contains("\n      not-found"), "got:\n{formatted}");
     }
 
     #[test]
@@ -208,6 +222,36 @@ mod tests {
         // the terminal step keeps 4 spaces; the case step stays at 8
         assert!(out.contains("\n    n.toDto(): OutDto"), "terminal step must stay at indent 4, got:\n{out}");
         assert!(out.contains("\n        ex:ch.mail(InDto): OutDto"), "case step must stay at indent 8");
+    }
+
+    #[test]
+    fn r5_prose_after_step_is_not_treated_as_fault() {
+        // Free-text prose after a step (all lowercase words, originally at the
+        // description indent 4) must be treated as a description (indent 4), not
+        // misclassified as a fault and re-indented to 6.
+        let input = "[REQ] r.run(InDto): OutDto\n    id::create(name): id\n    creates a brand new id\n";
+        let out = format_content(input);
+        assert!(
+            out.contains("\n    creates a brand new id"),
+            "prose after a step must stay at description indent 4, got:\n{out}"
+        );
+        assert!(
+            !out.contains("\n      creates a brand new id"),
+            "prose after a step must NOT be re-indented to fault level 6, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn r2_blank_line_inside_poly_does_not_collapse_case() {
+        // A blank line between two case steps is legal/cosmetic inside a [PLY]
+        // body. It must NOT collapse the poly block: the case step after the
+        // blank must stay at case level (8), not be re-indented to REQ level (4).
+        let input = "[REQ] n.send(InDto): OutDto\n    [PLY] ch.deliver(InDto): OutDto\n        [CSE] email\n        ex:ch.mail(InDto): OutDto\n\n        ex:ch.log(InDto): OutDto\n";
+        let out = format_content(input);
+        assert!(
+            out.contains("\n        ex:ch.log(InDto): OutDto"),
+            "case step after a blank line must stay at indent 8, got:\n{out}"
+        );
     }
 
     #[test]

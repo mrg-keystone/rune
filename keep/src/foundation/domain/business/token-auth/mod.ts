@@ -127,12 +127,21 @@ export interface CredentialGuardConfig {
   skeletonMaxAgeSeconds?: number;
 }
 
-/** Scopes namespaced `appName:role` claims to this app, returning the bare role names. */
+/**
+ * Scopes namespaced `appName:role` claims to this app, returning the bare role names.
+ *
+ * Hardening: an empty bare role is dropped. A claim that is exactly the app prefix (e.g. `"test:"`)
+ * slices to `""`; left in, that empty remainder could spuriously satisfy a mis-typed `@Roles("")` /
+ * `@claims([""])` (the `required.some((r) => scoped.includes(r))` check would match `"" === ""`) and
+ * would also leak onto the resolved identity. No legitimate role is named `""`, so filtering empty
+ * remainders changes nothing for any real, non-empty role.
+ */
 export function scopeRoles(roles: string[], appName: string): string[] {
   const prefix = `${appName}:`;
-  return roles.filter((r) => r.startsWith(prefix)).map((r) =>
-    r.slice(prefix.length)
-  );
+  return roles
+    .filter((r) => r.startsWith(prefix))
+    .map((r) => r.slice(prefix.length))
+    .filter((r) => r.length > 0);
 }
 
 /** Splits the comma-separated `role` claim into trimmed, non-empty namespaced role entries. */
@@ -424,9 +433,23 @@ export function isLoopbackRequest(c: Context): boolean {
   return peer !== undefined && LOOPBACK_HOSTS.has(peer);
 }
 
-/** A path is public when it equals a prefix or sits under it (`/docs` ⇒ `/docs`, `/docs/x`). */
+/**
+ * A path is public when it equals a prefix or sits under it (`/docs` ⇒ `/docs`, `/docs/x`).
+ *
+ * Hardening: empty / whitespace-only entries are dropped — an `""` prefix would otherwise make
+ * `path.startsWith("/")` true for EVERY route and open the whole app (a real footgun for an
+ * integrator doing `publicPaths: env.split(",")` with an accidental empty entry). A single trailing
+ * slash is normalized so a mis-typed `"/docs/"` matches like the documented `"/docs"` (a lone `"/"`
+ * is preserved so a root-only public entry behaves exactly as before). Matching for every legitimate
+ * non-empty prefix is otherwise unchanged.
+ */
 function isPublicPath(path: string, prefixes: string[]): boolean {
-  return prefixes.some((p) => path === p || path.startsWith(`${p}/`));
+  return prefixes.some((raw) => {
+    if (raw.trim().length === 0) return false;
+    const stripped = raw.endsWith("/") ? raw.slice(0, -1) : raw;
+    const p = stripped.length > 0 ? stripped : raw;
+    return path === p || path.startsWith(`${p}/`);
+  });
 }
 
 function remoteHostname(c: Context): string | undefined {

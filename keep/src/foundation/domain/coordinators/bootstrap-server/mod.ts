@@ -74,6 +74,9 @@ const HONOR_SKELETON_ENV = "HONOR_SKELETON"; // default true; set false for the 
 // Defaults for the revocation poll cadence and how long a fetched JWKS is trusted before refetch.
 const DEFAULT_REVOCATION_POLL_MS = 60_000;
 const DEFAULT_JWKS_TTL_SECONDS = 600;
+// Upper bound on how long boot waits for the first revocation poll before proceeding — a hung
+// infra endpoint (getJson sets no fetch timeout) must never block startup indefinitely.
+const BOOT_REVOCATION_POLL_TIMEOUT_MS = 3_000;
 
 // Datadog region is fixed; alert routing is read from the environment so internal email
 // addresses stay out of the (public) package source.
@@ -205,6 +208,11 @@ export class BootstrapServer {
     const { port = 3000, swagger = true } = options ?? {};
 
     // Configure the process-wide logger from env before anything can emit.
+    // ASSUMPTION: one BootstrapServer per process. The logger, tracer, trace
+    // shipper, RuneAssertError filter, and bootId are process-global singletons,
+    // so calling create() a second time in the same process with a different
+    // appName/config last-wins and overwrites the first — fine for tests that run
+    // servers sequentially, but do not run two apps concurrently in one process.
     configureLoggingFromEnv(appName);
 
     // Opt-in durable traces: KEEP_TRACE_KV ("1"/"true" → default KV location, or a path) stores
@@ -296,7 +304,21 @@ export class BootstrapServer {
           );
         }
       };
-      pollOnce(); // kick once at boot so the flag is fresh before the first request
+      // Kick once at boot AND wait for it, so the revokeAll flag is genuinely fresh before the
+      // first request can reach the guard. `pollOnce` swallows its own errors (a failed poll just
+      // logs and keeps the last-known flag), so the only hazard is a hung infra endpoint —
+      // `getJson` sets no fetch timeout — which would otherwise block boot indefinitely. Cap the
+      // wait: if the first poll hasn't settled within the boot budget, proceed anyway (the
+      // interval poller below will pick up the real value shortly) rather than stall startup.
+      const bootTimer = { id: undefined as number | undefined };
+      await Promise.race([
+        pollOnce(),
+        new Promise<void>((resolve) => {
+          bootTimer.id = setTimeout(resolve, BOOT_REVOCATION_POLL_TIMEOUT_MS);
+        }),
+      ]).finally(() => {
+        if (bootTimer.id !== undefined) clearTimeout(bootTimer.id);
+      });
       revocationPoller = setInterval(pollOnce, revocationPollMs);
       // Don't keep the process (or test runner) alive on the poll timer alone.
       try {

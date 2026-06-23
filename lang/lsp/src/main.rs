@@ -14,6 +14,14 @@ struct Backend {
     documents: Arc<RwLock<std::collections::HashMap<Url, Rope>>>,
 }
 
+/// The authoritative full-document text for a `textDocument/didChange` under
+/// TextDocumentSyncKind::FULL. Each change carries the full new document and the
+/// spec says changes apply in receive order, so the LAST change wins. Returns
+/// `None` only when the notification carries no changes.
+fn full_sync_text(changes: Vec<TextDocumentContentChangeEvent>) -> Option<String> {
+    changes.into_iter().last().map(|c| c.text)
+}
+
 /// The project's shared [SRV] service names for the spec at `uri`: resolve the
 /// root (dir above an outermost `src/<module>/`, else the spec's own dir) and
 /// read the core spec at `<root>/src/core/core.rune` or a flat `<root>/core.rune`.
@@ -258,9 +266,6 @@ impl Backend {
         let mut poly_stack: Vec<usize> = Vec::new(); // indents of open [PLY] scopes
         let mut in_req = false;
         let mut last_step_indent: Option<usize> = None;
-        let mut current_req_output: Option<String> = None;
-        let mut last_step_output: Option<String> = None;
-        let mut last_step_line: Option<usize> = None;
         let mut last_was_req = false;
         let mut consecutive_empty: usize = 0;
 
@@ -308,12 +313,6 @@ impl Backend {
                 }
 
                 LineKind::Req { noun, verb, input, output, indent, modifier, .. } => {
-                    // The previous REQ's last step must have returned its output DTO.
-                    if let (Some(ro), Some(so), Some(sl)) = (&current_req_output, &last_step_output, last_step_line) {
-                        if ro != so {
-                            diagnostics.push(diag_err(sl, format!("Last step must return '{}' (REQ output), got '{}'", ro, so)));
-                        }
-                    }
                     if let Some(m) = modifier {
                         // Parity with the TS parser: the core modifier keeps its
                         // specific message; any other modifier gets the generic one.
@@ -342,9 +341,6 @@ impl Backend {
                     }
                     in_req = true;
                     poly_stack.clear();
-                    current_req_output = Some(output.clone());
-                    last_step_output = None;
-                    last_step_line = None;
                     last_step_indent = None;
                     last_was_req = true;
                     consecutive_empty = 0;
@@ -362,8 +358,6 @@ impl Backend {
                     if output.is_empty() {
                         diagnostics.push(diag_err(line_num, "Step missing return type".to_string()));
                     }
-                    last_step_output = Some(output.clone());
-                    last_step_line = Some(line_num);
                     last_step_indent = Some(*indent);
                     last_was_req = false;
                     consecutive_empty = 0;
@@ -389,8 +383,6 @@ impl Backend {
                     if !is_dto_or_primitive(output, &defined_types) {
                         diagnostics.push(diag_err(line_num, format!("{} boundary must return a DTO or primitive, got '{}'", prefix, output)));
                     }
-                    last_step_output = Some(output.clone());
-                    last_step_line = Some(line_num);
                     last_step_indent = Some(*indent);
                     last_was_req = false;
                     consecutive_empty = 0;
@@ -419,8 +411,6 @@ impl Backend {
                     }
                     check_sig(&mut diagnostics, &mut method_signatures, line_num, noun, verb, *is_static, params, output);
                     poly_stack.push(*indent);
-                    last_step_output = Some(output.clone());
-                    last_step_line = Some(line_num);
                     last_step_indent = Some(*indent);
                     last_was_req = false;
                     consecutive_empty = 0;
@@ -450,13 +440,6 @@ impl Backend {
                 }
 
                 LineKind::TypDef { name, type_name, modifier } => {
-                    if !is_valid_primitive_type(type_name) {
-                        if type_name.ends_with("Dto") {
-                            diagnostics.push(diag_err(line_num, format!("Type '{}' cannot reference DTO '{}' - types must be primitives", name, type_name)));
-                        } else if defined_types.contains_key(type_name) {
-                            diagnostics.push(diag_err(line_num, format!("Type '{}' cannot reference type '{}' - types must be primitives", name, type_name)));
-                        }
-                    }
                     if let Some(m) = modifier {
                         for msg in validate_typ_modifiers(m, name, type_name) {
                             diagnostics.push(diag_err(line_num, msg));
@@ -475,7 +458,7 @@ impl Backend {
                     consecutive_empty = 0;
                 }
 
-                LineKind::Ret { value, indent } => {
+                LineKind::Ret { value: _, indent } => {
                     if !in_req {
                         diagnostics.push(diag_err(line_num, "[RET] outside [REQ]".to_string()));
                         continue;
@@ -483,8 +466,6 @@ impl Backend {
                     if *indent != step_expected {
                         diagnostics.push(diag_err(line_num, format!("[RET] should be indented {} spaces, got {}", step_expected, indent)));
                     }
-                    last_step_output = Some(value.clone());
-                    last_step_line = Some(line_num);
                     last_step_indent = Some(*indent);
                     last_was_req = false;
                     consecutive_empty = 0;
@@ -556,24 +537,17 @@ impl Backend {
                     consecutive_empty = 0;
                 }
 
-                LineKind::SrvDocs { url, .. } => {
+                LineKind::SrvDocs { name, url, .. } => {
                     if url.trim().is_empty() {
                         diagnostics.push(diag_err(
                             line_num,
-                            "[SRV] @docs needs a URL".to_string(),
+                            format!("[SRV] {}: @docs needs a URL", name),
                         ));
                     }
                     consecutive_empty = 0;
                 }
 
                 LineKind::Comment { .. } => {}
-            }
-        }
-
-        // Final REQ's last step must return its output DTO.
-        if let (Some(ro), Some(so), Some(sl)) = (&current_req_output, &last_step_output, last_step_line) {
-            if ro != so {
-                diagnostics.push(diag_err(sl, format!("Last step must return '{}' (REQ output), got '{}'", ro, so)));
             }
         }
 
@@ -721,36 +695,6 @@ fn is_dto_or_primitive(s: &str, defined_types: &HashMap<String, String>) -> bool
     false
 }
 
-/// Check if a type expression is valid for [TYP] definitions
-/// Valid: primitives, generics (Array<T>, Record<K,V>), tuples ([a, b]), string enums
-fn is_valid_primitive_type(s: &str) -> bool {
-    let s = s.trim();
-
-    // Raw primitives
-    if is_primitive(s) {
-        return true;
-    }
-
-    // String enum types like "genie" | "fiveNine"
-    if s.contains('"') && s.contains('|') {
-        return true;
-    }
-
-    // Generic types like Array<url>, Record<string, Primitive>
-    if s.contains('<') && s.ends_with('>') {
-        let base = s.split('<').next().unwrap_or("");
-        // Allow any generic - the inner types will be validated separately if needed
-        return matches!(base, "Array" | "Record" | "Map" | "Set" | "Promise" | "Partial" | "Required" | "Pick" | "Omit" | "ReturnType");
-    }
-
-    // Tuple types like [id, name]
-    if s.starts_with('[') && s.ends_with(']') {
-        return true;
-    }
-
-    false
-}
-
 /// Validate a `[TYP:...]` constraint-modifier list (e.g. `ext,uuid` or
 /// `min=0,max=100`) against the design contract §5. Returns one message per
 /// problem, byte-identical to the TS engine + studio so all three emit the
@@ -876,8 +820,12 @@ impl LanguageServer for Backend {
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri;
-        if let Some(change) = params.content_changes.into_iter().next() {
-            let rope = Rope::from_str(&change.text);
+        // Under TextDocumentSyncKind::FULL every change.text is a full-document
+        // snapshot, and per the LSP spec changes apply in receive order, so the
+        // LAST change is authoritative. A client batching multiple changes in one
+        // notification must not lose all but the first.
+        if let Some(text) = full_sync_text(params.content_changes) {
+            let rope = Rope::from_str(&text);
             self.documents.write().await.insert(uri.clone(), rope);
             self.validate(&uri).await;
         }
@@ -903,7 +851,8 @@ impl LanguageServer for Backend {
         let lines_vec: Vec<&str> = text.lines().collect();
         let current_line = lines_vec.get(pos.line as usize).unwrap_or(&"");
         let col = pos.character as usize;
-        let prefix = &current_line[..col.min(current_line.len())];
+        let prefix = completion_prefix(current_line, col);
+        let prefix = prefix.as_str();
 
         let mut items = Vec::new();
 
@@ -1296,23 +1245,20 @@ impl LanguageServer for Backend {
 
         // Find all references to this word
         for (i, line) in lines.iter().enumerate() {
-            if line.contains(&word) {
-                // Find column position of the word in this line
-                if let Some(col_start) = line.find(&word) {
-                    locations.push(Location {
-                        uri: uri.clone(),
-                        range: Range {
-                            start: Position {
-                                line: i as u32,
-                                character: col_start as u32,
-                            },
-                            end: Position {
-                                line: i as u32,
-                                character: (col_start + word.len()) as u32,
-                            },
+            for (char_start, char_end) in word_match_columns(line, &word) {
+                locations.push(Location {
+                    uri: uri.clone(),
+                    range: Range {
+                        start: Position {
+                            line: i as u32,
+                            character: char_start,
                         },
-                    });
-                }
+                        end: Position {
+                            line: i as u32,
+                            character: char_end,
+                        },
+                    },
+                });
             }
         }
 
@@ -1324,19 +1270,57 @@ impl LanguageServer for Backend {
     }
 }
 
+/// Every (start, end) column pair (as char offsets, the LSP `Position.character`
+/// unit used elsewhere in this file) where `word` occurs in `line`. Substring
+/// semantics, matching `references`' original `line.contains`/`line.find` intent,
+/// but ALL occurrences, not just the first, and byte offsets converted to char
+/// offsets so they are correct on multibyte lines.
+fn word_match_columns(line: &str, word: &str) -> Vec<(u32, u32)> {
+    if word.is_empty() {
+        return Vec::new();
+    }
+    let word_chars = word.chars().count() as u32;
+    let mut out = Vec::new();
+    let mut search_from = 0usize; // byte offset
+    while let Some(rel) = line[search_from..].find(word) {
+        let byte_start = search_from + rel;
+        let char_start = line[..byte_start].chars().count() as u32;
+        out.push((char_start, char_start + word_chars));
+        search_from = byte_start + word.len();
+    }
+    out
+}
+
+/// Build the completion prefix: the portion of `line` up to the cursor.
+/// `col` is a character offset (matching `get_word_at_position`), not a byte
+/// offset, so it must index by chars to stay correct on multibyte lines.
+fn completion_prefix(line: &str, col: usize) -> String {
+    line.chars().take(col).collect()
+}
+
 fn get_word_at_position(line: &str, col: usize) -> String {
     let chars: Vec<char> = line.chars().collect();
-    if col >= chars.len() {
-        return String::new();
-    }
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_';
 
-    let mut start = col;
-    while start > 0 && (chars[start - 1].is_alphanumeric() || chars[start - 1] == '_') {
+    // Anchor for the scan. When the cursor sits past the end, or on a
+    // non-identifier char, but the PREVIOUS char is an identifier char (the
+    // normal end-of-word / end-of-line cursor placement), back up by one so
+    // the trailing-cursor case still resolves the word.
+    let anchor = if col < chars.len() && is_ident(chars[col]) {
+        col
+    } else if col > 0 && is_ident(chars[col - 1]) {
+        col - 1
+    } else {
+        return String::new();
+    };
+
+    let mut start = anchor;
+    while start > 0 && is_ident(chars[start - 1]) {
         start -= 1;
     }
 
-    let mut end = col;
-    while end < chars.len() && (chars[end].is_alphanumeric() || chars[end] == '_') {
+    let mut end = anchor;
+    while end < chars.len() && is_ident(chars[end]) {
         end += 1;
     }
 
@@ -1427,6 +1411,60 @@ mod tests {
         );
     }
 
+    fn change(text: &str) -> TextDocumentContentChangeEvent {
+        TextDocumentContentChangeEvent {
+            range: None,
+            range_length: None,
+            text: text.to_string(),
+        }
+    }
+
+    /// R7: under FULL sync, a batched didChange must apply the LAST change (the
+    /// authoritative full-document snapshot), not the first.
+    #[test]
+    fn r7_full_sync_uses_last_change() {
+        // batched [OLD, NEW] -> NEW
+        let picked = full_sync_text(vec![change("OLD"), change("NEW")]);
+        assert_eq!(picked.as_deref(), Some("NEW"));
+
+        // batched [CLEAN, BAD] -> BAD (the bug returned the first = CLEAN)
+        let picked = full_sync_text(vec![change("clean"), change("bad")]);
+        assert_eq!(picked.as_deref(), Some("bad"));
+
+        // single change -> that change
+        let picked = full_sync_text(vec![change("only")]);
+        assert_eq!(picked.as_deref(), Some("only"));
+
+        // no changes -> None
+        let picked = full_sync_text(Vec::new());
+        assert_eq!(picked, None);
+    }
+
+    /// R7 end-to-end via diagnostics: a batched [BAD(>80), CLEAN] update must
+    /// leave the document CLEAN (last wins), producing no diagnostics; and
+    /// [CLEAN, BAD] must surface the >80 diagnostic.
+    #[test]
+    fn r7_batched_full_sync_diagnostics_reflect_last_change() {
+        let clean = "[REQ] x.run(InDto): OutDto\n";
+        let bad = format!("[TYP] {}: string\n", "x".repeat(100));
+
+        let last_clean = full_sync_text(vec![change(&bad), change(clean)]).unwrap();
+        let diags = Backend::compute_diagnostics(&last_clean, &std::collections::HashSet::new());
+        assert!(
+            diags.is_empty(),
+            "batched [BAD, CLEAN] must end CLEAN, got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+
+        let last_bad = full_sync_text(vec![change(clean), change(&bad)]).unwrap();
+        let diags = Backend::compute_diagnostics(&last_bad, &std::collections::HashSet::new());
+        assert!(
+            diags.iter().any(|d| d.message.contains("80 columns")),
+            "batched [CLEAN, BAD] must end BAD (>80 diagnostic), got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
     /// A [SRV] missing its required `@docs <url>` line is flagged (mirrors
     /// `rune check`). With the line present, no @docs diagnostic appears.
     #[test]
@@ -1447,6 +1485,89 @@ mod tests {
         assert!(
             !diags.iter().any(|d| d.message.contains("@docs")),
             "expected no @docs diagnostic, got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    /// Item 4: the empty-`@docs` diagnostic must name the service, matching the
+    /// TS engine string `[SRV] <name>: @docs needs a URL`.
+    #[test]
+    fn srv_empty_docs_message_includes_service_name() {
+        let text = "[SRV] (SDK)firebase: API_KEY\n    @docs";
+        let diags = Backend::compute_diagnostics(text, &std::collections::HashSet::new());
+        assert!(
+            diags.iter().any(|d| d.message == "[SRV] firebase: @docs needs a URL"),
+            "expected name-prefixed empty-@docs message, got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    /// Item 1a (parity with `rune check`): a spec whose last step's output does
+    /// NOT equal the REQ output must NOT be flagged — codegen derives the result
+    /// from ANY core read, not the last step, so this is a valid spec.
+    #[test]
+    fn last_step_output_neq_req_output_is_not_flagged() {
+        let text = "[MOD] search\n\
+                    \n\
+                    [REQ] search.run(QueryDto): ResultsDto\n\
+                    \x20\x20\x20\x20db:index.query(QueryDto): ResultsDto\n\
+                    \x20\x20\x20\x20db:audit.record(ResultsDto): AuditDto\n\
+                    \n\
+                    [DTO] QueryDto: query\n\
+                    \x20\x20\x20\x20a search query\n\
+                    \n\
+                    [DTO] ResultsDto: items\n\
+                    \x20\x20\x20\x20the matched results\n\
+                    \n\
+                    [DTO] AuditDto: items\n\
+                    \x20\x20\x20\x20an audit record\n\
+                    \n\
+                    [TYP] query: string\n\
+                    \x20\x20\x20\x20the query\n\
+                    [TYP] items: string\n\
+                    \x20\x20\x20\x20an item\n\
+                    \n\
+                    [SRV] (SIDECAR)db: DB_URL\n\
+                    \x20\x20\x20\x20the datastore\n\
+                    \x20\x20\x20\x20@docs https://docs.example.com/db\n";
+        let diags = Backend::compute_diagnostics(text, &std::collections::HashSet::new());
+        assert!(
+            !diags.iter().any(|d| d.message.contains("Last step must return")),
+            "last-step-output != REQ-output must not be flagged, got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    /// Item 1b (parity with `rune check`): a [TYP] may alias a DTO or another
+    /// [TYP] — the LSP must not require the type to be a primitive.
+    #[test]
+    fn typ_aliasing_dto_or_typ_is_not_flagged() {
+        let text = "[MOD] catalog\n\
+                    \n\
+                    [REQ] item.add(AddItemDto): ItemDto\n\
+                    \x20\x20\x20\x20db:item.save(AddItemDto): ItemDto\n\
+                    \x20\x20\x20\x20[RET] ItemDto\n\
+                    \n\
+                    [TYP] name: string\n\
+                    \x20\x20\x20\x20a name\n\
+                    [TYP] itemRef: ItemDto\n\
+                    \x20\x20\x20\x20an alias to the DTO\n\
+                    [TYP] label: name\n\
+                    \x20\x20\x20\x20an alias to another TYP\n\
+                    \n\
+                    [DTO] AddItemDto: name\n\
+                    \x20\x20\x20\x20a request\n\
+                    \n\
+                    [DTO] ItemDto: name\n\
+                    \x20\x20\x20\x20a stored item\n\
+                    \n\
+                    [SRV] (SIDECAR)db: DB_URL\n\
+                    \x20\x20\x20\x20the datastore\n\
+                    \x20\x20\x20\x20@docs https://docs.example.com/db\n";
+        let diags = Backend::compute_diagnostics(text, &std::collections::HashSet::new());
+        assert!(
+            !diags.iter().any(|d| d.message.contains("must be primitives")),
+            "[TYP] aliasing a DTO/TYP must not be flagged, got: {:?}",
             diags.iter().map(|d| &d.message).collect::<Vec<_>>()
         );
     }
@@ -1582,5 +1703,79 @@ mod tests {
             "expected no undeclared-service diag, got: {:?}",
             diags.iter().map(|d| &d.message).collect::<Vec<_>>()
         );
+    }
+
+    // --- Bug [B]: completion prefix must be char-indexed, not byte-indexed ---
+
+    #[test]
+    fn completion_prefix_multibyte_no_panic() {
+        // `col` is an LSP/char offset; on a multibyte line, byte-slicing at
+        // col=1 lands inside `é` (bytes 0..2) and panics.
+        assert_eq!(completion_prefix("é", 1), "é");
+    }
+
+    #[test]
+    fn completion_prefix_cursor_past_end() {
+        // Cursor past the end of a multibyte line clamps to the whole line.
+        assert_eq!(completion_prefix("é", 5), "é");
+        assert_eq!(completion_prefix("ab", 5), "ab");
+    }
+
+    #[test]
+    fn completion_prefix_ascii_unchanged() {
+        assert_eq!(completion_prefix("hello world", 5), "hello");
+        assert_eq!(completion_prefix("hello", 0), "");
+    }
+
+    // --- Bug [C]: get_word_at_position must resolve a trailing cursor --------
+
+    #[test]
+    fn word_at_position_end_of_line() {
+        // Cursor at EOL, immediately after the last char of `UserDto`.
+        // `"[DTO] UserDto"` has 13 chars; col=13 is one past the end.
+        let line = "[DTO] UserDto";
+        assert_eq!(get_word_at_position(line, 13), "UserDto");
+    }
+
+    #[test]
+    fn word_at_position_trailing_within_line() {
+        // Cursor just after a word but before a non-identifier char.
+        // "id foo": cursor at col=2 (the space) sits right after `id`.
+        assert_eq!(get_word_at_position("id foo", 2), "id");
+    }
+
+    #[test]
+    fn word_at_position_inside_word_unchanged() {
+        // Cursor inside a word still returns the whole word.
+        assert_eq!(get_word_at_position("[DTO] UserDto", 8), "UserDto");
+        assert_eq!(get_word_at_position("id foo", 0), "id");
+    }
+
+    #[test]
+    fn word_at_position_on_whitespace_between_words() {
+        // Cursor on whitespace between two words returns "".
+        // "id  foo": col=2 is right after `id` (resolves to "id"); col=3 is a
+        // space with a space before it (no adjacent identifier char) -> "".
+        assert_eq!(get_word_at_position("id  foo", 3), "");
+    }
+
+    // --- Bug [D]: references must find ALL occurrences, as char offsets ------
+
+    #[test]
+    fn word_match_columns_multiple_occurrences() {
+        // A word used twice on one line must yield BOTH locations.
+        assert_eq!(word_match_columns("id id", "id"), vec![(0, 2), (3, 5)]);
+    }
+
+    #[test]
+    fn word_match_columns_multibyte_char_offset() {
+        // Leading multibyte char: `id` starts at char column 2, not byte 3.
+        assert_eq!(word_match_columns("é id", "id"), vec![(2, 4)]);
+    }
+
+    #[test]
+    fn word_match_columns_ascii_single() {
+        assert_eq!(word_match_columns("hello id world", "id"), vec![(6, 8)]);
+        assert_eq!(word_match_columns("no match here", "id"), Vec::<(u32, u32)>::new());
     }
 }

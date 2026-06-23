@@ -1,7 +1,40 @@
 import { assert, assertEquals, assertStringIncludes } from "#std/assert";
 import { parse } from "@rune/domain/business/rune-parse/mod.ts";
 import { bindings } from "@rune/domain/business/rune-bindings/mod.ts";
-import { collectNounMethods, renderImpl } from "./mod.ts";
+import { collectNounMethods, renderImpl, renderParams } from "./mod.ts";
+
+// ---- L1: param identifier dedup must stay collision-free ----
+// The empty/duplicate fallback must NOT itself collide. When an earlier real
+// param already produced `arg1` and a later param at index 1 collapses (empty
+// or junk), the fallback `arg${i}` would reuse `arg1`, emitting a signature
+// like `run(arg1: unknown, arg1: unknown)` that fails `deno check` (TS2300
+// Duplicate identifier). Each rendered identifier must be DISTINCT.
+
+function identsOf(rendered: string): string[] {
+  return rendered
+    .split(",")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .map((p) => p.split(":")[0].trim());
+}
+
+Deno.test("renderParams — empty param colliding with a real argN stays distinct", () => {
+  // `arg1` is a real param at index 0; the empty param at index 1 must NOT
+  // also collapse to `arg1`.
+  const rendered = renderParams(["arg1", ""]);
+  const idents = identsOf(rendered);
+  assertEquals(idents.length, 2);
+  assertEquals(new Set(idents).size, 2, `duplicate identifier in: ${rendered}`);
+});
+
+Deno.test("renderParams — junk param colliding with a real argN stays distinct", () => {
+  // `@` sanitises to "" then would collapse to `arg1`, colliding with the real
+  // `arg1` at index 0.
+  const rendered = renderParams(["arg1", "@"]);
+  const idents = identsOf(rendered);
+  assertEquals(idents.length, 2);
+  assertEquals(new Set(idents).size, 2, `duplicate identifier in: ${rendered}`);
+});
 
 const SPEC = `[MOD] m
 [REQ] m.run(InDto): OutDto

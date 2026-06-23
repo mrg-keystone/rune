@@ -289,6 +289,14 @@ export async function runDev(args: string[]): Promise<number> {
         console.log(`${BOLD}${CYAN}rune dev: spec saved → sync ${rel}${RESET}`);
         const code = await runSync(["--root", root, join(root, rel)], written);
         if (code !== 0) {
+          // S14: even on failure, mute whatever sync already wrote (this spec's
+          // partial writes + any earlier spec in the loop) so the watch loop does
+          // not re-trigger on its own writes. Mirrors the success path below.
+          addSuppressions(
+            suppressions,
+            written.map((p) => resolve(p)),
+            Date.now() + SUPPRESS_TAIL_MS,
+          );
           await writeStatus(false, [`rune sync failed for ${rel} (exit ${code})`]);
           return;
         }

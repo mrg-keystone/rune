@@ -140,7 +140,10 @@ function assertInstance<T extends object>(
   if (openSrc) {
     const inst = instance as Record<string, unknown>;
     for (const k of Object.keys(openSrc)) {
-      if (!(k in inst)) inst[k] = openSrc[k];
+      // Own-property check, not the prototype-aware `in`: an inbound field named like an
+      // Object.prototype member ("toString", "constructor", …) is a legitimate extra and must
+      // re-attach as the instance's own value, not be treated as already-present.
+      if (!Object.prototype.hasOwnProperty.call(inst, k)) inst[k] = openSrc[k];
     }
   }
   return instance;

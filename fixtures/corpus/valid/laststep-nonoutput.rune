@@ -1,0 +1,25 @@
+[MOD] search
+
+[REQ] search.run(QueryDto): ResultsDto
+    db:index.query(QueryDto): ResultsDto
+      timeout
+    db:audit.record(ResultsDto): AuditDto
+
+[DTO] QueryDto: query
+    a search query
+
+[DTO] ResultsDto: items
+    the matched results
+
+[DTO] AuditDto: items
+    an audit record of the search
+
+[TYP] query: string
+    the raw query text
+
+[TYP] items: string
+    a serialized result item
+
+[SRV] (SIDECAR)db: DB_URL
+    the primary datastore
+    @docs https://docs.example.com/db

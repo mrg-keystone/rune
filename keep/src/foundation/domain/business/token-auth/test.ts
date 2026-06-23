@@ -170,6 +170,30 @@ Deno.test("a public prefix does not leak to lookalike paths", async () => {
   );
 });
 
+Deno.test("an empty-string public prefix never opens the app (fail-closed)", async () => {
+  // An accidental "" entry (e.g. env.split(",") with a trailing comma) must NOT make every
+  // route public. A protected path with no credential must still 401.
+  const app = appWith({ publicPaths: [""] });
+  assertEquals((await app.fromNetwork(req())).status, 401);
+  // Even a whitespace-only entry is inert.
+  const ws = appWith({ publicPaths: ["   "] });
+  assertEquals((await ws.fromNetwork(req())).status, 401);
+});
+
+Deno.test("a trailing-slash public prefix matches like the documented prefix", async () => {
+  // "/docs/" should behave like the documented "/docs" — make /docs public.
+  const app = appWith({ publicPaths: ["/docs/"] });
+  assertEquals(
+    (await app.fromNetwork(new Request("http://app/docs"))).status,
+    200,
+  );
+  // Still segment-scoped: a lookalike path stays protected.
+  assertEquals(
+    (await app.fromNetwork(new Request("http://app/docsignore"))).status,
+    401,
+  );
+});
+
 // ---- opaque-token exchange ----
 
 Deno.test("an opaque token is exchanged at infra and the fresh bearer is handed back", async () => {
@@ -424,6 +448,39 @@ Deno.test("guard: @Roles without any credential is 401", async () => {
     () => Promise.resolve(g.canActivate(ctx as unknown as Context)),
     UnauthorizedException,
   );
+});
+
+Deno.test("guard: a bare-prefix role does NOT satisfy a mis-typed @Roles('')", async () => {
+  // A caller holding the bare app-prefix role "test:" scopes to an empty remainder. A route
+  // mis-decorated @Roles("") must NOT be opened by that empty===empty match (fail-closed).
+  const { g } = guard();
+  const token = await bearerFor({ claims: { role: "test:" } });
+  const ctx = guardCtx({
+    hostname: "203.0.113.1",
+    roles: [""],
+    headers: { authorization: `Bearer ${token}` },
+  });
+  await assertRejects(
+    () => Promise.resolve(g.canActivate(ctx as unknown as Context)),
+    ForbiddenException,
+  );
+});
+
+Deno.test("guard: a bare-prefix role yields no scoped role (identity has no empty role)", async () => {
+  // The bare-prefix "test:" claim must not surface as an "" scoped role on the identity.
+  const { g } = guard();
+  const token = await bearerFor({
+    source: "svc",
+    claims: { role: "test:,test:admin" },
+  });
+  const ctx = guardCtx({
+    hostname: "203.0.113.1",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  await g.canActivate(ctx as unknown as Context);
+  const id = getIdentity(ctx as unknown as Context)!;
+  // Only the real role survives — the empty remainder from "test:" is dropped.
+  assertEquals(id.roles, ["admin"]);
 });
 
 Deno.test("guard: attaches the resolved identity (claims + scoped roles)", async () => {

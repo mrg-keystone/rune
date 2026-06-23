@@ -23,7 +23,10 @@ export class Lsp {
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private requestId = 0;
-  private buffer = "";
+  // LSP frames bodies by UTF-8 BYTE length (Content-Length). The receive buffer
+  // is therefore held as raw bytes — slicing a decoded UTF-16 string by a byte
+  // length overshoots on any multibyte char and desyncs the stream.
+  private buffer: Uint8Array = new Uint8Array(0);
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private readLoop: Promise<void> | null = null;
   private projectRoot: string;
@@ -327,7 +330,17 @@ export class Lsp {
         resolve: (v: unknown) => { clearTimeout(timer); resolve(v); },
         reject: (e: Error) => { clearTimeout(timer); reject(e); },
       });
-      this.send(msg);
+      // Handle the send failure (broken pipe / closed writer) so it (a) never
+      // becomes a floating unhandled rejection that crashes the host and (b)
+      // rejects this request immediately instead of stalling the full timeout.
+      // The pending entry's reject closure already clears the timer.
+      this.send(msg).catch((e) => {
+        const p = this.pending.get(id);
+        if (p) {
+          this.pending.delete(id);
+          p.reject(e instanceof Error ? e : new Error(String(e)));
+        }
+      });
     });
   }
 
@@ -346,36 +359,23 @@ export class Lsp {
   }
 
   private async startReadLoop(): Promise<void> {
-    const decoder = new TextDecoder();
     while (true) {
       const { done, value } = await this.reader!.read();
       if (done) break;
-      this.buffer += decoder.decode(value, { stream: true });
+      // Append raw bytes — never decode-then-concat, so a multibyte char split
+      // across two reads is reassembled before being framed/decoded.
+      const next = new Uint8Array(this.buffer.byteLength + value.byteLength);
+      next.set(this.buffer, 0);
+      next.set(value, this.buffer.byteLength);
+      this.buffer = next;
       this.processBuffer();
     }
   }
 
   private processBuffer(): void {
-    while (true) {
-      const headerEnd = this.buffer.indexOf("\r\n\r\n");
-      if (headerEnd === -1) break;
-
-      const header = this.buffer.slice(0, headerEnd);
-      const match = header.match(/Content-Length:\s*(\d+)/i);
-      if (!match) {
-        this.buffer = this.buffer.slice(headerEnd + 4);
-        continue;
-      }
-
-      const contentLength = parseInt(match[1], 10);
-      const bodyStart = headerEnd + 4;
-      const bodyEnd = bodyStart + contentLength;
-
-      if (this.buffer.length < bodyEnd) break;
-
-      const body = this.buffer.slice(bodyStart, bodyEnd);
-      this.buffer = this.buffer.slice(bodyEnd);
-
+    const { bodies, rest } = frameLspMessages(this.buffer);
+    this.buffer = rest;
+    for (const body of bodies) {
       try {
         const msg = JSON.parse(body);
         if ("method" in msg && "id" in msg) {
@@ -393,6 +393,55 @@ export class Lsp {
       } catch { /* malformed message */ }
     }
   }
+}
+
+/** Frame complete LSP messages out of a raw byte buffer. Content-Length is the
+ * body's UTF-8 BYTE length, so all offsets are computed in bytes and only the
+ * exact body slice is decoded to a string — never the whole buffer (a multibyte
+ * char straddling the boundary would corrupt framing). Returns the decoded
+ * bodies and the leftover bytes (an incomplete trailing frame stays buffered). */
+export function frameLspMessages(
+  buffer: Uint8Array,
+): { bodies: string[]; rest: Uint8Array } {
+  const decoder = new TextDecoder();
+  const bodies: string[] = [];
+  // The header is ASCII; find the \r\n\r\n separator by byte pattern.
+  const SEP = [0x0d, 0x0a, 0x0d, 0x0a];
+  let pos = 0;
+  const findSep = (from: number): number => {
+    for (let i = from; i + 4 <= buffer.byteLength; i++) {
+      if (
+        buffer[i] === SEP[0] && buffer[i + 1] === SEP[1] &&
+        buffer[i + 2] === SEP[2] && buffer[i + 3] === SEP[3]
+      ) {
+        return i;
+      }
+    }
+    return -1;
+  };
+  while (true) {
+    const headerEnd = findSep(pos);
+    if (headerEnd === -1) break;
+
+    const header = decoder.decode(buffer.subarray(pos, headerEnd));
+    const match = header.match(/Content-Length:\s*(\d+)/i);
+    if (!match) {
+      // Malformed header (no Content-Length): skip past it and keep framing.
+      pos = headerEnd + 4;
+      continue;
+    }
+
+    const contentLength = parseInt(match[1], 10);
+    const bodyStart = headerEnd + 4;
+    const bodyEnd = bodyStart + contentLength;
+
+    // Body not fully arrived yet — leave everything from `pos` buffered.
+    if (buffer.byteLength < bodyEnd) break;
+
+    bodies.push(decoder.decode(buffer.subarray(bodyStart, bodyEnd)));
+    pos = bodyEnd;
+  }
+  return { bodies, rest: buffer.slice(pos) };
 }
 
 function symbolKindToString(kind: number): string {

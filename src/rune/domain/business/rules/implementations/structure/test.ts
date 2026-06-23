@@ -179,6 +179,46 @@ Deno.test("check — underscore helper with a loose word is still flagged", asyn
   assertEquals(result!.some((v) => v.includes("loose/vague")), true);
 });
 
+// ---- L2: loose-name guard must match whole tokens, not bare substrings ----
+// Legitimate names that merely EMBED a loose word (utilization→util,
+// commonwealth→common, futility→util) must NOT be flagged, while names that ARE
+// a loose word (alone or as a camelCase/kebab segment) still are.
+
+// A descriptor <feature> folder accepts arbitrary user-named modules; a file
+// living in it is rejected ONLY by the loose-name guard, so this isolates it.
+const FEATURE_DIRS = [
+  "src", "src/orders", "src/orders/domain", "src/orders/domain/business",
+];
+function featureFile(name: string): string {
+  return `src/orders/domain/business/${name}.ts`;
+}
+
+Deno.test("check — names that merely embed a loose word are NOT flagged (L2)", async () => {
+  for (const name of ["utilization", "commonwealth", "futility"]) {
+    const dirs = [...FEATURE_DIRS, `src/orders/domain/business/${name}`];
+    const ctx = makeCtx([featureFile(name)], dirs);
+    const result = await check(featureFile(name), "ts", ctx);
+    assertEquals(
+      result === null || !result.some((v) => v.includes("loose/vague")),
+      true,
+      `"${name}" must not be flagged as loose; got: ${JSON.stringify(result)}`,
+    );
+  }
+});
+
+Deno.test("check — names that ARE a loose word/segment are still flagged (L2)", async () => {
+  for (const name of ["utils", "shared", "my-utils", "commonHelper"]) {
+    const dirs = [...FEATURE_DIRS, `src/orders/domain/business/${name}`];
+    const ctx = makeCtx([featureFile(name)], dirs);
+    const result = await check(featureFile(name), "ts", ctx);
+    assertEquals(
+      result !== null && result.some((v) => v.includes("loose/vague")),
+      true,
+      `"${name}" must still be flagged as loose; got: ${JSON.stringify(result)}`,
+    );
+  }
+});
+
 Deno.test("check — [PLY] dispatcher mod.ts is allowed alongside base/implementations/poly-mod", async () => {
   // The poly variant now allows an optional dispatcher mod.ts at the folder root.
   const ctx = makeCtx(
@@ -187,4 +227,60 @@ Deno.test("check — [PLY] dispatcher mod.ts is allowed alongside base/implement
   );
   const result = await check("src/orders/domain/business/channel/mod.ts", "ts", ctx);
   assertEquals(result, null);
+});
+
+// ---- S12: a required file must be a DIRECT child — a grandchild with the same
+//      basename must not satisfy the presence check. ----
+Deno.test("check — S12: a grandchild mod.ts does not satisfy a coordinator's required mod", async () => {
+  // coordinators/<process>/ requires `mod` and `int.test` AS DIRECT CHILDREN.
+  // Here both only exist one level deeper (in a `sub/` grandchild), so the
+  // coordinator folder is missing them and must be flagged.
+  const ctx = makeCtx(
+    [
+      "src/orders/domain/coordinators/checkout/sub/mod.ts",
+      "src/orders/domain/coordinators/checkout/sub/int.test.ts",
+    ],
+    [
+      "src",
+      "src/orders",
+      "src/orders/domain",
+      "src/orders/domain/coordinators",
+      "src/orders/domain/coordinators/checkout",
+      "src/orders/domain/coordinators/checkout/sub",
+    ],
+  );
+  const result = await check(
+    "src/orders/domain/coordinators/checkout",
+    "folder",
+    ctx,
+  );
+  assertEquals(
+    result !== null && result.some((v) => v.includes('Missing required file "mod"')),
+    true,
+    `grandchild mod.ts must not satisfy the required direct-child mod; got: ${
+      JSON.stringify(result)
+    }`,
+  );
+});
+
+Deno.test("check — S12: a direct-child mod.ts + int.test.ts still passes", async () => {
+  const ctx = makeCtx(
+    [
+      "src/orders/domain/coordinators/checkout/mod.ts",
+      "src/orders/domain/coordinators/checkout/int.test.ts",
+    ],
+    [
+      "src",
+      "src/orders",
+      "src/orders/domain",
+      "src/orders/domain/coordinators",
+      "src/orders/domain/coordinators/checkout",
+    ],
+  );
+  const result = await check(
+    "src/orders/domain/coordinators/checkout",
+    "folder",
+    ctx,
+  );
+  assertEquals(result, null, `direct children must satisfy: ${JSON.stringify(result)}`);
 });

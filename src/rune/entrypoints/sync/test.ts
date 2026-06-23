@@ -3,6 +3,8 @@ import { join } from "#std/path";
 import {
   ensureBootstrap,
   ensureHealRules,
+  ensureImportMap,
+  parseSyncArgs,
   renderAppRegistry,
   renderMain,
   runSync,
@@ -664,3 +666,114 @@ const REGEN_SPEC = `[MOD] orders
 [DTO] OrderDto: money
     the resulting order
 `;
+
+// ---- S9: a valueless --regen/--root/--artifact must error, not degrade ----
+Deno.test("parseSyncArgs — S9: trailing --regen with no value is a usage error", () => {
+  // The user forgot to paste the path after --regen. This must NOT silently
+  // become a full destructive sync (regen=null skips the non-destructive branch
+  // and falls into the prune path).
+  assertEquals(
+    parseSyncArgs(["src/checkout/checkout.rune", "--force", "--regen"]),
+    null,
+  );
+  // A flag following --regen is also a missing value.
+  assertEquals(
+    parseSyncArgs(["src/checkout/checkout.rune", "--regen", "--force"]),
+    null,
+  );
+  // --root and --artifact share the same hazard.
+  assertEquals(parseSyncArgs(["spec.rune", "--root"]), null);
+  assertEquals(parseSyncArgs(["spec.rune", "--artifact"]), null);
+  // A well-formed --regen still parses.
+  const ok = parseSyncArgs(["spec.rune", "--regen", "src/a/b.ts"]);
+  assert(ok !== null);
+  assertEquals(ok!.regen, "src/a/b.ts");
+});
+
+// ---- S11: BOM stripped; malformed existing deno.json errors, never clobbered ----
+Deno.test("ensureImportMap — S11: a BOM-prefixed deno.json is parsed, not clobbered", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    const path = join(root, "deno.json");
+    const user = {
+      imports: { myalias: "jsr:@me/lib" },
+      tasks: { dev: "deno run main.ts" },
+    };
+    // Write with a leading UTF-8 BOM (what PowerShell Out-File etc. produce).
+    await Deno.writeTextFile(path, "﻿" + JSON.stringify(user, null, 2));
+    const ioErrors: string[] = [];
+    const note = await ensureImportMap(root, ioErrors);
+    assertEquals(ioErrors, [], "a BOM must not be a parse failure");
+    const after = JSON.parse(
+      (await Deno.readTextFile(path)).replace(/^﻿/, ""),
+    );
+    // The user's keys survive (non-destructive merge).
+    assertEquals(after.imports.myalias, "jsr:@me/lib");
+    assertEquals(after.tasks.dev, "deno run main.ts");
+    // And the report says "updated", not "created".
+    assert(note === null || note.includes("updated"), `note: ${note}`);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("ensureImportMap — S11: a malformed existing deno.json errors, never overwritten", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    const path = join(root, "deno.json");
+    const garbage = '{ "imports": { "x": } NOT JSON';
+    await Deno.writeTextFile(path, garbage);
+    const ioErrors: string[] = [];
+    const note = await ensureImportMap(root, ioErrors);
+    assertEquals(note, null, "must not report a successful create/update");
+    assertEquals(ioErrors.length > 0, true, "the parse failure is reported");
+    // The user's (broken) file is untouched — never silently clobbered.
+    assertEquals(await Deno.readTextFile(path), garbage);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+// ---- S10: a non-canonically-named spec is moved to a path collectProjectSpecs sees ----
+const S10_SPEC = `[MOD] checkout
+
+[ENT] http.start(StartDto): TicketDto
+
+[DTO] StartDto: memberId
+    who buys
+[DTO] TicketDto: ticketId
+    the opened ticket
+
+[TYP:ext] memberId: string
+    minted elsewhere
+[TYP] ticketId: string
+    a ticket id`;
+
+Deno.test("runSync — S10: a flow.rune spec lands at a project-spec path (ghost stub planned)", async () => {
+  const root = await Deno.makeTempDir();
+  const logs: string[] = [];
+  const origLog = console.log;
+  console.log = (...a: unknown[]) => logs.push(a.map(String).join(" "));
+  try {
+    await Deno.mkdir(join(root, "specs"), { recursive: true });
+    // Author the spec under a NON-canonical name (neither spec.rune nor
+    // checkout.rune) — historically it was moved to src/checkout/flow.rune,
+    // which isProjectSpec() rejects, so the ghost stub for $memberId was never
+    // planned.
+    const runePath = join(root, "specs", "flow.rune");
+    await Deno.writeTextFile(runePath, S10_SPEC);
+    const code = await runSync([runePath, "--root", root, "--no-run"]);
+    assertEquals(code, 0);
+    // The spec must now live at a canonical project path.
+    const canonical = join(root, "src", "checkout", "checkout.rune");
+    assertEquals(await exists(canonical), true, "spec moved to a canonical path");
+    // And the ghost stub for the unproduced $memberId must have been generated.
+    const stub = join(root, "bootstrap", "stubs.ts");
+    assertEquals(await exists(stub), true, "ghost stub module was planned");
+    const stubText = await Deno.readTextFile(stub);
+    assertStringIncludes(stubText, "memberId");
+  } finally {
+    console.log = origLog;
+    await Deno.remove(root, { recursive: true });
+  }
+});

@@ -609,9 +609,12 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
 
     // Description line: free-text prose at 4-space indent under [DTO]/[TYP]/[NON].
     // `descTarget` is only set by those declarations and is cleared by every step/
-    // tag, so an indented line here is unambiguously prose — accept ANY characters
-    // (periods in "e.g.", "@" in emails, parentheticals). Only a nested tag (`[`)
-    // ends the block.
+    // tag, so an indented line here is unambiguously prose. NOTE: the line has
+    // already had any inline `// ...` comment stripped at the top of this loop
+    // (stripInlineComment) — `//` is a comment everywhere per spec.md, prose
+    // included, so it is NOT preserved verbatim. Apart from that the prose accepts
+    // any characters (periods in "e.g.", "@" in emails, parentheticals). Only a
+    // nested tag (`[`) ends the block.
     if (descTarget && indent === 4 && !trimmed.startsWith("[")) {
       descTarget.description = descTarget.description
         ? `${descTarget.description} ${trimmed}`

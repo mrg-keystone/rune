@@ -47,7 +47,7 @@ interface SyncArgs {
   noRun: boolean; // --no-run: skip the run-all gate (red-by-default is the point)
 }
 
-function parseSyncArgs(args: string[]): SyncArgs | null {
+export function parseSyncArgs(args: string[]): SyncArgs | null {
   let runePath: string | null = null;
   let root: string | null = null;
   let dryRun = false;
@@ -55,15 +55,29 @@ function parseSyncArgs(args: string[]): SyncArgs | null {
   let artifactPath: string | null = null;
   let regen: string | null = null;
   let noRun = false;
+  // A value-taking flag at the end of argv (or followed by another flag) used to
+  // silently default — for --regen that degraded a targeted, NON-destructive
+  // single-file regen into a FULL sync that prunes dev-owned orphans. Treat a
+  // missing value as a usage error (return null) so the flag fails loudly.
+  const value = (i: number): string | null => {
+    const v = args[i];
+    return v === undefined || v.startsWith("--") ? null : v;
+  };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--dry-run") dryRun = true;
     else if (a === "--force") force = true;
     else if (a === "--no-run") noRun = true;
-    else if (a === "--root") root = args[++i] ?? ".";
-    else if (a === "--artifact") artifactPath = args[++i] ?? null;
-    else if (a === "--regen") regen = args[++i] ?? null;
-    else if (!a.startsWith("--") && runePath === null) runePath = a;
+    else if (a === "--root") {
+      root = value(++i);
+      if (root === null) return null;
+    } else if (a === "--artifact") {
+      artifactPath = value(++i);
+      if (artifactPath === null) return null;
+    } else if (a === "--regen") {
+      regen = value(++i);
+      if (regen === null) return null;
+    } else if (!a.startsWith("--") && runePath === null) runePath = a;
   }
   if (runePath === null) return null;
   return { runePath, root, dryRun, force, artifactPath, regen, noRun };
@@ -243,11 +257,22 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
     const mapNote = await ensureImportMap(root, ioErrors, written);
     if (mapNote) console.log(`\n  ${CYAN}${mapNote}${RESET}`);
 
-    // Move the spec into its module so it lives beside the code it generates
-    // (src/<module>/<spec>.rune). Idempotent: a no-op once it's already there.
-    // Happens BEFORE ensureBootstrap so the just-synced spec is at its project
-    // path when ghost-stub planning collects the project's specs.
-    const specTarget = join(root, "src", plan.module, basename(absRune));
+    // Move the spec into its module so it lives beside the code it generates.
+    // The destination name follows the CANONICAL convention isProjectSpec()
+    // recognises (`<module>.rune`) rather than the author's arbitrary basename —
+    // otherwise the moved spec lands at a path collectProjectSpecs() rejects, and
+    // ghost-stub planning / input diagnostics (run later in THIS same sync)
+    // silently skip it. A spec already named spec.rune or <module>.rune in its
+    // module is left in place (both are canonical). Idempotent: a no-op once it's
+    // already at a canonical project path. Happens BEFORE ensureBootstrap so the
+    // just-synced spec is collected.
+    const canonicalDir = join(root, "src", plan.module);
+    const alreadyCanonical = (resolve(absRune) ===
+        resolve(join(canonicalDir, "spec.rune"))) ||
+      (resolve(absRune) === resolve(join(canonicalDir, `${plan.module}.rune`)));
+    const specTarget = alreadyCanonical
+      ? absRune
+      : join(canonicalDir, `${plan.module}.rune`);
     if (resolve(specTarget) !== absRune) {
       try {
         await Deno.mkdir(dirname(specTarget), { recursive: true });
@@ -386,7 +411,7 @@ const REQUIRED_COMPILER_OPTIONS: Record<string, unknown> = {
 /** Ensure the project's deno.json carries the import map the generated code
  * needs. Non-destructive: only adds missing keys, never overwrites the user's
  * values. Creates a minimal deno.json if none exists. Returns a report note. */
-async function ensureImportMap(
+export async function ensureImportMap(
   root: string,
   ioErrors: string[],
   written?: string[],
@@ -395,10 +420,30 @@ async function ensureImportMap(
   // deno-lint-ignore no-explicit-any
   let config: Record<string, any> = {};
   let existed = false;
+  // Distinguish "file does not exist" (create fresh, fine) from "file exists but
+  // is malformed" (error loudly — never silently clobber the user's config).
+  let raw: string | null = null;
   try {
-    config = JSON.parse(await Deno.readTextFile(path));
-    existed = true;
-  } catch { /* create fresh */ }
+    raw = await Deno.readTextFile(path);
+  } catch {
+    raw = null; // absent → create a fresh minimal deno.json below
+  }
+  if (raw !== null) {
+    // Strip a UTF-8 BOM: Deno.readTextFile does not, and JSON.parse throws on a
+    // leading U+FEFF — which the old catch swallowed into a fresh-file clobber.
+    const text = raw.replace(/^﻿/, "");
+    try {
+      config = JSON.parse(text);
+      existed = true;
+    } catch (e) {
+      // The file is present but unparseable. Refuse to overwrite it.
+      ioErrors.push(
+        `deno.json: existing file is not valid JSON (${errMessage(e)}) — ` +
+          `refusing to overwrite; fix or remove it and re-run`,
+      );
+      return null;
+    }
+  }
   const imports: Record<string, string> =
     (config.imports && typeof config.imports === "object") ? config.imports : {};
   const added: string[] = [];

@@ -30,6 +30,8 @@ pub enum LineKind {
     },
     /// `@docs <url>` — the REQUIRED documentation link under an [SRV].
     SrvDocs {
+        /// The name of the enclosing [SRV] block (for name-prefixed diagnostics).
+        name: String,
         url: String,
         indent: usize,
     },
@@ -159,6 +161,7 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
     let mut in_non_block = false;
     let mut in_mod_block = false;
     let mut in_srv_block = false;
+    let mut current_srv_name = String::new();
     let mut in_multiline_step = false;
     let mut paren_depth: i32 = 0;
     let mut multiline_indent: usize = 0;
@@ -197,6 +200,7 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
             in_non_block = false;
             in_mod_block = false;
             in_srv_block = false;
+            current_srv_name.clear();
             in_multiline_step = false;
             paren_depth = 0;
             multiline_indent = 0;
@@ -211,7 +215,10 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
         // If we're in a multi-line step, check if it closes
         if in_multiline_step {
             paren_depth = paren_depth + open_parens as i32 - close_parens as i32;
-            if paren_depth <= 0 && trimmed.contains("):") {
+            // Close on depth alone: a depth-balanced bare ")" terminator ends the
+            // step even when the closing line has no "):" output substring. The
+            // start-detection is depth-based, so the close must be too.
+            if paren_depth <= 0 {
                 in_multiline_step = false;
                 paren_depth = 0;
             }
@@ -230,6 +237,7 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
         if trimmed.starts_with('[') {
             in_mod_block = false;
             in_srv_block = false;
+            current_srv_name.clear();
         }
 
         // [MOD] directive — optional `: description` plus indented continuation
@@ -271,6 +279,7 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty())
                         .collect();
+                    current_srv_name = name.clone();
                     results.push(ParsedLine { line_num, kind: LineKind::Srv { transport, name, env_vars, indent: actual_indent } });
                 }
                 _ => {
@@ -409,7 +418,7 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
             let url = trimmed["@docs".len()..].trim().to_string();
             results.push(ParsedLine {
                 line_num,
-                kind: LineKind::SrvDocs { url, indent: actual_indent },
+                kind: LineKind::SrvDocs { name: current_srv_name.clone(), url, indent: actual_indent },
             });
             continue;
         }
@@ -588,18 +597,23 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
 
         // Step line (noun.verb or Noun::verb)
         if (trimmed.contains('.') || trimmed.contains("::")) && trimmed.contains('(') {
-            // Check if multiline
-            if open_parens > close_parens || (trimmed.contains('(') && !trimmed.contains("):")) {
-                in_multiline_step = true;
-                paren_depth = open_parens as i32 - close_parens as i32;
-                multiline_indent = actual_indent;
-            }
+            let is_multiline_start =
+                open_parens > close_parens || (trimmed.contains('(') && !trimmed.contains("):"));
             if let Some((noun, verb, params, output, is_static)) = parse_signature(trimmed) {
+                // A COMPLETE single-line step: do NOT set multiline state, even
+                // when open_parens > close_parens (an extra '(' inside a param).
+                // Mirrors the boundary-step branch, which only sets multiline
+                // state in its parse-FAILURE arm.
                 results.push(ParsedLine { line_num, kind: LineKind::Step { noun, verb, params, output, indent: actual_indent, is_static } });
                 continue;
-            } else if let Some((noun, verb, params, output, is_static)) = parse_partial_signature(trimmed) {
-                results.push(ParsedLine { line_num, kind: LineKind::Step { noun, verb, params, output, indent: actual_indent, is_static } });
-                continue;
+            } else if is_multiline_start {
+                if let Some((noun, verb, params, output, is_static)) = parse_partial_signature(trimmed) {
+                    in_multiline_step = true;
+                    paren_depth = open_parens as i32 - close_parens as i32;
+                    multiline_indent = actual_indent;
+                    results.push(ParsedLine { line_num, kind: LineKind::Step { noun, verb, params, output, indent: actual_indent, is_static } });
+                    continue;
+                }
             }
         }
 
@@ -655,7 +669,9 @@ fn match_tag<'a>(trimmed: &'a str, tag: &str) -> Option<(Option<String>, &'a str
 fn parse_signature(s: &str) -> Option<(String, String, Vec<String>, String, bool)> {
     let s = s.trim();
     let paren_pos = s.find('(')?;
-    let paren_close = s.find(')')?;
+    // Use the LAST close paren so a param containing nested parens (e.g. `cb()`)
+    // is captured in full — matches the TS engine's lastIndexOf(")").
+    let paren_close = s.rfind(')')?;
 
     // Find separator: either :: (static) or . (instance)
     let (sep_pos, sep_len, is_static) = if let Some(pos) = s[..paren_pos].find("::") {
@@ -719,10 +735,11 @@ fn parse_req_signature(s: &str) -> Option<(String, String, String, String, bool)
         let verb = name_part[pos + 1..].trim().to_string();
         (noun, verb, false)
     } else {
-        // camelCase format: verbNoun -> split at first uppercase after start
+        // camelCase format: verbNoun -> split at first uppercase after start.
+        // Use char_indices so split_pos is a BYTE offset on a char boundary
+        // (a char index would mis-slice or panic on multibyte names).
         let name = name_part.trim();
-        if let Some(split_pos) = name.chars().skip(1).position(|c| c.is_uppercase()) {
-            let split_pos = split_pos + 1; // adjust for skip(1)
+        if let Some((split_pos, _)) = name.char_indices().skip(1).find(|(_, c)| c.is_uppercase()) {
             let verb = name[..split_pos].to_string();
             let noun_part = &name[split_pos..];
             // lowercase the first letter of noun for consistency
@@ -820,11 +837,85 @@ mod tests {
     }
 
     #[test]
+    fn r1_complete_instance_step_does_not_leak_multiline_state() {
+        // A COMPLETE single-line instance step whose params contain an extra
+        // unbalanced '(' (open_parens > close_parens) must NOT leave the
+        // multiline state set. The following lines must be classified on their
+        // own merits, not swallowed as MultilineContinuation.
+        let doc = "    f.g(h(i, j): k\n    aaa\n    bbb";
+        let lines = parse_document(doc);
+        // line 0 is a complete Step
+        assert!(
+            matches!(&lines[0].kind, LineKind::Step { noun, verb, output, .. }
+                if noun == "f" && verb == "g" && output == "k"),
+            "line 0 should be a complete Step, got {:?}",
+            lines[0].kind
+        );
+        // lines 1 and 2 must NOT be MultilineContinuation (the state leaked)
+        assert!(
+            !matches!(&lines[1].kind, LineKind::MultilineContinuation { .. }),
+            "line 1 (`aaa`) must not be a MultilineContinuation, got {:?}",
+            lines[1].kind
+        );
+        assert!(
+            !matches!(&lines[2].kind, LineKind::MultilineContinuation { .. }),
+            "line 2 (`bbb`) must not be a MultilineContinuation, got {:?}",
+            lines[2].kind
+        );
+    }
+
+    #[test]
     fn test_parse_boundary_step() {
         let doc = "    db:metadata.set(id): void";
         let lines = parse_document(doc);
         assert!(matches!(&lines[0].kind, LineKind::BoundaryStep { prefix, noun, verb, .. }
             if prefix == "db:" && noun == "metadata" && verb == "set"));
+    }
+
+    #[test]
+    fn r6_signature_uses_last_close_paren_for_nested_parens() {
+        // A step param containing nested parens (e.g. `cb()`) must capture the
+        // full param list between the call's OWN parens — using the LAST close
+        // paren, matching the TS engine's lastIndexOf(")"). The first-')'
+        // assumption truncates the param at the inner ')'.
+        let doc = "    plain.call(cb()): result";
+        let lines = parse_document(doc);
+        assert!(
+            matches!(&lines[0].kind, LineKind::Step { noun, verb, params, output, .. }
+                if noun == "plain" && verb == "call"
+                    && params == &vec!["cb()".to_string()]
+                    && output == "result"),
+            "nested-paren param must be `cb()` with output `result`, got {:?}",
+            lines[0].kind
+        );
+
+        // Boundary step variant, exactly the handoff trigger.
+        let bdoc = "    db:metadata.save(cb()): result";
+        let blines = parse_document(bdoc);
+        assert!(
+            matches!(&blines[0].kind, LineKind::BoundaryStep { prefix, noun, verb, params, output, .. }
+                if prefix == "db:" && noun == "metadata" && verb == "save"
+                    && params == &vec!["cb()".to_string()]
+                    && output == "result"),
+            "boundary nested-paren param must be `cb()`, got {:?}",
+            blines[0].kind
+        );
+    }
+
+    #[test]
+    fn r3_bare_close_paren_terminates_multiline_step() {
+        // A multiline step whose closing line is a bare ")" (output omitted)
+        // brings paren_depth to 0 and MUST close the block. The following
+        // top-level [REQ] must be parsed as a Req, not swallowed as a
+        // MultilineContinuation.
+        let doc = "    db:repo.find(\n    id\n    )\n[REQ] x.y(z): D";
+        let lines = parse_document(doc);
+        assert!(
+            matches!(&lines[3].kind, LineKind::Req { noun, verb, output, .. }
+                if noun == "x" && verb == "y" && output == "D"),
+            "the top-level [REQ] after a bare `)` close must be a Req, got {:?}",
+            lines[3].kind
+        );
     }
 
     #[test]
@@ -1110,5 +1201,38 @@ mod tests {
         let lines = parse_document(doc);
         assert!(matches!(&lines[0].kind, LineKind::New { class_name, indent: 4 }
             if class_name == "storage"));
+    }
+
+    // Bug [A]: camelCase verb/noun split used a CHAR index as a BYTE index,
+    // panicking on a multibyte char before the first interior uppercase, and
+    // mis-splitting the name when it didn't panic.
+    #[test]
+    fn test_parse_req_camel_multibyte_no_panic() {
+        // `é` is 2 bytes and precedes the interior uppercase `S`; the buggy
+        // code sliced at a non-char-boundary byte index and panicked here.
+        let doc = "[REQ] géS(x): y";
+        let lines = parse_document(doc);
+        // Should parse without panicking. Split is at the `S`: verb="gé", noun="s".
+        assert!(matches!(&lines[0].kind, LineKind::Req { noun, verb, .. }
+            if noun == "s" && verb == "gé"));
+    }
+
+    #[test]
+    fn test_parse_req_camel_multibyte_split() {
+        // `é` (2 bytes) precedes the interior uppercase `O`; the buggy split
+        // landed one byte early, yielding verb="créat" / noun="eOrder".
+        let doc = "[REQ] créateOrder(InDto): OutDto";
+        let lines = parse_document(doc);
+        assert!(matches!(&lines[0].kind, LineKind::Req { noun, verb, .. }
+            if noun == "order" && verb == "créate"));
+    }
+
+    #[test]
+    fn test_parse_req_camel_ascii_unchanged() {
+        // ASCII behavior must remain identical.
+        let doc = "[REQ] createOrder(InDto): OutDto";
+        let lines = parse_document(doc);
+        assert!(matches!(&lines[0].kind, LineKind::Req { noun, verb, .. }
+            if noun == "order" && verb == "create"));
     }
 }

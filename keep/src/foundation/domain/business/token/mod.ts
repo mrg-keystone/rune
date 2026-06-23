@@ -85,25 +85,36 @@ export function createJwksVerifier(opts: JwksVerifierOptions): SessionVerifier {
   const importKey = opts.importKey ?? defaultImportKey;
 
   let cache: { keys: Map<string, InfraJwk>; expiresAt: number } | undefined;
+  // The single in-flight fetch, shared by every concurrent caller so a cold start (or an unknown
+  // kid that forces a refresh) fires exactly one fetchJwks instead of a thundering herd.
+  let inflight: Promise<Map<string, InfraJwk>> | undefined;
 
   async function load(force: boolean): Promise<Map<string, InfraJwk>> {
     if (!force && cache && cache.expiresAt > nowMs()) return cache.keys;
-    let jwks: InfraJwks;
+    if (inflight) return inflight;
+    inflight = (async () => {
+      let jwks: InfraJwks;
+      try {
+        jwks = await opts.fetchJwks();
+      } catch (err) {
+        throw new TokenError(
+          `Could not fetch infra JWKS: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+      const keys = new Map<string, InfraJwk>();
+      for (const k of jwks?.keys ?? []) {
+        if (k && typeof k.kid === "string") keys.set(k.kid, k);
+      }
+      cache = { keys, expiresAt: nowMs() + ttlMs };
+      return keys;
+    })();
     try {
-      jwks = await opts.fetchJwks();
-    } catch (err) {
-      throw new TokenError(
-        `Could not fetch infra JWKS: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
+      return await inflight;
+    } finally {
+      inflight = undefined;
     }
-    const keys = new Map<string, InfraJwk>();
-    for (const k of jwks?.keys ?? []) {
-      if (k && typeof k.kid === "string") keys.set(k.kid, k);
-    }
-    cache = { keys, expiresAt: nowMs() + ttlMs };
-    return keys;
   }
 
   async function keyFor(kid: string): Promise<CryptoKey> {
@@ -210,10 +221,14 @@ function normalizeClaims(raw: unknown): Record<string, string> {
 /** Parses an ISO-8601 (or epoch-seconds string) into Unix seconds, or undefined. */
 function isoToEpochSeconds(value: string | undefined): number | undefined {
   if (!value) return undefined;
+  // An all-digit (optionally negative) string IS epoch seconds, not an ISO date — try the numeric
+  // reading first. Date.parse would otherwise read a short value like "3600" as the year 3600.
+  if (/^-?\d+$/.test(value)) {
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.floor(n) : undefined;
+  }
   const ms = Date.parse(value);
-  if (!Number.isNaN(ms)) return Math.floor(ms / 1000);
-  const n = Number(value);
-  return Number.isFinite(n) ? Math.floor(n) : undefined;
+  return Number.isNaN(ms) ? undefined : Math.floor(ms / 1000);
 }
 
 /** Imports a JWK's `publicKey` — SPKI PEM first, then a JSON-encoded JWK — for its `alg`. */

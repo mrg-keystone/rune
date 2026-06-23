@@ -301,6 +301,48 @@ Deno.test("assert — [DTO:open] marker keeps undeclared fields, still validates
   assertEquals("extra" in strict, false, "strict DTO strips undeclared fields");
 });
 
+Deno.test("assert — [DTO:open] re-attaches extras even when they shadow a prototype member (own-property check)", () => {
+  // The re-attach loop must use an OWN-property check, not the prototype-aware `in`. An inbound
+  // field named like an Object.prototype member ("toString", "constructor", "hasOwnProperty") is a
+  // legitimate extra and must ride through as the instance's OWN value — `in` would see the
+  // inherited prototype member and silently drop the inbound value.
+  class OpenShadowDto {
+    static readonly __keepOpen = true;
+    @IsString()
+    id!: string;
+  }
+  // Read via a bag indexer so TS doesn't resolve the prototype member signatures.
+  const out = assert(OpenShadowDto, {
+    id: "x",
+    extra: "kept",
+    toString: "v",
+    constructor: "c",
+    hasOwnProperty: "h",
+  }) as unknown;
+  const bag = out as Record<string, unknown>;
+  assertEquals(bag["id"], "x");
+  assertEquals(bag["extra"], "kept", "a plain extra still rides through");
+  // Each prototype-shadowing field must be re-attached as an OWN property with the inbound value.
+  assertEquals(
+    Object.prototype.hasOwnProperty.call(out, "toString"),
+    true,
+    "inbound `toString` re-attaches as an own property",
+  );
+  assertEquals(bag["toString"], "v");
+  assertEquals(
+    Object.prototype.hasOwnProperty.call(out, "constructor"),
+    true,
+    "inbound `constructor` re-attaches as an own property",
+  );
+  assertEquals(bag["constructor"], "c");
+  assertEquals(
+    Object.prototype.hasOwnProperty.call(out, "hasOwnProperty"),
+    true,
+    "inbound `hasOwnProperty` re-attaches as an own property",
+  );
+  assertEquals(bag["hasOwnProperty"], "h");
+});
+
 Deno.test("assert — [DTO:open] re-attaches its own extras but a declared nested DTO keeps its strict contract", () => {
   class InnerDto {
     @IsString()

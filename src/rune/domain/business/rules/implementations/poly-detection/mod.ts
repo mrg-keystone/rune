@@ -56,25 +56,51 @@ export async function check(
   return [`3+ sibling features export "${confirmed.join('", "')}" with compatible signatures — extract into a poly structure with poly-mod.ts`];
 }
 
-function areSignaturesCompatible(signatures: string[]): boolean {
+// Exported for unit testing — pure arity arithmetic.
+export function areSignaturesCompatible(signatures: string[]): boolean {
   const arities = signatures.map(getArity);
   const first = arities[0];
   return first !== null && arities.every((a) => a === first);
 }
 
-function getArity(sig: string): number | null {
-  // Match the parameter list inside the outermost parens
-  const match = sig.match(/\(([^)]*)\)/);
-  if (!match) return null;
-  const params = match[1].trim();
-  if (params === "") return 0;
-  // Count top-level commas (not inside nested generics/parens)
+// Count a function signature's parameter arity. Two subtleties:
+//  - the parameter list is the OUTERMOST paren group, found by a balanced scan —
+//    a regex stopping at the first `)` mis-reads a callback param like
+//    `(cb: () => void, x: number) => string`;
+//  - `>` only closes a generic when it is NOT part of an arrow `=>`; otherwise an
+//    arrow-typed param drives the depth negative and top-level commas are missed.
+export function getArity(sig: string): number | null {
+  // Find the outermost (…) group via a balanced scan.
+  const open = sig.indexOf("(");
+  if (open === -1) return null;
   let depth = 0;
+  let close = -1;
+  for (let i = open; i < sig.length; i++) {
+    const ch = sig[i];
+    if (ch === "(") depth++;
+    else if (ch === ")") {
+      depth--;
+      if (depth === 0) {
+        close = i;
+        break;
+      }
+    }
+  }
+  if (close === -1) return null;
+  const params = sig.slice(open + 1, close).trim();
+  if (params === "") return 0;
+  // Count top-level commas (not inside nested generics/parens/brackets/braces),
+  // skipping the `>` that belongs to an arrow `=>`.
+  let nest = 0;
   let count = 1;
-  for (const ch of params) {
-    if (ch === "<" || ch === "(" || ch === "[" || ch === "{") depth++;
-    else if (ch === ">" || ch === ")" || ch === "]" || ch === "}") depth--;
-    else if (ch === "," && depth === 0) count++;
+  for (let i = 0; i < params.length; i++) {
+    const ch = params[i];
+    if (ch === "<" || ch === "(" || ch === "[" || ch === "{") nest++;
+    else if (ch === ")" || ch === "]" || ch === "}") nest--;
+    else if (ch === ">") {
+      // Part of `=>`? Then it's not a closing generic bracket — ignore it.
+      if (params[i - 1] !== "=") nest--;
+    } else if (ch === "," && nest === 0) count++;
   }
   return count;
 }

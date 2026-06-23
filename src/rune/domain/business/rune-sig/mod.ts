@@ -309,7 +309,16 @@ function paramIdentList(
   const seen = new Set<string>();
   return params.map((p, i) => {
     let id = toCamelIdent(p);
-    if (id === "" || seen.has(id)) id = `arg${i}`;
+    if (id === "" || seen.has(id)) {
+      // Make the fallback collision-free: an earlier real param may already
+      // hold `arg${i}` (e.g. a literal `arg1` at index 0 then an empty param at
+      // index 1), so loop the suffix until it's unused — never emit a duplicate
+      // identifier (which would fail `deno check` with TS2300).
+      let k = i;
+      do {
+        id = `arg${k++}`;
+      } while (seen.has(id));
+    }
     seen.add(id);
     return { ident: id, source: p };
   });

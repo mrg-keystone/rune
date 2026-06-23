@@ -177,7 +177,40 @@ Deno.test("readHealRules - missing file yields the empty rule set", async () => 
 
 Deno.test("scenarioSlug - names become safe filename stems", () => {
   assertEquals(scenarioSlug("Happy Path (EU)"), "happy-path-eu");
-  assertEquals(scenarioSlug("---"), "scenario");
+  // An empty-base name still produces a non-empty stem, but distinct empty-base names must NOT
+  // collapse to one constant stem (that was the cross-scenario overwrite bug).
+  assert(scenarioSlug("---").startsWith("scenario"));
+  assert(
+    scenarioSlug("---") !== scenarioSlug("@@@"),
+    "distinct empty-base names get distinct stems",
+  );
+});
+
+Deno.test("scenarioSlug - distinct non-ASCII names get distinct stems (no collision)", () => {
+  // CJK / accented names must NOT all collapse to one constant stem.
+  assert(scenarioSlug("你好") !== scenarioSlug("世界"));
+  assert(scenarioSlug("Café EU") !== "");
+  // The é survives (not stripped as an ASCII-only class would).
+  assert(scenarioSlug("Café EU") !== scenarioSlug("Caf EU"));
+});
+
+Deno.test("write/readScenarios - two distinct non-ASCII-named scenarios do NOT overwrite each other", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    await writeScenario(
+      { v: 1, name: "你好", module: "orders", steps: [{ id: "a" }] },
+      dir,
+    );
+    await writeScenario(
+      { v: 1, name: "世界", module: "orders", steps: [{ id: "b" }] },
+      dir,
+    );
+    const list = await readScenarios(dir);
+    const names = list.map((s) => s.name).sort();
+    assertEquals(names, ["世界", "你好"], "both scenarios survive on disk");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("write/readScenarios - round-trips files; invalid files are skipped, list sorted", async () => {

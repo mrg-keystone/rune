@@ -1803,3 +1803,140 @@ Deno.test("planManifest — [DTO:open] emits the keep-open marker + provenance, 
   assertStringIncludes(c, "callId!: string;");
   assertStringIncludes(c, "status!: string;");
 });
+
+// ---- S1: a `*/` in a description must not break the emitted JSDoc ----
+Deno.test("planManifest — S1: `*/` in a [TYP]/[DTO] description is escaped in JSDoc", () => {
+  const rune = `[MOD] billing
+
+[ENT] http.make(InvoiceDto): InvoiceDto
+
+[DTO] InvoiceDto: amount
+    The invoice */ payload.
+
+[TYP] amount: number
+    The amount in cents. End comment */ then more prose.`;
+  const plan = planManifest("specs/billing.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const all = [...plan.toCreate, ...plan.toRegenerate];
+  // The [TYP] file and the [DTO] file both carry the description as JSDoc.
+  const typFile = all.find((f) => f.path.endsWith("/amount.ts"))!;
+  const dtoFile = all.find((f) => f.path.endsWith("/dto/invoice.ts")) ??
+    all.find((f) => f.path.endsWith("invoice-dto.ts")) ??
+    all.find((f) => f.path.includes("invoice"));
+  assert(typFile, "amount.ts must be generated");
+  assert(dtoFile, "InvoiceDto file must be generated");
+  for (const f of [typFile, dtoFile!]) {
+    // No raw `*/` survives inside the body except the legitimate JSDoc closers.
+    // A bare `*/ then more prose. */` would close the comment early and dump
+    // tokens. Assert the verbatim broken sequence never appears.
+    assertEquals(
+      f.content.includes("*/ then more prose. */"),
+      false,
+      `${f.path} must not contain an unescaped comment-close from the description`,
+    );
+    assertEquals(
+      f.content.includes("*/ payload. */"),
+      false,
+      `${f.path} must not contain an unescaped comment-close from the DTO description`,
+    );
+  }
+});
+
+// ---- S2: ENT dep graph must key by surface identity, not bare action ----
+Deno.test("planManifest — S2: two ENTs on different surfaces with the same action do not collide", () => {
+  const rune = `[MOD] m
+
+[ENT] alpha.make(AInDto): AOutDto
+[ENT] beta.make(BInDto): BOutDto
+
+[DTO] AInDto: seed
+[DTO] AOutDto: bar
+[DTO] BInDto: bar
+[DTO] BOutDto: result
+
+[TYP] seed: string
+[TYP] bar: string
+[TYP] result: string`;
+  const plan = planManifest("specs/m.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const all = [...plan.toCreate, ...plan.toRegenerate];
+  const betaCtl = all.find((f) => f.path.endsWith("entrypoints/beta/mod.ts"))!;
+  assert(betaCtl, "beta controller must be generated");
+  // beta.make consumes `bar`, which alpha.make MINTS — so beta must wire the
+  // producer edge, not fall back to a $-external bind. The collision (both
+  // actions == "make") previously made dependsOnReaches("make","make") true,
+  // dropping the cross-surface producer.
+  assertStringIncludes(betaCtl.content, `dependsOn: ["make"]`);
+  assertStringIncludes(betaCtl.content, `bind: {"bar":"make.bar"}`);
+  assertEquals(
+    betaCtl.content.includes(`bind: {"bar":"$bar"}`),
+    false,
+    "beta must not fall back to an external bind for a field alpha produces",
+  );
+});
+
+// ---- S6: array schema-hints must nest under items, not sit on the field ----
+Deno.test("planManifest — S6: array field min/max/int schema-hints nest under items", () => {
+  const rune = `[MOD] m
+
+[ENT] http.make(ScoreDto): ScoreDto
+
+[DTO] ScoreDto: score(s), qty(s)
+
+[TYP:min=0,max=100] score: number
+    a score
+[TYP:int] qty: number
+    a qty`;
+  const plan = planManifest("specs/m.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const all = [...plan.toCreate, ...plan.toRegenerate];
+  const dto = all.find((f) => f.path.endsWith("/score.ts"))!;
+  assert(dto, "ScoreDto file must be generated");
+  const c = dto.content;
+  // For an ARRAY field the numeric bounds and integer type belong under an
+  // `items` schema, never as a scalar on the array property (which OpenAPI
+  // applies to the array itself / overrides the array type entirely).
+  assertEquals(
+    /@ApiProperty\(\{[^}]*\bminimum: 0\b[^}]*\}\)/.test(c) &&
+      !/items:/.test(c.slice(c.indexOf("minimum"))),
+    false,
+    "array bounds must not be emitted as a scalar minimum on the field",
+  );
+  assertStringIncludes(c, "items:");
+  // The integer array must not declare a scalar `type: "integer"` on the field
+  // (that overrides the array type in the produced OpenAPI schema).
+  assertEquals(
+    /@ApiProperty\(\{(?:(?!items)[^}])*type: "integer"[^}]*\}\)/.test(c),
+    false,
+    "integer array must nest type under items, not on the field",
+  );
+});
+
+// ---- S7: an empty [PLY] (no [CSE]) must be a manifest error, not bad codegen ----
+Deno.test("planManifest — S7: a [PLY] with no [CSE] emits an error and no broken barrel", () => {
+  const rune = `[MOD] m
+
+[REQ] order.place(InDto): OutDto
+    [PLY] shape.draw(InDto): OutDto
+    [RET] OutDto
+
+[DTO] InDto: id
+[DTO] OutDto: id
+[TYP] id: string`;
+  const plan = planManifest("specs/m.rune", rune, new Set());
+  // The empty PLY must surface a manifest error.
+  assert(
+    plan.errors.some((e) => /\[PLY\]/.test(e) && /\[CSE\]/.test(e)),
+    `expected a [PLY] requires [CSE] error, got: ${JSON.stringify(plan.errors)}`,
+  );
+  // And it must NOT emit a poly-mod barrel pointing at a nonexistent module.
+  const all = [...plan.toCreate, ...plan.toRegenerate];
+  const polyMod = all.find((f) => f.path.endsWith("/poly-mod.ts"));
+  if (polyMod) {
+    assertEquals(
+      polyMod.content.includes("./implementations//mod.ts"),
+      false,
+      "must not emit a double-slash re-export from an empty PLY",
+    );
+  }
+});

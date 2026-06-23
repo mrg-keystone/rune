@@ -6,10 +6,25 @@ const FORBIDDEN_DIRS = new Set(
 );
 const LOOSE_NAMES = (SHAPE as Record<string, unknown>)["$looseFileNames"] as string[];
 
+/** Split a name into its word tokens across camelCase, kebab- and snake_case
+ * boundaries (e.g. `myUtils` → [my, utils], `my-utils` → [my, utils],
+ * `commonHelper` → [common, helper]). Used so the loose-name guard matches a
+ * WHOLE word token, not a bare substring — `utilization`/`commonwealth`/
+ * `futility` embed a loose word but are not made of it, so they pass. */
+function wordTokens(name: string): string[] {
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[-_\s]+/)
+    .map((t) => t.toLowerCase())
+    .filter((t) => t.length > 0);
+}
+
 function containsLooseName(name: string): string | null {
   const lower = name.toLowerCase();
+  const tokens = new Set(wordTokens(name));
   for (const loose of LOOSE_NAMES) {
-    if (lower === loose || lower.includes(loose)) return loose;
+    // Whole-name match (`utils`) or whole-token match (`my-utils`, `commonHelper`).
+    if (lower === loose || tokens.has(loose)) return loose;
   }
   return null;
 }
@@ -259,6 +274,11 @@ export async function check(
         const found = ctx.files.some(
           (f) =>
             f.startsWith(path + "/") &&
+            // Direct child only — a required file must sit IN this folder, not in
+            // some grandchild that happens to share the basename (mirrors the
+            // variant matcher's depth guard at line 88). Without this, e.g. a
+            // `mod.ts` two levels down satisfies a required `mod` here.
+            f.split("/").length === path.split("/").length + 1 &&
             f.split("/").pop()?.replace(/\.[^.]+$/, "") === baseName,
         );
         if (!found) {

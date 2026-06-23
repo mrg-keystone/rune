@@ -1,0 +1,101 @@
+{
+  "module": "catalog",
+  "moduleDescription": null,
+  "reqs": [
+    {
+      "noun": "item",
+      "verb": "add",
+      "input": "AddItemDto",
+      "output": "ItemDto",
+      "steps": [
+        {
+          "kind": "boundary",
+          "service": "db",
+          "noun": "item",
+          "verb": "save",
+          "params": [
+            "AddItemDto"
+          ],
+          "output": "ItemDto",
+          "isStatic": false,
+          "faults": [
+            "conflict"
+          ],
+          "line": 3
+        },
+        {
+          "kind": "ret",
+          "value": "ItemDto",
+          "line": 5
+        }
+      ],
+      "line": 2
+    }
+  ],
+  "ents": [],
+  "dtos": [
+    {
+      "name": "AddItemDto",
+      "properties": [
+        "name"
+      ],
+      "description": "a request to add an item to the catalog",
+      "isCore": false,
+      "isOpen": false,
+      "line": 16
+    },
+    {
+      "name": "ItemDto",
+      "properties": [
+        "name"
+      ],
+      "description": "a stored catalog item",
+      "isCore": false,
+      "isOpen": false,
+      "line": 19
+    }
+  ],
+  "typs": [
+    {
+      "name": "name",
+      "typeName": "string",
+      "description": "a human-readable item name",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 7
+    },
+    {
+      "name": "itemRef",
+      "typeName": "ItemDto",
+      "description": "an alias that references the ItemDto shape",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 10
+    },
+    {
+      "name": "label",
+      "typeName": "name",
+      "description": "an alias that references another [TYP]",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 13
+    }
+  ],
+  "nons": [],
+  "srvs": [
+    {
+      "transport": "SIDECAR",
+      "name": "db",
+      "envVars": [
+        "DB_URL"
+      ],
+      "description": "the primary datastore",
+      "docsLink": "https://docs.example.com/db",
+      "line": 22
+    }
+  ],
+  "errors": []
+}

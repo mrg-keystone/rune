@@ -27,7 +27,12 @@ export interface StubField {
 export function planStubs(
   specs: { path: string; text: string }[],
 ): StubField[] {
-  const wanted = new Map<string, string>(); // ext name → typeName (first declaration wins)
+  // ext name → the SET of primitives declared for it across modules. A single
+  // primitive resolves cleanly; two different primitives are a composition
+  // conflict (planInputDiagnostics reports it). We pick the winner
+  // deterministically (sorted, first) so the stub output never depends on spec /
+  // filesystem path order — never "whichever spec was processed first wins".
+  const wantedTypes = new Map<string, Set<string>>();
   const producedAnywhere = new Set<string>();
   for (const spec of specs) {
     const ast = parse(spec.text);
@@ -55,20 +60,25 @@ export function planStubs(
         );
         if (produced) continue;
         const typeName = externalTypes.get(field);
-        if (typeName !== undefined && !wanted.has(field)) {
-          wanted.set(field, typeName);
+        if (typeName !== undefined) {
+          const set = wantedTypes.get(field) ?? new Set<string>();
+          set.add(typeName);
+          wantedTypes.set(field, set);
         }
       }
     }
   }
-  return [...wanted]
+  return [...wantedTypes]
     // The plural convention: keep resolves `$name` from an exact `name` output
     // OR the first element of a `name + "s"` collection output — either one
     // anywhere in the project fulfills the contract, so the ghost evaporates.
     .filter(([name]) =>
       !producedAnywhere.has(name) && !producedAnywhere.has(`${name}s`)
     )
-    .map(([name, tsType]) => ({ name, tsType }))
+    // On a conflicting primitive, pick the SORTED-first winner so the result is
+    // independent of spec/path order (the conflict is surfaced by
+    // planInputDiagnostics, not silently obscured by ordering).
+    .map(([name, types]) => ({ name, tsType: [...types].sort()[0] }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -97,10 +107,21 @@ export function planInputDiagnostics(
   }
   const mods: Mod[] = [];
   const producedAnywhere = new Set<string>();
+  // Every PRIMITIVE an ext field is declared with across the project, by field.
+  // Two different primitives for the same field name is a composition conflict:
+  // a single ghost stub can only mint one type, so one module's `$field` would
+  // receive a wrong-typed value silently.
+  const extTypesByField = new Map<string, Set<string>>();
   for (const spec of specs) {
     const ast = parse(spec.text);
     if (ast.errors.length > 0) continue;
     const dtoByName = new Map(ast.dtos.map((d) => [d.name, d]));
+    for (const t of ast.typs) {
+      if (!t.isExternal) continue;
+      const set = extTypesByField.get(t.name) ?? new Set<string>();
+      set.add(t.typeName);
+      extTypesByField.set(t.name, set);
+    }
     const exampleOf = new Map<string, string>();
     for (const t of ast.typs) {
       const ex = t.modifiers.find((m) => m.startsWith("example="));
@@ -182,13 +203,48 @@ export function planInputDiagnostics(
       }
     }
   }
+  // Conflicting ext primitives across modules: a single ghost stub mints ONE
+  // type, so the divergent module's `$field` gets a wrong-typed value silently.
+  // Report it deterministically (sorted) so the building session resolves the
+  // seam rather than relying on path-order luck.
+  for (const [field, types] of [...extTypesByField].sort()) {
+    if (types.size > 1) {
+      notes.push(
+        `inputs: [TYP:ext] "${field}" is declared with conflicting types across ` +
+          `modules (${[...types].sort().join(", ")}) — a single ghost stub can ` +
+          `only mint one; align the [TYP:ext] declarations so every consumer ` +
+          `agrees on the type`,
+      );
+    }
+  }
   return notes;
 }
 
-// camelCase/kebab/snake → PascalCase ("memberId" → "MemberId", "member-id" → "MemberId").
+// Coerce a candidate into a valid JS/TS identifier: drop characters that can't
+// appear in an identifier, prefix `_` when the result would start with a digit.
+// Mirrors the sync entrypoint's safeIdent so a field name with illegal chars
+// (or a leading digit, e.g. `3dModel`) can't emit an uncompilable identifier.
+function safeIdent(s: string): string {
+  const stripped = s.replace(/[^A-Za-z0-9_$]/g, "");
+  const prefixed = /^[0-9]/.test(stripped) ? `_${stripped}` : stripped;
+  return prefixed || "Field";
+}
+
+// Whether a string is usable as a BARE TS property name / member access. A field
+// name that isn't (e.g. `3dModel`, `a-b`) must be QUOTED as a property and
+// accessed with brackets — never sanitized, because keep binds `$<name>` to the
+// field of that EXACT name.
+function isBareIdent(s: string): boolean {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(s);
+}
+
+// The class/method identifier for a field — PascalCase, then sanitized so a
+// non-identifier field name (leading digit, illegal chars) still yields a legal
+// TS identifier ("memberId" → "MemberId", "member-id" → "MemberId",
+// "3dModel" → "_3dModel").
 function pascal(name: string): string {
   const camel = name.replace(/[-_](\w)/g, (_, c: string) => c.toUpperCase());
-  return applyCase(camel, "pascal");
+  return safeIdent(applyCase(camel, "pascal"));
 }
 
 // The placeholder a stub mints, by the field's declared primitive. Strings get a
@@ -238,11 +294,17 @@ export function renderStubsModule(fields: StubField[]): string {
     L.push("let counter = 1;");
     L.push("");
   }
+  // The field name stays VERBATIM as the DTO property (keep binds `$<name>` to
+  // it), so an illegal-identifier name is quoted, not rewritten.
+  const prop = (name: string): string =>
+    isBareIdent(name) ? name : JSON.stringify(name);
+  const access = (name: string): string =>
+    isBareIdent(name) ? `.${name}` : `[${JSON.stringify(name)}]`;
   for (const { field, mint } of mints) {
     L.push(`// stand-in output for ${field.name}`);
     L.push(`class ${pascal(field.name)}StubDto {`);
     L.push(`  @${mint.dec}()`);
-    L.push(`  ${field.name}!: ${mint.ts};`);
+    L.push(`  ${prop(field.name)}!: ${mint.ts};`);
     L.push("}");
     L.push("");
   }
@@ -258,7 +320,7 @@ export function renderStubsModule(fields: StubField[]): string {
     );
     L.push(`  mint${pascal(field.name)}(): ${dto} {`);
     L.push(`    const dto = new ${dto}();`);
-    L.push(`    dto.${field.name} = ${mint.expr};`);
+    L.push(`    dto${access(field.name)} = ${mint.expr};`);
     L.push("    return dto;");
     L.push("  }");
   });

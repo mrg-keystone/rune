@@ -301,13 +301,27 @@ export interface Scenario {
   savedAt?: number;
 }
 
+/** A small, stable, sync djb2 hash → base36 — only used to disambiguate filename stems. */
+function nameHash(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) {
+    h = (((h << 5) + h) + s.charCodeAt(i)) >>> 0;
+  }
+  return h.toString(36);
+}
+
 /** "Happy Path (EU)" → "happy-path-eu" — the scenario's filename stem. */
 export function scenarioSlug(name: string): string {
-  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(
-    /^-+|-+$/g,
-    "",
-  );
-  return slug === "" ? "scenario" : slug;
+  // Unicode-aware: keep letters/digits from any script (CJK, Cyrillic, accented …), not an
+  // ASCII-only class that would strip a whole non-Latin name to "" and collide all of them.
+  const slug = name
+    .normalize("NFC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-+|-+$/g, "");
+  // An empty base (a name with no letters/digits at all, e.g. "---") still needs a stem, but two
+  // distinct such names must NOT collapse to one constant file — disambiguate with a name hash.
+  return slug === "" ? `scenario-${nameHash(name)}` : slug;
 }
 
 /** Coerce one parsed scenario file; null when it lacks the identity fields. */

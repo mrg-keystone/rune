@@ -81,6 +81,48 @@ Deno.test("a throwing span is marked as the crash point and the error re-throws 
   assert(trace.spans[0].error, "the root carries the surfaced error too");
 });
 
+Deno.test("the crash marker lands on the DEEPEST throwing span, not the latest-allocated one", async () => {
+  // A deep span throws and is recovered by app code (its span catch still marks the crash), then a
+  // later-allocated SHALLOWER sibling throws and propagates. The ✕ must land on the deepest throwing
+  // span — span ids are an allocation-order counter, not a depth measure, so id order must not win.
+  const t = freshTracer();
+  let caught: unknown;
+  try {
+    await t.trace(
+      { requestId: "rd", method: "GET", route: "/depth" },
+      async () => {
+        await t.span("outerA", async () => {
+          try {
+            await t.span("deepThrow", () => {
+              throw new Error("deep boom");
+            });
+          } catch {
+            // recovered inside outerA — the deep span's crash mark still stands
+          }
+        });
+        await t.span("shallowThrow", () => {
+          throw new Error("shallow boom");
+        });
+      },
+    );
+  } catch (e) {
+    caught = e;
+  }
+  assert(
+    caught instanceof Error && caught.message === "shallow boom",
+    "the propagating (shallow) error surfaces",
+  );
+  const [trace] = await t.list();
+  const deep = trace.spans.find((s) => s.name === "deepThrow")!;
+  const shallow = trace.spans.find((s) => s.name === "shallowThrow")!;
+  assert(deep.id < shallow.id, "the deep span was allocated BEFORE the shallow sibling");
+  assertEquals(
+    trace.crashedSpanId,
+    deep.id,
+    "the deepest throwing span is the crash point, even though the shallow one has a higher id",
+  );
+});
+
 Deno.test("concurrent spans each parent correctly (no shared-pointer race)", async () => {
   const t = freshTracer();
   await t.trace({ requestId: "r3", method: "GET", route: "/fan" }, async () => {

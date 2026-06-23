@@ -1,0 +1,110 @@
+{
+  "module": "search",
+  "moduleDescription": null,
+  "reqs": [
+    {
+      "noun": "search",
+      "verb": "run",
+      "input": "QueryDto",
+      "output": "ResultsDto",
+      "steps": [
+        {
+          "kind": "boundary",
+          "service": "db",
+          "noun": "index",
+          "verb": "query",
+          "params": [
+            "QueryDto"
+          ],
+          "output": "ResultsDto",
+          "isStatic": false,
+          "faults": [
+            "timeout"
+          ],
+          "line": 3
+        },
+        {
+          "kind": "boundary",
+          "service": "db",
+          "noun": "audit",
+          "verb": "record",
+          "params": [
+            "ResultsDto"
+          ],
+          "output": "AuditDto",
+          "isStatic": false,
+          "faults": [],
+          "line": 5
+        }
+      ],
+      "line": 2
+    }
+  ],
+  "ents": [],
+  "dtos": [
+    {
+      "name": "QueryDto",
+      "properties": [
+        "query"
+      ],
+      "description": "a search query",
+      "isCore": false,
+      "isOpen": false,
+      "line": 7
+    },
+    {
+      "name": "ResultsDto",
+      "properties": [
+        "items"
+      ],
+      "description": "the matched results",
+      "isCore": false,
+      "isOpen": false,
+      "line": 10
+    },
+    {
+      "name": "AuditDto",
+      "properties": [
+        "items"
+      ],
+      "description": "an audit record of the search",
+      "isCore": false,
+      "isOpen": false,
+      "line": 13
+    }
+  ],
+  "typs": [
+    {
+      "name": "query",
+      "typeName": "string",
+      "description": "the raw query text",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 16
+    },
+    {
+      "name": "items",
+      "typeName": "string",
+      "description": "a serialized result item",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 19
+    }
+  ],
+  "nons": [],
+  "srvs": [
+    {
+      "transport": "SIDECAR",
+      "name": "db",
+      "envVars": [
+        "DB_URL"
+      ],
+      "description": "the primary datastore",
+      "docsLink": "https://docs.example.com/db",
+      "line": 22
+    }
+  ],
+  "errors": []
+}

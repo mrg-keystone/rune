@@ -85,6 +85,32 @@ Deno.test("carries mintedAt when present (for the * 24h cap)", async () => {
   assertEquals(payload.mintedAt, mintedAt);
 });
 
+Deno.test("derives mintedAt from a short all-digit epoch-seconds claim (not a calendar year)", async () => {
+  // When the bearer carries no numeric `mintedAt`, toSessionPayload derives it from the
+  // string `claims.mintedAt` via isoToEpochSeconds, documented to accept an "epoch-seconds string".
+  // A short all-digit string must be read as epoch seconds, NOT misparsed by Date.parse as a year.
+  const { verifier } = makeVerifier();
+  const bearer = await signer.sign({ claims: { mintedAt: "3600" } });
+  const payload = await verifyToken(bearer, verifier);
+  assertEquals(payload.mintedAt, 3600, "epoch-seconds string read literally");
+});
+
+Deno.test("derives mintedAt from a 10-digit epoch-seconds claim", async () => {
+  const { verifier } = makeVerifier();
+  const bearer = await signer.sign({ claims: { mintedAt: "315532800" } });
+  const payload = await verifyToken(bearer, verifier);
+  assertEquals(payload.mintedAt, 315532800);
+});
+
+Deno.test("derives mintedAt from a real ISO-8601 claim (preserved behavior)", async () => {
+  const { verifier } = makeVerifier();
+  const bearer = await signer.sign({
+    claims: { mintedAt: "2025-01-01T00:00:00Z" },
+  });
+  const payload = await verifyToken(bearer, verifier);
+  assertEquals(payload.mintedAt, Math.floor(Date.parse("2025-01-01T00:00:00Z") / 1000));
+});
+
 Deno.test("caches the JWKS across verifications within the TTL", async () => {
   const { verifier, fetches } = makeVerifier({ cacheTtlSeconds: 600 });
   await verifyToken(await signer.sign({}), verifier);
@@ -99,4 +125,43 @@ Deno.test("an unknown kid forces a single JWKS refresh", async () => {
   const bad = await signer.sign({ kid: signer.unknownKid });
   await assertRejects(() => verifyToken(bad, verifier), TokenError); // fetch #2 (refresh)
   assertEquals(fetches(), 2);
+});
+
+/** A verifier whose fetchJwks awaits, so concurrent loads overlap and de-dup can be observed. */
+function makeSlowVerifier(opts?: { cacheTtlSeconds?: number }) {
+  let fetches = 0;
+  const verifier = createJwksVerifier({
+    fetchJwks: async () => {
+      fetches++;
+      await new Promise((r) => setTimeout(r, 20));
+      return signer.jwks;
+    },
+    cacheTtlSeconds: opts?.cacheTtlSeconds,
+  });
+  return { verifier, fetches: () => fetches };
+}
+
+Deno.test("concurrent cold-start verifications share a single in-flight JWKS fetch", async () => {
+  const { verifier, fetches } = makeSlowVerifier({ cacheTtlSeconds: 600 });
+  const bearers = await Promise.all(
+    Array.from({ length: 10 }, () => signer.sign({})),
+  );
+  await Promise.all(bearers.map((b) => verifyToken(b, verifier)));
+  assertEquals(fetches(), 1, "10 concurrent cold verifies share one fetch");
+});
+
+Deno.test("concurrent unknown-kid verifications share a single forced refresh", async () => {
+  const { verifier, fetches } = makeSlowVerifier({ cacheTtlSeconds: 600 });
+  await verifyToken(await signer.sign({}), verifier); // warm: fetch #1
+  const bad = await Promise.all(
+    Array.from({ length: 10 }, () => signer.sign({ kid: signer.unknownKid })),
+  );
+  await Promise.all(
+    bad.map((b) =>
+      verifyToken(b, verifier).catch((e) => {
+        if (!(e instanceof TokenError)) throw e;
+      })
+    ),
+  );
+  assertEquals(fetches(), 2, "warm fetch + one shared forced refresh");
 });

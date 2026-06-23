@@ -304,8 +304,27 @@ export class Tracer {
   private markCrash(trace: Trace, spanId: number, err: unknown): void {
     trace.ok = false;
     const prev = trace.crashedSpanId;
-    if (prev === null || spanId > prev) trace.crashedSpanId = spanId;
+    // Keep the deepest throwing span by computed depth (walk the parentId chain), not by id —
+    // ids are an allocation-order counter, not a depth measure. On equal depth keep the first
+    // (earliest-unwound) throwing span: spans unwind innermost-first, so the prior mark wins ties.
+    if (prev === null || this.spanDepth(trace, spanId) > this.spanDepth(trace, prev)) {
+      trace.crashedSpanId = spanId;
+    }
     if (!trace.spans[0].error) trace.spans[0].error = describeError(err);
+  }
+
+  /** Depth of a span from the root (root = 0), by walking its parentId chain. */
+  private spanDepth(trace: Trace, id: number): number {
+    let depth = 0;
+    const seen = new Set<number>();
+    let cur = trace.spans.find((s) => s.id === id);
+    while (cur && cur.parentId !== null && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      depth++;
+      const parentId: number = cur.parentId;
+      cur = trace.spans.find((s) => s.id === parentId);
+    }
+    return depth;
   }
 }
 

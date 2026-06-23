@@ -1,5 +1,5 @@
 import { assertEquals } from "#std/assert";
-import { check } from "./mod.ts";
+import { areSignaturesCompatible, check, getArity } from "./mod.ts";
 import type { PipelineContext, LspContext, LspCapabilities } from "@core/dto/types.ts";
 
 const nullLspCtx: PipelineContext = {
@@ -113,4 +113,39 @@ Deno.test("check — does not flag when exports differ across siblings", async (
   };
   const result = await check("src/orders/domain/business", "folder", ctx);
   assertEquals(result, null);
+});
+
+// ---- S5: getArity must count params correctly past callback/arrow params ----
+Deno.test("getArity — S5: a callback param does not collapse the arity", () => {
+  assertEquals(getArity("(cb: () => void, x: number) => string"), 2);
+  assertEquals(getArity("(y: string) => string"), 1);
+  assertEquals(getArity("(a, b) => x"), 2);
+  assertEquals(getArity("() => void"), 0);
+  assertEquals(getArity("(a: Map<string, number>, b: number) => void"), 2);
+  assertEquals(
+    getArity("(f: (a: number, b: number) => number, g: string) => void"),
+    2,
+  );
+});
+
+Deno.test("areSignaturesCompatible — S5: an arity-2 callback sibling is not arity-1", () => {
+  // Two genuine arity-2 siblings (one with a callback param) ARE compatible…
+  assertEquals(
+    areSignaturesCompatible([
+      "(cb: () => void, x: number) => string",
+      "(a: number, b: number) => string",
+      "(p: string, q: string) => string",
+    ]),
+    true,
+  );
+  // …but a real arity-2 callback sibling must NOT be judged compatible with
+  // arity-1 siblings (the bug collapsed the callback one to arity 1).
+  assertEquals(
+    areSignaturesCompatible([
+      "(cb: () => void, x: number) => string",
+      "(y: string) => string",
+      "(z: string) => string",
+    ]),
+    false,
+  );
 });
