@@ -153,7 +153,7 @@ deno task studio
 
 | Command | Does |
 |---|---|
-| `rune init <project-name>` | scaffold a fresh project skeleton (`deno.json`, `src/core/core.rune`, a starter module spec, `bootstrap/`) — no codegen |
+| `rune init <project-name>` | scaffold a fresh project (`deno.json`, `spec/core.rune`, empty `src/`, `bootstrap/`) — author specs in `spec/`, `rune sync spec/<m>.rune` generates into `src/<m>/` |
 | `rune [dir]` | lint a project against the architecture |
 | `rune sync <file.rune>` | generate/update a module from its spec (+ runtime bootstrap in `bootstrap/`) |
 | `rune manifest <file.rune>` | one-shot generate (no prune) |

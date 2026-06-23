@@ -129,24 +129,36 @@ export function processName(noun: string, verb: string): string {
   return `${toKebab(noun)}-${toKebab(verb)}`;
 }
 
-// The single shared-service spec, relative to the project root. `[SRV]` may only
-// be declared here; every other spec resolves its boundary services against it
-// (declare-once, visible everywhere). No import syntax — the convention is the
-// path. Canonical home shared by the loader (spec-root) and the lint rules.
+// The canonical shared-service spec, relative to the project root. `[SRV]` may
+// only be declared in a core spec; every other spec resolves its boundary
+// services against it (declare-once, visible everywhere). No import syntax — the
+// convention is the path. Shared by the loader (spec-root) and the lint rules.
 export const CORE_SPEC_REL = "src/core/core.rune";
+
+// Dedicated spec-folder layouts: a flat folder of authored `.rune` specs that
+// generate into the project's `src/` (the specs stay put — they are the source).
+// Both the singular `spec/` (the `rune init` default) and plural `specs/` names
+// resolve, so either project shape works.
+const SPEC_DIRS = ["spec/", "specs/"];
+
+// The core spec under any layout: src/core/core.rune (canonical) or
+// spec/core.rune / specs/core.rune (the flat spec-folder layouts).
+const CORE_SPEC_PATHS = [CORE_SPEC_REL, "spec/core.rune", "specs/core.rune"];
 
 /** Is this (root-relative) path the project's shared-service spec? */
 export function isCoreSpec(path: string): boolean {
-  return path === CORE_SPEC_REL;
+  return CORE_SPEC_PATHS.includes(path);
 }
 
 // A rune file counts as a project spec only at one of these paths:
-//   specs/<name>.rune
+//   spec/<name>.rune  |  specs/<name>.rune   (flat spec-folder layout)
 //   src/<module>/spec.rune
 //   src/<module>/<module>.rune
 // Documentation, vendored, and arbitrary rune files are skipped by rune rules.
 export function isProjectSpec(path: string): boolean {
-  if (path.startsWith("specs/") && !path.slice("specs/".length).includes("/")) return true;
+  for (const dir of SPEC_DIRS) {
+    if (path.startsWith(dir) && !path.slice(dir.length).includes("/")) return true;
+  }
   if (path.startsWith("src/")) {
     const rest = path.slice("src/".length);
     const slash = rest.indexOf("/");
@@ -159,13 +171,14 @@ export function isProjectSpec(path: string): boolean {
 }
 
 // Derive the module name from a project-spec path.
+//   spec/recording.rune        → "recording"
 //   specs/recording.rune       → "recording"
 //   src/orders/spec.rune       → "orders"
 //   src/orders/orders.rune     → "orders"
 export function moduleFromSpecPath(path: string): string | null {
   if (!isProjectSpec(path)) return null;
-  if (path.startsWith("specs/")) {
-    return path.slice("specs/".length, -".rune".length);
+  for (const dir of SPEC_DIRS) {
+    if (path.startsWith(dir)) return path.slice(dir.length, -".rune".length);
   }
   // src/<module>/...
   return path.slice("src/".length).split("/")[0];

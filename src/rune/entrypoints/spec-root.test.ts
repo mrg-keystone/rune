@@ -59,3 +59,23 @@ Deno.test("resolveRoot — root is the dir above an outermost src/<module>/", ()
   assertEquals(resolveRoot("/p/src/tasks/tasks.rune"), "/p");
   assertEquals(resolveRoot("/p/todos.rune"), "/p");
 });
+
+Deno.test("resolveRoot — a singular spec/ folder is the project root (stay-in-place layout)", () => {
+  // The spec stays in spec/; codegen lands in the sibling src/ at the root.
+  assertEquals(resolveRoot("/p/spec/tasks.rune"), "/p");
+  assertEquals(resolveRoot("/p/spec/core.rune"), "/p");
+  // Plural specs/ is the legacy STAGING convention (sync moves the spec into
+  // src/<module>/), so it is NOT treated as a root — it resolves to itself.
+  assertEquals(resolveRoot("/p/specs/tasks.rune"), "/p/specs");
+});
+
+Deno.test("loadCoreSrvs — finds the core spec in a spec/ folder layout", async () => {
+  await withRoot(
+    { "spec/core.rune": CORE, "spec/tasks.rune": "[MOD] tasks" },
+    async (root) => {
+      const srvs = await loadCoreSrvs(root, join(root, "spec/tasks.rune"));
+      assert(srvs !== undefined);
+      assertEquals([...srvs!.keys()].sort(), ["db", "ex"]);
+    },
+  );
+});

@@ -262,15 +262,19 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
     // recognises (`<module>.rune`) rather than the author's arbitrary basename —
     // otherwise the moved spec lands at a path collectProjectSpecs() rejects, and
     // ghost-stub planning / input diagnostics (run later in THIS same sync)
-    // silently skip it. A spec already named spec.rune or <module>.rune in its
-    // module is left in place (both are canonical). Idempotent: a no-op once it's
-    // already at a canonical project path. Happens BEFORE ensureBootstrap so the
-    // just-synced spec is collected.
+    // silently skip it. Left in place when the spec is ALREADY canonical
+    // (spec.rune or <module>.rune in its module) OR lives in a dedicated `spec/`
+    // folder (the `rune init` layout) — there the spec IS the source and stays
+    // put while codegen lands in the sibling `src/`. The plural `specs/` is the
+    // older STAGING convention and is still moved into `src/<module>/`.
+    // Idempotent: a no-op once it's already at a canonical project path. Happens
+    // BEFORE ensureBootstrap so the just-synced spec is collected.
+    const inSpecFolder = basename(dirname(absRune)) === "spec";
     const canonicalDir = join(root, "src", plan.module);
-    const alreadyCanonical = (resolve(absRune) ===
-        resolve(join(canonicalDir, "spec.rune"))) ||
+    const leaveInPlace = inSpecFolder ||
+      (resolve(absRune) === resolve(join(canonicalDir, "spec.rune"))) ||
       (resolve(absRune) === resolve(join(canonicalDir, `${plan.module}.rune`)));
-    const specTarget = alreadyCanonical
+    const specTarget = leaveInPlace
       ? absRune
       : join(canonicalDir, `${plan.module}.rune`);
     if (resolve(specTarget) !== absRune) {

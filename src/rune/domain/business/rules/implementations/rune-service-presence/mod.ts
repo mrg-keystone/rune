@@ -34,9 +34,15 @@ export async function check(
   const declared = new Set<string>();
   if (isCoreSpec(path)) {
     for (const s of ast.srvs) declared.add(s.name);
-  } else if (ctx.files.includes(CORE_SPEC_REL)) {
-    const coreAst = parse(await ctx.getFileContent(CORE_SPEC_REL));
-    for (const s of coreAst.srvs) declared.add(s.name);
+  } else {
+    // A module spec resolves services from the project's core spec, wherever it
+    // lives: src/core/core.rune, or spec/core.rune / specs/core.rune in a flat
+    // spec-folder layout.
+    const corePath = ctx.files.find((f) => isCoreSpec(f));
+    if (corePath) {
+      const coreAst = parse(await ctx.getFileContent(corePath));
+      for (const s of coreAst.srvs) declared.add(s.name);
+    }
   }
 
   const used = new Map<string, number>(); // service -> first line

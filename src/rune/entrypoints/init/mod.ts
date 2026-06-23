@@ -12,13 +12,6 @@ const BOLD = "\x1b[1m";
 const DIM = "\x1b[2m";
 const RESET = "\x1b[0m";
 
-// The starter module the project ships with — a concrete two-endpoint slice
-// (create + complete) that exercises the whole shape: DTOs, a coordinator, a
-// business feature, a `db:` boundary (resolved from core.rune below), and `[ENT]`
-// HTTP surfaces. It is a SPEC only; `rune sync` turns it into code. Replace it
-// with your own modules.
-const MODULE = "tasks";
-
 const CORE_TEMPLATE = `[MOD] core
 
 // Shared services — declare each one ONCE here; every module resolves its
@@ -30,57 +23,14 @@ const CORE_TEMPLATE = `[MOD] core
     @docs https://docs.example.com/datastore
 `;
 
-const MODULE_TEMPLATE = `[MOD] tasks
-
-// A starter module — replace it with your own. One [MOD] per deployable surface.
-// The loop: edit this spec -> \`rune sync\` (or \`rune dev\`) -> fill the stub
-// bodies -> open /docs/tasks (the cake) and walk the endpoints to green.
-
-[ENT] http.create(CreateTaskDto): TaskDto
-[ENT] http.complete(TaskRefDto): TaskDto
-
-[REQ] task.create(CreateTaskDto): TaskDto
-    id::generate(): id
-    [NEW] task
-    task.fill(title): task
-    db:task.save(TaskDto): void
-      timeout
-    task.toDto(): TaskDto
-
-[REQ] task.complete(TaskRefDto): TaskDto
-    db:task.load(id): TaskDto
-      not-found
-    task.markDone(): task
-    db:task.save(TaskDto): void
-      timeout
-    task.toDto(): TaskDto
-
-[TYP] id: string
-    a unique task identifier
-[TYP] title: string
-    the human-readable task title
-[TYP] done: boolean
-    whether the task has been completed
-
-[DTO] CreateTaskDto: title
-    input to create a new task
-[DTO] TaskRefDto: id
-    a reference to an existing task
-[DTO] TaskDto: id, title, done
-    a persisted task record
-
-[NON] task
-    a single todo item
-`;
-
-// `rune init <project-name>` — scaffold a fresh project SKELETON: the import map
-// (deno.json), the shared-services spec (src/core/core.rune), a starter module
-// spec (src/<module>/<module>.rune), and the runtime wiring (bootstrap/). It does
-// NOT generate module code — that's `rune sync`'s job — so what you get is exactly
-// the files you author plus the boilerplate, and nothing else. deno.json and the
-// bootstrap files come from the SAME renderers `rune sync` uses, so they're
-// byte-identical to what the engine produces; bootstrap/modules.ts starts empty
-// and `rune sync` fills it in as modules with [ENT] surfaces are generated.
+// `rune init <project-name>` — scaffold a fresh project SKELETON in the spec/
+// layout: the import map (deno.json), the shared-services spec (spec/core.rune),
+// an empty src/ for generated code, and the runtime wiring (bootstrap/). It does
+// NOT generate module code — author module specs under spec/ (e.g. spec/tasks.rune)
+// and run `rune sync spec/tasks.rune` to generate them into src/tasks/; the specs
+// stay in spec/. deno.json and the bootstrap files come from the SAME renderers
+// `rune sync` uses, so they're byte-identical to engine output; bootstrap/modules.ts
+// starts empty and sync fills it in as modules with [ENT] surfaces are generated.
 export async function runInit(args: string[]): Promise<number> {
   const name = args.find((a) => !a.startsWith("--"));
   if (!name) {
@@ -113,13 +63,12 @@ export async function runInit(args: string[]): Promise<number> {
 
   const ioErrors: string[] = [];
   try {
-    await Deno.mkdir(join(dir, "src", "core"), { recursive: true });
-    await Deno.mkdir(join(dir, "src", MODULE), { recursive: true });
+    await Deno.mkdir(join(dir, "spec"), { recursive: true });
+    await Deno.mkdir(join(dir, "src"), { recursive: true }); // empty — codegen lands here
     await Deno.mkdir(join(dir, "bootstrap"), { recursive: true });
 
-    // Specs (authored — the source of truth you edit + sync).
-    await Deno.writeTextFile(join(dir, "src", "core", "core.rune"), CORE_TEMPLATE);
-    await Deno.writeTextFile(join(dir, "src", MODULE, `${MODULE}.rune`), MODULE_TEMPLATE);
+    // The authored shared-services spec — the source of truth you edit + sync.
+    await Deno.writeTextFile(join(dir, "spec", "core.rune"), CORE_TEMPLATE);
 
     // deno.json — the import map the generated code needs (same writer as sync).
     await ensureImportMap(dir, ioErrors);
@@ -138,17 +87,18 @@ export async function runInit(args: string[]): Promise<number> {
     return 1;
   }
 
-  const row = (path: string, desc: string) => `  ${path.padEnd(22)} ${desc}`;
+  const row = (path: string, desc: string) => `  ${path.padEnd(20)} ${desc}`;
   console.log(`${GREEN}${BOLD}✓ Created ${name}/${RESET}
 ${DIM}${row("deno.json", "import map: jsr:@mrg-keystone/rune@^1, #assert, decorators")}
-${row("src/core/core.rune", "shared services spec (the db: client)")}
-${row(`src/${MODULE}/${MODULE}.rune`, "a starter module spec — replace it with your own")}
+${row("spec/core.rune", "shared-services spec — add module specs beside it")}
+${row("src/", "empty — rune sync generates modules here")}
 ${row("bootstrap/", "runtime wiring (bootstrapServer); modules.ts fills in on sync")}${RESET}
 
 Next:
   ${BOLD}cd ${name}${RESET}
-  ${BOLD}rune sync src/core/core.rune${RESET}        # generate the shared service clients
-  ${BOLD}rune sync src/${MODULE}/${MODULE}.rune${RESET}      # generate the module (DTOs, coordinators, endpoints)
+  ${DIM}# author a module spec under spec/ (e.g. spec/tasks.rune), then:${RESET}
+  ${BOLD}rune sync spec/tasks.rune${RESET}     # generate it into src/tasks/ (the spec stays in spec/)
+  ${BOLD}rune sync spec/core.rune${RESET}      # generate the shared service clients
   ${DIM}# then fill the stub bodies, \`deno check\`, and \`rune dev\` to iterate live${RESET}
 `);
   return 0;

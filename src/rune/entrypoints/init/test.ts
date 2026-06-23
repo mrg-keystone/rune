@@ -16,17 +16,16 @@ async function inTempCwd(fn: (dir: string) => Promise<void>): Promise<void> {
   }
 }
 
-Deno.test("runInit — scaffolds deno.json + specs + bootstrap/, no codegen", async () => {
+Deno.test("runInit — scaffolds the spec/ skeleton (deno.json + spec/core.rune + bootstrap/ + empty src/)", async () => {
   await inTempCwd(async (dir) => {
     assertEquals(await runInit(["myapp"]), 0);
     const proj = join(dir, "myapp");
 
-    // Exactly the skeleton: the import map, the two specs, and bootstrap/.
+    // Exactly the skeleton: the import map, the core spec in spec/, and bootstrap/.
     for (
       const p of [
         "deno.json",
-        "src/core/core.rune",
-        "src/tasks/tasks.rune",
+        "spec/core.rune",
         "bootstrap/mod.ts",
         "bootstrap/config.ts",
         "bootstrap/modules.ts",
@@ -35,8 +34,13 @@ Deno.test("runInit — scaffolds deno.json + specs + bootstrap/, no codegen", as
       assert((await Deno.stat(join(proj, p))).isFile, `missing ${p}`);
     }
 
-    // No module code is generated — that's `rune sync`'s job.
-    await assertRejects(() => Deno.stat(join(proj, "src", "tasks", "dto")));
+    // src/ exists but is empty — codegen lands here when you `rune sync`.
+    assert((await Deno.stat(join(proj, "src"))).isDirectory, "src/ should exist");
+    assertEquals([...Deno.readDirSync(join(proj, "src"))].length, 0, "src/ should be empty");
+
+    // No module spec and no generated code — that's the author's + `rune sync`'s job.
+    await assertRejects(() => Deno.stat(join(proj, "spec", "tasks.rune")));
+    await assertRejects(() => Deno.stat(join(proj, "src", "core")));
 
     // deno.json pins the published runtime so the skeleton type-checks as-is.
     const denoJson = await Deno.readTextFile(join(proj, "deno.json"));

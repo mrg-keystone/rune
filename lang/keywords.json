@@ -1324,6 +1324,15 @@
         }
       }
     },
+    "spec/": {
+      "$desc": "Rune spec files — one per module (the `rune init` layout)",
+      "<name>": {
+        "ext": [
+          ".rune"
+        ],
+        "desc": "rune spec for a module"
+      }
+    },
     "specs/": {
       "$desc": "Rune spec files — one per module",
       "<name>": {
