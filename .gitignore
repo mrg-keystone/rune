@@ -9,6 +9,7 @@ lang/target/
 src/core/dto/lsp-config.ts
 
 # scratch / os
+.claude/
 .playwright-mcp/
 .DS_Store
 .env

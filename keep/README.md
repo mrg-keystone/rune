@@ -1,4 +1,4 @@
-# @mrg-keystone/keep
+# @mrg-keystone/rune
 
 An opinionated Deno backend framework built on
 [`@danet/core`](https://jsr.io/@danet/core). It bundles server bootstrapping
@@ -7,11 +7,16 @@ tokens, Firebase, roles), an in-process API client with a private-key trust
 channel, request-scoped structured logging to Datadog, and first-class Fresh
 frontend embedding.
 
+> This package is the **runtime layer** of
+> [rune](https://github.com/mrg-keystone/rune) — rune-generated projects target it.
+> It also runs perfectly well standalone; this README documents that standalone
+> surface.
+
 ## Quick Start
 
 ```typescript
 import "reflect-metadata";
-import { bootstrapServer, log, SwaggerDescription } from "@mrg-keystone/keep";
+import { bootstrapServer, log, SwaggerDescription } from "@mrg-keystone/rune";
 import { Controller, Get, Module } from "@danet/core";
 
 @Controller("health")
@@ -207,7 +212,7 @@ controller route. Mark a controller or a single handler `@Public()` to make a
 credential optional there:
 
 ```ts
-import { Public } from "@mrg-keystone/keep";
+import { Public } from "@mrg-keystone/rune";
 
 @Controller("inbound")
 class WebhookController {
@@ -236,7 +241,7 @@ Limit a controller or handler to callers holding **at least one** of the listed
 roles. The same global guard enforces it right after authentication:
 
 ```ts
-import { Roles } from "@mrg-keystone/keep";
+import { Roles } from "@mrg-keystone/rune";
 
 @Controller("users")
 class UsersController {
@@ -378,7 +383,7 @@ You hand someone a `…/probe?token=…` link once; the browser remembers it and
 authorizes every subsequent API call until it stops working. (Server-side
 rendering should still prefer `api.backend.fetch(...)` — in-process, no token.
 This is only for calls the browser itself makes over the network.) See the
-runnable [`examples/fresh-project`](examples/fresh-project) for a working
+runnable [`examples/fresh-project`](../examples/fresh-project) for a working
 `client.ts` + `/probe` page.
 
 > **Use a short-lived token in the link.** A token in a URL can be
@@ -393,7 +398,7 @@ runnable [`examples/fresh-project`](examples/fresh-project) for a working
 The primitives are exported for use outside the UI:
 
 ```ts
-import { signToken, TokenError, verifyToken } from "@mrg-keystone/keep";
+import { signToken, TokenError, verifyToken } from "@mrg-keystone/rune";
 
 const token = await signToken(
   {
@@ -419,7 +424,7 @@ try {
 standalone:
 
 ```ts
-import { createFirebaseVerifier, FirebaseAuthError } from "@mrg-keystone/keep";
+import { createFirebaseVerifier, FirebaseAuthError } from "@mrg-keystone/rune";
 
 const firebase = createFirebaseVerifier({
   projectId: Deno.env.get("FIREBASE_PROJECT_ID")!,
@@ -505,7 +510,7 @@ it is **automatically** tagged with `[<appName> <requestId>]` (matching the
 surrounding ingress/egress) and `data` becomes the structured attributes:
 
 ```typescript
-import { log } from "@mrg-keystone/keep";
+import { log } from "@mrg-keystone/rune";
 
 class UsersService {
   create(dto: CreateUser) {
@@ -631,7 +636,7 @@ import {
   Endpoint,
   EndpointController,
   endpointModule,
-} from "@mrg-keystone/keep";
+} from "@mrg-keystone/rune";
 
 class CreateOrderDto {
   @ApiProperty()
@@ -871,7 +876,7 @@ feeds two outputs — a zero-config local waterfall **and** your APM.
 #### Instrumenting
 
 ```typescript
-import { span, Traced, traceUser } from "@mrg-keystone/keep";
+import { span, Traced, traceUser } from "@mrg-keystone/rune";
 
 class Checkout {
   async run(cart: Cart) {
@@ -947,7 +952,7 @@ The Datadog Agent's OTLP HTTP receiver accepts JSON natively (it's the
 OpenTelemetry Collector receiver; `application/json` → JSON, dispatched by
 `Content-Type`). A working Agent + Traefik deployment, including the secret-guard
 routing and a verification runbook, is documented in
-[`docs/datadog-agent.md`](docs/datadog-agent.md).
+[`docs/datadog-agent.md`](../docs/datadog-agent.md).
 
 | Env var | Effect |
 | --- | ------ |
@@ -966,7 +971,7 @@ from the bootstrapped app's `docs`, orders them, runs them while chaining
 outputs into inputs via `bind`, rate-limits, and loops until green.
 
 ```ts
-import { exerciseEndpoints } from "@mrg-keystone/keep";
+import { exerciseEndpoints } from "@mrg-keystone/rune";
 
 const report = await exerciseEndpoints({ api }); // in-process (backend.fetch), no token
 // report: { passed, failed, optionalFailed, iterations, order, cycles }
@@ -1044,7 +1049,7 @@ Bootstrap once in a shared module (init only — it does **not** `listen()`):
 
 ```ts
 // backend.ts
-import { bootstrapServer } from "@mrg-keystone/keep";
+import { bootstrapServer } from "@mrg-keystone/rune";
 import { AppModule } from "./app.module.ts";
 
 export const api = await bootstrapServer("my-api", AppModule);
@@ -1085,7 +1090,7 @@ order-sensitive:
 ```ts
 // main.ts  (Fresh 2 entry)
 import { App, staticFiles } from "fresh";
-import { embed } from "@mrg-keystone/keep";
+import { embed } from "@mrg-keystone/rune";
 import { api } from "./backend.ts";
 import type { State } from "./utils.ts";
 
@@ -1097,7 +1102,7 @@ export const app = new App<State>()
 
 ```ts
 // utils.ts — extend KeepState and ctx.state.api is typed
-import type { KeepState } from "@mrg-keystone/keep";
+import type { KeepState } from "@mrg-keystone/rune";
 export interface State extends KeepState {}
 ```
 
@@ -1111,7 +1116,7 @@ its CommonJS `handlebars` dependency), so importing it from Fresh works through
 Vite's SSR in both `deno task dev` and the production build (`deno task build` →
 `deno serve _fresh/server.js`). A complete, runnable version of this whole
 section — plus the browser token flow and a localhost-trust toggle — is in
-[`examples/fresh-project`](examples/fresh-project).
+[`examples/fresh-project`](../examples/fresh-project).
 
 Fresh's server-side code (handlers, loaders) calls the backend **in-process** —
 no network hop, no token needed:

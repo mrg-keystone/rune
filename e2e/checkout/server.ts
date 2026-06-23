@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { bootstrapServer } from "@mrg-keystone/keep";
+import { bootstrapServer } from "@mrg-keystone/rune";
 import { httpModule } from "./src/checkout/entrypoints/http/mod.ts";
 import { membersModule } from "./src/members/entrypoints/http/mod.ts";
 

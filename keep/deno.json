@@ -1,5 +1,5 @@
 {
-  "name": "@mrg-keystone/keep",
+  "name": "@mrg-keystone/rune",
   "version": "1.22.0",
   "description": "Opinionated Deno backend framework: DI bootstrap, token/Firebase auth & identity, auto Swagger docs, in-process API client, and Fresh frontend embedding. Built on @danet/core.",
   "license": "MIT",
@@ -29,7 +29,7 @@
     "reflect-metadata": "npm:reflect-metadata@0.1.13",
     "class-validator": "npm:class-validator@^0.14",
     "class-transformer": "npm:class-transformer@^0.5",
-    "@mrg-keystone/keep": "./src/bootstrap/mod.ts",
+    "@mrg-keystone/rune": "./src/bootstrap/mod.ts",
     "@danet/core": "jsr:@danet/core@2",
     "#openapi3-ts": "npm:openapi3-ts@4.5.0",
     "#danet/core": "jsr:@danet/core@2",

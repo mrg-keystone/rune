@@ -1,4 +1,4 @@
-import { bootstrapServer, Public } from "@mrg-keystone/keep";
+import { bootstrapServer, Public } from "@mrg-keystone/rune";
 import { Controller, Get, Module, NotFoundException, Param } from "@danet/core";
 
 interface User {

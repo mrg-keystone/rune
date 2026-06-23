@@ -229,7 +229,7 @@ export function renderStubsModule(fields: StubField[]): string {
     "// evaporates when a synced module produces the field; bootstrap/modules.ts",
     "// excludes it in production. Business code never references it.",
     "",
-    'import { Endpoint, EndpointController, endpointModule } from "@mrg-keystone/keep";',
+    'import { Endpoint, EndpointController, endpointModule } from "@mrg-keystone/rune";',
     `import { ${validators.join(", ")} } from "class-validator";`,
     "",
   ];

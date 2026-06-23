@@ -44,7 +44,7 @@ Deno.test("sync scaffolds, then preserves fill-ins and prunes orphans", async ()
     const denoJson = JSON.parse(await Deno.readTextFile(join(root, "deno.json")));
     assertEquals(denoJson.imports["@/"], "./");
     assertEquals(denoJson.imports["class-validator"], "npm:class-validator@^0.14");
-    assertEquals(denoJson.imports["#assert"], "jsr:@mrg-keystone/keep@^1/assert");
+    assertEquals(denoJson.imports["#assert"], "jsr:@mrg-keystone/rune@^1/assert");
     assertEquals(denoJson.compilerOptions.experimentalDecorators, true);
 
     // Fill in cart, and plant an orphan feature the spec doesn't declare.

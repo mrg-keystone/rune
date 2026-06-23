@@ -1,7 +1,7 @@
-# Keep in a Fresh 2 app
+# rune's runtime in a Fresh 2 app
 
-A runnable Fresh 2 app that embeds a Keep backend. One Deno process serves the
-Fresh UI at `/`, exposes the **token-gated** Keep API at `/api/*` for network
+A runnable Fresh 2 app that embeds rune's runtime (`@mrg-keystone/rune`). One Deno
+process serves the Fresh UI at `/`, exposes the **token-gated** runtime API at `/api/*` for network
 callers, and lets the frontend call the backend **in-process** (no token, no
 network hop). Works in `deno task dev` and the production build.
 
@@ -96,7 +96,7 @@ example tracks unreleased changes:
 ```jsonc
 "links": ["../.."],   // ← MONOREPO-ONLY: delete this in your own app
 "imports": {
-  "@mrg-keystone/keep": "jsr:@mrg-keystone/keep@^1.12",
+  "@mrg-keystone/rune": "jsr:@mrg-keystone/rune@^1.12",
   "@danet/core": "jsr:@danet/core@2"
 },
 "compilerOptions": { "experimentalDecorators": true, "emitDecoratorMetadata": true }

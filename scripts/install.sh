@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # Install the rune CLI (rune + rune-lsp + rune-syntax) from GitHub Releases,
-# plus the rune Claude Code skill into user scope (~/.claude/skills/rune), and
-# refresh the coupled keep skill (~/.claude/skills/keep) alongside it.
+# plus the rune Claude Code skill (SKILL.md + references/) into user scope
+# (~/.claude/skills/rune). The skill covers both layers — spec and runtime.
 #
 # Installs CLEANLY: it first UNINSTALLS any existing rune (every known location),
 # then installs one fresh copy — so you never accumulate stale/duplicate binaries.
@@ -38,12 +38,12 @@ SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
 # the skill), so each fetch is version-matched to the tag being installed.
 tag="${RUNE_VERSION:-latest}"
 
-# install_skill <path-to-SKILL.md> — install the rune Claude Code skill into
-# user scope, so the assistant always matches the installed toolchain. Skipped
-# when ~/.claude is absent (no Claude Code on this machine). Only SKILL.md is
-# managed — anything else in the skill folder (evals/, notes) is the user's. A
-# symlinked skill dir (the old README setup) is replaced with a real dir so we
-# never write through the link into someone's checkout.
+# install_skill <dir with SKILL.md (+ references/)> — install the rune Claude
+# Code skill into user scope, so the assistant always matches the installed
+# toolchain. Skipped when ~/.claude is absent (no Claude Code on this machine).
+# The managed set is SKILL.md + references/ — anything else in the skill folder
+# (evals/, notes) is the user's. A symlinked skill dir (the old README setup) is
+# replaced with a real dir so we never write through the link into a checkout.
 install_skill() {
   if [ ! -d "$HOME/.claude" ]; then
     echo "rune: ~/.claude not found — skipping the Claude Code skill."
@@ -51,25 +51,10 @@ install_skill() {
   fi
   [ -L "$SKILLS_DIR/rune" ] && rm -f "$SKILLS_DIR/rune"
   mkdir -p "$SKILLS_DIR/rune"
-  cp "$1" "$SKILLS_DIR/rune/SKILL.md"
-  echo "Installed the rune skill -> $SKILLS_DIR/rune/SKILL.md"
-}
-
-# install_keep_skill — rune and keep ship as a coupled pair, so refresh the keep
-# skill (keep's rolling `keep-latest` release in the rune monorepo) alongside
-# rune's, into the same skills dir. Best-effort: a keep-release hiccup must NOT
-# fail the rune install; no-op without Claude Code. ($tmp is set below, before
-# this is ever called.)
-install_keep_skill() {
-  [ -d "$HOME/.claude" ] || return 0
-  echo "Refreshing the coupled keep skill…"
-  if curl -fsSL "https://github.com/mrg-keystone/rune/releases/download/keep-latest/install.sh" \
-       -o "$tmp/keep-install.sh" 2>/dev/null; then
-    CLAUDE_SKILLS_DIR="$SKILLS_DIR" sh "$tmp/keep-install.sh" \
-      || echo "rune: keep skill not refreshed (rune itself is installed)." >&2
-  else
-    echo "rune: could not fetch the keep installer (rune itself is installed)." >&2
-  fi
+  cp "$1/SKILL.md" "$SKILLS_DIR/rune/SKILL.md"
+  rm -rf "$SKILLS_DIR/rune/references"
+  [ -d "$1/references" ] && cp -R "$1/references" "$SKILLS_DIR/rune/references"
+  echo "Installed the rune skill -> $SKILLS_DIR/rune/"
 }
 
 # --dev: build + install from this local checkout instead of a GitHub release.
@@ -126,8 +111,7 @@ if [ "$DEV" = "1" ]; then
   if [ "$(uname -s)" = "Darwin" ]; then
     for b in $BINS; do codesign -f -s - "$BINDIR/$b" 2>/dev/null || true; done
   fi
-  install_skill "$repo/skills/rune/SKILL.md"
-  install_keep_skill
+  install_skill "$repo/skills/rune"
   echo "Installed rune (dev build from $repo) -> $BINDIR"
   command -v deno >/dev/null 2>&1 && echo "Run: rune --help"
   exit 0
@@ -152,8 +136,8 @@ url="https://github.com/$REPO/releases/download/$tag/rune-$target.tar.gz"
 echo "Downloading rune $tag ($target)…"
 curl -fSL "$url" -o "$tmp/rune.tar.gz"
 
-# Unpack to a staging dir (the tarball also carries SKILL.md, which must not
-# land in BINDIR), then move the binaries into place.
+# Unpack to a staging dir (the tarball also carries the skill/ dir, which must
+# not land in BINDIR), then move the binaries into place.
 mkdir -p "$tmp/pkg" "$BINDIR"
 tar -C "$tmp/pkg" -xzf "$tmp/rune.tar.gz"
 for b in $BINS; do
@@ -166,21 +150,24 @@ if [ "$os" = "Darwin" ]; then
   for b in $BINS; do xattr -d com.apple.quarantine "$BINDIR/$b" 2>/dev/null || true; done
 fi
 
-# The skill ships inside the release tarball, version-matched to the binaries.
-# Fallbacks for releases that predate that: the release's standalone SKILL.md
-# asset, then the repo at $RUNE_REF.
-if [ -f "$tmp/pkg/SKILL.md" ]; then
-  install_skill "$tmp/pkg/SKILL.md"
-elif curl -fsSL "https://github.com/$REPO/releases/download/$tag/SKILL.md" \
-       -o "$tmp/SKILL.md" 2>/dev/null ||
-     curl -fsSL "https://raw.githubusercontent.com/$REPO/$RUNE_REF/skills/rune/SKILL.md" \
-       -o "$tmp/SKILL.md" 2>/dev/null; then
-  install_skill "$tmp/SKILL.md"
+# The skill (SKILL.md + references/) ships as a skill/ dir inside the release
+# tarball, version-matched to the binaries. Fallback for releases that predate
+# the dir: fetch SKILL.md + references/ from the repo at $RUNE_REF.
+if [ -d "$tmp/pkg/skill" ]; then
+  install_skill "$tmp/pkg/skill"
 else
-  echo "rune: could not fetch the rune skill — binaries installed, skill left as-is." >&2
+  mkdir -p "$tmp/skill/references"
+  if curl -fsSL "https://raw.githubusercontent.com/$REPO/$RUNE_REF/skills/rune/SKILL.md" \
+       -o "$tmp/skill/SKILL.md" 2>/dev/null; then
+    for ref in process auth deployment; do
+      curl -fsSL "https://raw.githubusercontent.com/$REPO/$RUNE_REF/skills/rune/references/$ref.md" \
+        -o "$tmp/skill/references/$ref.md" 2>/dev/null || true
+    done
+    install_skill "$tmp/skill"
+  else
+    echo "rune: could not fetch the rune skill — binaries installed, skill left as-is." >&2
+  fi
 fi
-
-install_keep_skill
 
 echo "Installed rune $tag -> $BINDIR"
 case ":$PATH:" in

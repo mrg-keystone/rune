@@ -1,7 +1,7 @@
-# cake — the keep cake example
+# cake — the cake, end to end
 
 A six-step process (`drive → shop → checkout → mix → bake → cut`) that demonstrates the
-rune → keep flow end to end: write a spec, `rune sync` it into keep endpoint controllers, fill the
+rune loop end to end: write a spec, `rune sync` it into runtime endpoint controllers, fill the
 coordinator bodies, serve, and walk the per-module **cake** at `/docs/cake`.
 
 The DTO field names chain on purpose — each step's input field matches the prior step's output
@@ -29,14 +29,14 @@ rune sync src/cake/cake.rune
 #    unlocks pre-filled from the captured output. Standard Swagger UI is at
 #    /docs/cake/swagger, the raw spec at /docs/cake/json.
 
-# 4. or verify headlessly:  exerciseEndpoints({ api })   (from @mrg-keystone/keep)
+# 4. or verify headlessly:  exerciseEndpoints({ api })   (from @mrg-keystone/rune)
 ```
 
 The generated controller is one `@EndpointController("http")` with a `@Endpoint`-decorated method
 per `[ENT]`, each delegating to its `[REQ]` coordinator. `order`/`dependsOn`/`bind` come straight
 from the spec's DTO graph — no hand-wiring.
 
-> Resolving keep locally: a real project imports `@mrg-keystone/keep` from JSR (`rune sync` writes
+> Resolving keep locally: a real project imports `@mrg-keystone/rune` from JSR (`rune sync` writes
 > that mapping). To run this example against an unpublished local keep checkout, point
-> `@mrg-keystone/keep` (and keep's own `#`/`@foundation` aliases) at the checkout, or use a Deno
+> `@mrg-keystone/rune` (and keep's own `#`/`@foundation` aliases) at the checkout, or use a Deno
 > workspace whose root is **not** an ancestor of the rune repo.

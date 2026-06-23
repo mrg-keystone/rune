@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { bootstrapServer } from "@mrg-keystone/keep";
+import { bootstrapServer } from "@mrg-keystone/rune";
 import { httpModule } from "./src/cake/entrypoints/http/mod.ts";
 
 // One module per rune; keep serves the process emulator at /docs/cake.

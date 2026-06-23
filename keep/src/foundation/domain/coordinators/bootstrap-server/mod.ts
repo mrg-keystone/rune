@@ -964,7 +964,7 @@ export class BootstrapServer {
     await adapter.init(rootModule);
 
     // Rune assert failures (thrown at validated seams by code importing
-    // @mrg-keystone/keep/assert) map to HTTP 422. Detection is duck-typed on
+    // @mrg-keystone/rune/assert) map to HTTP 422. Detection is duck-typed on
     // name + failures — NOT instanceof — so it works even when the consumer
     // loaded its own copy of the assert module. Returning undefined falls
     // through to danet's defaults: auth HttpExceptions keep their status and

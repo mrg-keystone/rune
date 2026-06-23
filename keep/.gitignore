@@ -4,7 +4,6 @@
 *.log
 .playwright-mcp/
 node_modules/
-e2e/cake/deno.lock
 # session handoff scratch — "do not commit" per its own header
 context.md
 # skill-creator eval scratch — would ship as a bogus release tarball if committed

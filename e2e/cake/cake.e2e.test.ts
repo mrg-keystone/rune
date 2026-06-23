@@ -4,7 +4,7 @@
 // to add the interactive-emulator browser stage.
 import "reflect-metadata";
 import { assert, assertEquals, assertExists, assertStringIncludes } from "#assert";
-import { bootstrapServer, exerciseEndpoints } from "@mrg-keystone/keep";
+import { bootstrapServer, exerciseEndpoints } from "@mrg-keystone/rune";
 import { httpModule } from "@/src/cake/entrypoints/http/mod.ts";
 
 let port = 8790;

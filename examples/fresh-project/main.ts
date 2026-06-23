@@ -1,5 +1,5 @@
 import { App, staticFiles } from "fresh";
-import { embed } from "@mrg-keystone/keep";
+import { embed } from "@mrg-keystone/rune";
 import { api } from "./backend.ts";
 import type { State } from "./utils.ts";
 

@@ -10,6 +10,6 @@ import * as z from "#zod";
 import { ArtifactSchema } from "@rune/domain/business/artifact/schema.ts";
 
 const json = z.toJSONSchema(ArtifactSchema, { target: "draft-2020-12" });
-const out = new URL("../artifact.schema.json", import.meta.url);
+const out = new URL("../lang/artifact.schema.json", import.meta.url);
 await Deno.writeTextFile(out, JSON.stringify(json, null, 2) + "\n");
-console.log("wrote artifact.schema.json");
+console.log("wrote lang/artifact.schema.json");

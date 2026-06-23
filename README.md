@@ -1,39 +1,41 @@
 # Rune
 
-Design a module as a tiny `.rune` spec, generate a typed scaffold from it, fill in
-the bodies, and keep the whole thing honest with the architecture linter. The spec
-is the source of truth — you regenerate from it, you don't hand-edit the structure.
+rune builds a backend by *shaping* it instead of writing it. You describe a module
+as a tiny `.rune` spec — its endpoints, data contracts, and seams — and rune
+generates a typed, validated, lint-clean TypeScript tree from it. That generated
+code runs on **rune's runtime** (`@mrg-keystone/rune` on JSR): a Deno backend that
+turns your modules into a routed, documented, self-verifying app. **The spec is how
+you shape the thing; the runtime is the thing your shape runs on.** You regenerate
+from the spec — you don't hand-edit the structure — and the same spec carries you
+from "write it" to "watch it run green."
 
-Rune is one product with several facets, all in this repo:
+## The two layers
 
-- **CLI + engine** (`src/`) — the `rune` binary: parse, `sync`, `manifest`, lint,
-  `validate`, self-update. Ships as prebuilt binaries via the rolling `latest`
-  GitHub release.
-- **Language: spec + parser** (`lang/`, `keywords.json`) — the `.rune` grammar and
-  the Rust `rune-lsp` / `rune-syntax` helpers, all derived from `keywords.json`.
-- **Rune Studio** (`rune-studio/`) — the visual editor for `keywords.json` (the
-  language's single source of truth).
-- **Claude skills** (`skills/`) — the skill library: `skills/rune` (the rune
-  toolchain skill, shipped inside every rune release tarball) and `skills/keep`
-  (keep's skill, shipped in the `keep-latest` release).
-- **keep** (`keep/`) — the Deno backend framework that rune-generated projects run
-  on, published to JSR as
-  [`@mrg-keystone/keep`](https://jsr.io/@mrg-keystone/keep). `keep/` holds **only**
-  the publishable package (`src/`, manifest, README, assets); keep's skill, docs,
-  examples, and e2e live in the shared facets below. See [`keep/README.md`](keep/README.md).
+- **The shaping layer** — the `.rune` spec language and the `rune` CLI (`sync`,
+  `manifest`, `check`, `lint`, `dev`, `validate`, self-update), plus the architecture
+  linter and the Rust `rune-lsp` / `rune-syntax` helpers. It lives in `src/` (the
+  engine, shipped as prebuilt binaries via the rolling `latest` GitHub release),
+  `lang/` (the grammar and `lang/keywords.json`, the language's single source of
+  truth), and **Rune Studio** (`rune-studio/`, the visual editor for it).
+- **The runtime layer** — *rune's runtime*, published to JSR as
+  [`@mrg-keystone/rune`](https://jsr.io/@mrg-keystone/rune): the Deno backend the
+  generated code targets — DI bootstrap, auto Swagger, the interactive **cake**, the
+  live system map, deny-by-default auth, a headless runner; built on `@danet/core`.
+  It lives in `keep/`, which holds **only** the publishable package (`src/`, manifest,
+  README, assets) — see [`keep/README.md`](keep/README.md). The package name
+  `@mrg-keystone/rune` is a stable identifier, not a separate product.
 
-Each cross-cutting **facet lives in exactly one place**, spanning both products:
-`skills/` (rune + keep skills), `examples/` (rune spec demos + runnable keep apps),
-`e2e/` (the rune→keep integration acceptance suite), `docs/` (rune docs +
-`docs/keep/`), `todos/`. Only each program's own *source* stays put — rune's engine
-at `src/`, keep's library at `keep/src/`.
+Everything else is shared across both layers and lives in exactly one place:
+`skills/` (the one rune skill, covering spec *and* runtime), `examples/` (spec→code
+demos and runnable backends), `e2e/` (the spec→runtime acceptance suite), `docs/`,
+`todos/`.
 
-The repo is a Deno workspace: the root `deno.json` is rune's config. Its members
-are the self-contained sub-projects — `keep` (the library), the two integration
-acceptances (`e2e/cake`, `e2e/checkout`), and the `examples/in-process-client`
-demo — so they resolve keep from the **in-tree source** (`keep/`) and you can test
-rune against unreleased keep. Generated *user* projects still pin
-`jsr:@mrg-keystone/keep@^1` (they live outside this repo) — that is intentional and
+The repo is a Deno workspace: the root `deno.json` is rune's config. Its members are
+the self-contained sub-projects — `keep` (the runtime library), the two integration
+acceptances (`e2e/cake`, `e2e/checkout`), and the `examples/in-process-client` demo
+— so they resolve the runtime from the **in-tree source** (`keep/`) and you can test
+rune against an unreleased runtime. Generated *user* projects still pin
+`jsr:@mrg-keystone/rune@^1` (they live outside this repo) — that is intentional and
 unchanged. (`rune-studio/` and `examples/fresh-project/` are standalone Vite/Fresh
 apps with their own lockfiles, run via their own `deno task dev`.)
 
@@ -75,8 +77,9 @@ curl -fsSL https://github.com/mrg-keystone/rune/releases/download/latest/uninsta
 ```
 
 Removes `rune` + `rune-lsp` + `rune-syntax` from every known install location,
-plus the managed skill file (`~/.claude/skills/rune/SKILL.md`) — anything else
-you keep in that folder (evals, notes) is left alone.
+plus the managed skill (`~/.claude/skills/rune/`: `SKILL.md` + `references/`, and
+any legacy `~/.claude/skills/keep/` now folded into it) — anything else you keep
+in that folder (evals, notes) is left alone.
 
 ### Claude Code skill
 
@@ -104,7 +107,7 @@ Or run from source without compiling: `deno run -A src/bootstrap/mod.ts <args>`.
 #    (copy examples/todos/src/tasks/tasks.rune as a starting point)
 
 # 2. generate the module from it (also writes the project's deno.json import map)
-rune sync src/<module>/<module>.rune --artifact keywords.json
+rune sync src/<module>/<module>.rune --artifact lang/keywords.json
 
 # 3. fill in the bodies (the dev-owned mod.ts files); the sig.ts contracts are
 #    generated for you. then verify, from the project dir:
@@ -126,8 +129,8 @@ to reconcile (a new abstract method to implement, or a stray one to delete).
   they compose with `ext`/`core`) become class-validator decorators on the
   generated DTO fields.
 - **Asserts at every seam**: generated coordinators validate input, adapter
-  reads/writes, and the result via `assert` from `#assert` (keep's runtime).
-  A failed contract throws `RuneAssertError`, which keep maps to HTTP 422
+  reads/writes, and the result via `assert` from `#assert` (rune's runtime).
+  A failed contract throws `RuneAssertError`, which the runtime maps to HTTP 422
   with `{ target, context, failures }` and dotted paths (`lines.1.qty`).
 - `RUNE_ASSERT=off` turns every assert into a passthrough (trusted prod);
   the `no-dto-cast` lint keeps hand-written coordinator code from bypassing
@@ -136,7 +139,7 @@ to reconcile (a new abstract method to implement, or a stray one to delete).
 ## Language
 
 The language itself — tags, codegen templates, lint rules, folder layout — lives in
-**`keywords.json`** (the single source of truth), edited visually in **Rune Studio**:
+**`lang/keywords.json`** (the single source of truth), edited visually in **Rune Studio**:
 
 ```sh
 deno task studio
@@ -151,28 +154,28 @@ deno task studio
 | Command | Does |
 |---|---|
 | `rune [dir]` | lint a project against the architecture |
-| `rune sync <file.rune>` | generate/update a module from its spec (+ keep bootstrap in `bootstrap/`) |
+| `rune sync <file.rune>` | generate/update a module from its spec (+ runtime bootstrap in `bootstrap/`) |
 | `rune manifest <file.rune>` | one-shot generate (no prune) |
 | `rune validate <keywords.json>` | validate the artifact |
 | `rune lsp` / `rune fmt <file>` | language server / format (Rust helpers) |
 | `rune update [tag]` | self-update binaries + Claude skill (alias: `upgrade`) |
 
-## keep — the generated runtime
+## The runtime your generated code runs on
 
-[`keep/`](keep/) is the Deno backend framework rune-generated projects run on
-(DI bootstrap, token/Firebase auth, auto Swagger docs, in-process API client,
-Fresh embedding; built on `@danet/core`). Published to JSR as
-[`@mrg-keystone/keep`](https://jsr.io/@mrg-keystone/keep). Its assert runtime is
-what rune's generated seams import via `#assert` (resolved in-tree to
-`keep/src/assert/mod.ts` here, and to `jsr:@mrg-keystone/keep@^1/assert` in
-generated user projects). The lockstep guard
+*rune's runtime* (`@mrg-keystone/rune` on JSR) is the Deno backend rune-generated
+projects target — DI bootstrap, token/Firebase auth, auto Swagger docs, in-process
+API client, Fresh embedding; built on `@danet/core`. It lives in [`keep/`](keep/),
+which holds only the publishable package; the package name is its stable id, not a
+separate product. Its assert runtime is what rune's generated seams import via
+`#assert` (resolved in-tree to `keep/src/assert/mod.ts` here, and to
+`jsr:@mrg-keystone/rune@^1/assert` in generated user projects). The lockstep guard
 (`deno task check:lockstep`) machine-checks that the class-validator /
-class-transformer / reflect-metadata ranges rune emits match the ranges keep
+class-transformer / reflect-metadata ranges rune emits match the ranges the runtime
 declares in `keep/deno.json` — a single decorator stack across both.
 
 ```sh
-deno task test:keep       # keep's test suite
-deno task check:keep-jsr  # keep's JSR publish preflight (dry-run)
+deno task test:keep       # the runtime's test suite
+deno task check:keep-jsr  # the runtime's JSR publish preflight (dry-run)
 ```
 
 ## Tests & verify
@@ -180,20 +183,20 @@ deno task check:keep-jsr  # keep's JSR publish preflight (dry-run)
 ```sh
 deno task verify                  # lockstep guard + the full L0–L7 verify ladder
 deno test -A src/                 # the engine
-deno task test:keep               # keep's unit suite
-deno task test:e2e                # the rune→keep integration acceptance (e2e/)
+deno task test:keep               # the runtime's unit suite
+deno task test:e2e                # the spec→runtime integration acceptance (e2e/)
 (cd rune-studio && deno test -A tests/)
 (cd lang && cargo test --workspace)   # parser + LSP
 ```
 
 ## Releases
 
-CI is path-filtered by facet ownership:
+CI is path-filtered by layer:
 
-- `release-rune` rebuilds rune's rolling `latest` release (the three binaries +
-  the `skills/rune` tarball) on any push **except** ones touching only keep-owned
-  or non-binary facets (`keep/`, `skills/keep/`, `e2e/`, `examples/`, `docs/`,
+- `release-rune` rebuilds rune's rolling `latest` release — the three binaries
+  plus the one Claude skill (`skills/rune`: `SKILL.md` + `references/`, bundled as
+  a `skill/` dir inside each tarball) — on any push **except** ones touching only
+  runtime-owned or non-binary facets (`keep/`, `e2e/`, `examples/`, `docs/`,
   `todos/`).
-- `publish-keep` publishes `@mrg-keystone/keep` to JSR and refreshes the
-  `keep-latest` release (the `skills/keep` tarball + installer) on pushes to
-  `keep/**` or `skills/keep/**`.
+- `publish-keep` publishes the runtime, `@mrg-keystone/rune`, to JSR on pushes to
+  `keep/**`. The skill now ships once (with rune), so this is a pure JSR publish.

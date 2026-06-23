@@ -1,6 +1,6 @@
 # Examples
 
-Runnable examples for `@mrg-keystone/keep`.
+Runnable example of rune's runtime (`@mrg-keystone/rune`).
 
 ## In-process client (`in-process-client/`)
 
@@ -51,9 +51,9 @@ This is the pattern for calling your own API from server-side code (SSR routes, 
 scripts, tests) without going out to the network or managing tokens.
 
 > **Note on imports.** The example code imports the published package names
-> (`@mrg-keystone/keep`, `@danet/core`, `reflect-metadata`) so it reads exactly like a real
+> (`@mrg-keystone/rune`, `@danet/core`, `reflect-metadata`) so it reads exactly like a real
 > consumer's code. Inside this repo those names are aliased to the local source via the import map
-> in `deno.json`. In your own project, add `@mrg-keystone/keep` from JSR and import the same way.
+> in `deno.json`. In your own project, add `@mrg-keystone/rune` from JSR and import the same way.
 
 > **Security.** `backend.fetch` is a *trusted* channel — anything dispatched through it skips auth.
 > Never pipe inbound network requests through it. To expose the API over the network, mount

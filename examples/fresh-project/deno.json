@@ -33,7 +33,7 @@
     "@types/babel__core": "npm:@types/babel__core@^7.20.5",
     "tailwindcss": "npm:tailwindcss@^4.1.10",
     "@tailwindcss/vite": "npm:@tailwindcss/vite@^4.1.12",
-    "@mrg-keystone/keep": "jsr:@mrg-keystone/keep@^1.12",
+    "@mrg-keystone/rune": "jsr:@mrg-keystone/rune@^1.12",
     "@danet/core": "jsr:@danet/core@2"
   },
   "compilerOptions": {

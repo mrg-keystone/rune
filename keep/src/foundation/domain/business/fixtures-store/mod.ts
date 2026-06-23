@@ -216,8 +216,8 @@ export async function writeFixtures(
 
 // ── project heal rules (fixtures/heal-rules.json) ────────────────────────────
 // The declarative per-project tier of the cake's heal panel. keep executes these; the project
-// (usually rune, from its spec's fault slugs) authors them. Schema is the cross-repo contract —
-// see the rune repo's coordination.md before changing it.
+// (usually rune, from its spec's fault slugs) authors them. Schema is the cross-repo contract
+// between keep and rune — keep both sides in lockstep when changing it.
 
 /** One suggestion a slug maps to. Unknown `kind`s are preserved and ignored by the client. */
 export interface HealRule {

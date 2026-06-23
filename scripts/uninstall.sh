@@ -41,9 +41,10 @@ for d in $dirs; do
   done
 done
 
-# The rune Claude Code skill (user scope). Only the managed SKILL.md is removed
-# — anything else in the folder (evals/, notes) is the user's. A symlinked skill
-# dir (the old README setup) is unlinked, never followed into a checkout.
+# The rune Claude Code skill (user scope). The managed set is SKILL.md +
+# references/ — anything else in the folder (evals/, notes) is the user's. A
+# symlinked skill dir (the old README setup) is unlinked, never followed into a
+# checkout.
 skilldir="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}/rune"
 if [ -L "$skilldir" ]; then
   rm -f "$skilldir" && echo "removed $skilldir (symlink)" && removed=$((removed + 1))
@@ -51,8 +52,16 @@ elif [ -e "$skilldir/SKILL.md" ]; then
   if rm -f "$skilldir/SKILL.md" 2>/dev/null; then
     echo "removed $skilldir/SKILL.md"
     removed=$((removed + 1))
+    [ -d "$skilldir/references" ] && rm -rf "$skilldir/references" && echo "removed $skilldir/references"
     rmdir "$skilldir" 2>/dev/null || true
   fi
+fi
+
+# Clean up the legacy standalone keep skill — it folded into the rune skill, so
+# remove any copy a previous install left behind.
+keepskill="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}/keep"
+if [ -d "$keepskill" ] && [ ! -L "$keepskill" ]; then
+  rm -rf "$keepskill" && echo "removed $keepskill (folded into the rune skill)" && removed=$((removed + 1))
 fi
 
 if [ "$removed" -eq 0 ]; then

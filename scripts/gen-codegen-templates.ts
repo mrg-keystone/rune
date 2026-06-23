@@ -25,7 +25,7 @@ const TPL_KEYS = [
   "mod-root",
 ];
 
-const p = new URL("../keywords.json", import.meta.url);
+const p = new URL("../lang/keywords.json", import.meta.url);
 const reg = JSON.parse(await Deno.readTextFile(p));
 const templates: Record<string, string> = {};
 for (const key of TPL_KEYS) {

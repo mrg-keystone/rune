@@ -50,7 +50,7 @@ export type NoCodeCacheMiddleware = (
  *
  * ```ts
  * // Fresh main.ts
- * import { noCodeCache } from "@mrg-keystone/keep";
+ * import { noCodeCache } from "@mrg-keystone/rune";
  * app.use(noCodeCache());
  * app.use(staticFiles());
  * ```

@@ -77,7 +77,7 @@ Deno.test("renderAppRegistry — imports each surface and exports the array", ()
 
 Deno.test("renderMain — wires the registry into bootstrapServer", () => {
   const out = renderMain("shop");
-  assertStringIncludes(out, 'import { bootstrapServer } from "@mrg-keystone/keep";');
+  assertStringIncludes(out, 'import { bootstrapServer } from "@mrg-keystone/rune";');
   assertStringIncludes(out, 'import { modules } from "@/bootstrap/modules.ts";');
   assertStringIncludes(
     out,

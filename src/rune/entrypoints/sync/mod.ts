@@ -367,9 +367,9 @@ const REQUIRED_IMPORTS: Record<string, string> = {
   "#std/assert": "jsr:@std/assert",
   "#std/path": "jsr:@std/path",
   // Generated [ENT] controllers + e2e tests import the keep backend framework.
-  "@mrg-keystone/keep": "jsr:@mrg-keystone/keep@^1",
+  "@mrg-keystone/rune": "jsr:@mrg-keystone/rune@^1",
   // Generated coordinators validate their seams via keep's assert runtime.
-  "#assert": "jsr:@mrg-keystone/keep@^1/assert",
+  "#assert": "jsr:@mrg-keystone/rune@^1/assert",
   // DTO [TYP:example=…] fields emit @ApiProperty({ example }) — the swagger
   // decorator keep's runner/cake read example values from. Same range keep
   // itself maps #danet/swagger to.
@@ -587,7 +587,7 @@ export function renderMain(appName: string): string {
     "// tune the app name, port, or keep options freely. The module registry",
     "// (bootstrap/modules.ts) is regenerated as runes are added and removed.",
     "",
-    'import { bootstrapServer } from "@mrg-keystone/keep";',
+    'import { bootstrapServer } from "@mrg-keystone/rune";',
     'import { config } from "@/bootstrap/config.ts";',
     'import { modules } from "@/bootstrap/modules.ts";',
     "",
@@ -976,7 +976,7 @@ async function runAllGate(
   const body = [
     "// Written by rune sync for the run-all gate; deleted right after the run.",
     'import { api } from "@/bootstrap/mod.ts";',
-    'import { exerciseEndpoints } from "@mrg-keystone/keep";',
+    'import { exerciseEndpoints } from "@mrg-keystone/rune";',
     "const report = await exerciseEndpoints({ api });",
     "// deno-lint-ignore no-explicit-any",
     "const slim = (r: any) => ({ id: r.id, module: r.module, status: r.status, error: r.error, body: r.body });",

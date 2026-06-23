@@ -1,22 +1,34 @@
 ---
 name: rune
 description: >-
-  Author .rune specs and generate code with the rune toolchain (the installed
-  `rune` CLI). Use this whenever you're working with .rune files, writing or
-  editing a rune spec, running `rune sync`/`rune manifest` to scaffold a
-  module, debugging why a rune won't parse or lint, or working inside the rune
-  repo / a project generated from it. Trigger even if the user just says
-  "write a spec for X", "add a feature to this module", "regenerate", or shows a
-  file ending in .rune — rune has non-obvious rules (DTO suffixes, scope, strict
-  indentation) that are easy to get wrong without this skill.
+  Author `.rune` specs and build the Deno backends they generate — rune's one
+  toolchain (the `rune` CLI) and its runtime (`@mrg-keystone/rune` on JSR). Use
+  whenever you touch a `.rune` file, write/edit a spec, run `rune
+  sync`/`check`/`manifest`/`dev` to scaffold or regenerate a module, or debug why
+  a spec won't parse or lint — AND whenever you work on what the generated code
+  runs on: `@Endpoint`/`@EndpointController` process chains, `bootstrapServer`,
+  the per-module cake at `/docs`, `/docs/_map`, `exerciseEndpoints`, heal-rules,
+  token/Firebase auth (`@Public`/`@Roles`, 401/403 debugging), or embedding the
+  backend under Fresh. Trigger even for "write a spec for X", "add a feature to
+  this module", "add an endpoint", "wire these two modules together",
+  "regenerate", a file ending in `.rune`, or any `import` of `@mrg-keystone/rune`
+  — rune's non-obvious rules (DTO suffixes, scope, strict indentation) and its
+  runtime's process metadata, trust model, and mounting rules are easy to get
+  wrong without this skill.
 ---
 
 # Rune
 
-Rune is a DSL for specifying software requirements. You write a tiny `.rune`
-spec; the toolchain generates a typed module scaffold from it and lints the
-result against an architecture. **The spec is the source of truth — you regenerate
-from it, you don't hand-edit the generated structure.**
+Rune is one product with two layers. The **shaping layer** is a DSL for
+specifying software requirements: you write a tiny `.rune` spec and the toolchain
+generates a typed module scaffold from it, validates every seam, and lints the
+result against an architecture. The **runtime layer** is what the generated code
+runs on — *rune's runtime* (`@mrg-keystone/rune` on JSR): the Deno backend that
+turns your modules into a routed, documented, self-verifying app (auto Swagger,
+the interactive **cake**, deny-by-default auth, a headless runner). The package
+name `@mrg-keystone/rune` is just the runtime's stable id; in this skill it's
+"the runtime". **The spec is the source of truth — you regenerate from it, you
+don't hand-edit the generated structure.**
 
 ## The workflow (commands at a glance)
 
@@ -46,8 +58,8 @@ before you `sync`. The full step-by-step is **The lifecycle** below.
 ## Mental model (read this first)
 
 - **One artifact, one source of truth.** The language itself (tags, codegen
-  templates, lint rules, folder layout) lives in `keywords.json` at the repo
-  root, edited via **Rune Studio** (`deno task studio`). Don't hardcode language
+  templates, lint rules, folder layout) lives in `lang/keywords.json`, edited
+  via **Rune Studio** (`deno task studio`). Don't hardcode language
   behavior elsewhere — it all derives from that file.
 - **One generator.** `rune sync` (the Deno engine) is the only code generator,
   and it emits Deno/TypeScript. There is no multi-target system.
@@ -64,8 +76,8 @@ before you `sync`. The full step-by-step is **The lifecycle** below.
   clobbering your body.
 - **Every seam is validated.** Generated DTOs carry class-validator constraints
   from `[TYP:modifiers]`, and the generated coordinator `assert`s every seam —
-  input, adapter reads/writes, result — via `#assert` (keep's runtime). A failed
-  contract throws `RuneAssertError`; keep maps it to HTTP 422. See
+  input, adapter reads/writes, result — via `#assert` (rune's runtime). A failed
+  contract throws `RuneAssertError`; the runtime maps it to HTTP 422. See
   **Validation** below.
 
 ## Writing a .rune — the shape
@@ -187,16 +199,16 @@ they all execute and combine (→ a single step, looped in the body)?**
   **one step** (e.g. `gate.evaluate(CandidateDto): ResultDto`, predicates in the
   body), **not** eleven `[CSE]`s. "There are 11 things" ≠ "there are 11 branches."
 
-### `[ENT]` is the outside edge — wire it to keep
+### `[ENT]` is the outside edge — wire it to the runtime
 
 `[ENT] surface.action(InDto): OutDto` is the **inbound** edge — the HTTP route (or
 CLI/queue handler) that reaches the `[REQ]` it dispatches to. `rune sync` generates
-`src/<module>/entrypoints/<surface>/mod.ts` (create-once, **dev-owned**): a keep
+`src/<module>/entrypoints/<surface>/mod.ts` (create-once, **dev-owned**): a runtime
 controller with one `@Endpoint` per `[ENT]`, each delegating to its coordinator. You
 own and tweak it afterward — don't hand-roll routing, request parsing, or Swagger:
 
 ```ts
-import { Endpoint, EndpointController } from "@mrg-keystone/keep";
+import { Endpoint, EndpointController } from "@mrg-keystone/rune";
 import { placeOrder } from "@/src/checkout/mod-root.ts";   // the [REQ] coordinator
 
 @EndpointController("orders")            // controller surface = the [ENT] surface
@@ -206,8 +218,8 @@ class OrdersController {
 }
 ```
 
-keep serves the route, generates per-module Swagger from the DTO classes, and renders
-the cake — all from the decorators. Type the handler param as the input
+The runtime serves the route, generates per-module Swagger from the DTO classes, and
+renders the cake — all from the decorators. Type the handler param as the input
 DTO; `@Endpoint` wires the body for you (don't add `@Body()`).
 
 rune picks each `[ENT]`'s coordinator by the `(input, output)` DTO pair. Two `[REQ]`s
@@ -297,15 +309,15 @@ does NOT feed `$tableName`; `rune sync` flags such near-misses in its
 
 **Heal-rules (the cake's self-healer).** When a project's endpoints declare
 fault slugs (the lowercase-hyphenated names indented under boundary steps),
-`rune sync` also emits a starter **`fixtures/heal-rules.json`** — keep's cake
+`rune sync` also emits a starter **`fixtures/heal-rules.json`** — the runtime's cake
 turns endpoint failures into one-click fixes from it, keyed on the failed
 response's slug. rune scaffolds one entry per slug: a `run-step` suggestion when
 the slug names a missing precondition matching another endpoint (e.g.
 `not-enabled` → run the `enable` endpoint), otherwise a `TODO` note for a human
 or LLM to enrich. It's **merge-don't-clobber**: re-syncs add new slugs, keep
 your edits byte-for-byte, and never delete a slug the spec dropped (they're
-reported as stale instead) — so hand-written rules and keep's future learned
-rules survive. `timeout`/`unauthorized` are left to keep's generic tier. The
+reported as stale instead) — so hand-written rules and the runtime's future learned
+rules survive. `timeout`/`unauthorized` are left to the runtime's generic tier. The
 dir obeys `KEEP_FIXTURES_DIR` (default `fixtures/`, beside `cake.json`). Edit
 the *content* of each rule freely; let sync own the *set* of slugs.
 
@@ -332,8 +344,8 @@ path out?* Pick a `kind`, in this order of preference:
 
 The `why` is shown to the user **verbatim** under the suggestion — write it as
 the one-line explanation of the fix, not a restatement of the slug. The full
-schema (every `kind` and its fields) lives in the **keep skill's** rules-file
-reference.
+schema (every `kind` and its fields) lives in **`references/process.md`** (the
+heal-rules section).
 
 In the cake, request bodies hold `{{step.field}}` references resolved at send
 time (so hand edits are never overwritten); `{{name}}` reads a shared environment
@@ -364,7 +376,7 @@ decorators on every generated DTO field of that type:
 | `positive` | `number` | `@IsPositive()`                            |
 | `example=V`| any      | `@ApiProperty({ example: V })` — swagger    |
 
-`example=<value>` is not a validator: it emits the swagger example keep's
+`example=<value>` is not a validator: it emits the swagger example the runtime's
 runner and cake **fill required, unbound input fields from**. A required field
 with no producer, no bind, and no example is a guaranteed 422 in any headless
 walk — `rune sync` warns about exactly those fields. The value runs to the
@@ -378,7 +390,7 @@ next comma/`]` (no commas inside); it's typed by the declared primitive
 reject anything else — and reject any `[REQ:x]` (REQ takes no modifier).
 
 The generated coordinator then **validates every seam** via
-`import { assert } from "#assert"` — keep's assert runtime; `rune sync` maps
+`import { assert } from "#assert"` — the runtime's assert; `rune sync` maps
 the alias in the project's `deno.json` (`rune manifest` alone doesn't write
 the import map):
 
@@ -404,9 +416,9 @@ Validation whitelists: fields the DTO class doesn't declare are stripped —
 the class is the contract.
 
 A failed contract throws `RuneAssertError { target, context, failures }`
-with dotted failure paths (`"lines.1.qty"`); keep maps it to **HTTP 422**
+with dotted failure paths (`"lines.1.qty"`); the runtime maps it to **HTTP 422**
 with that body. Entrypoint controllers stay validation-free — validation
-lives in the coordinator, keep maps the 422. `RUNE_ASSERT=off` turns every
+lives in the coordinator, the runtime maps the 422. `RUNE_ASSERT=off` turns every
 assert into a passthrough (trusted prod mode).
 
 ## The rules that bite (from constraints.md)
@@ -481,12 +493,12 @@ This is one repeating cycle — **write → check → generate → fill in → v
    When the project has `[ENT]` surfaces it also maintains the **app bootstrap**
    under `bootstrap/`: `modules.ts` (GENERATED module registry — one entry per
    surface, rewritten on every sync as runes are added/removed; never edit) plus
-   `mod.ts` and `config.ts` (DEV-OWNED, created once — keep's `bootstrapServer`
+   `mod.ts` and `config.ts` (DEV-OWNED, created once — the runtime's `bootstrapServer`
    wiring and env/config loading; tune name/port/options freely). Start the app
    with `deno run -A bootstrap/mod.ts` — no hand-written bootstrapping needed.
    When endpoints declare fault slugs it also scaffolds **`fixtures/heal-rules.json`**
    (MERGE-OWNED — new slugs added, your edits kept; see *Heal-rules* above).
-   Finally sync **executes the composed app's walk** (keep's `exerciseEndpoints`,
+   Finally sync **executes the composed app's walk** (the runtime's `exerciseEndpoints`,
    in-process, in a subprocess) and prints the **run-all verdict** as the last
    block: green (`N/N steps passed`) means the app actually runs; red names
    every failed step with its status + message (and whether a heal rule
@@ -540,7 +552,7 @@ This is one repeating cycle — **write → check → generate → fill in → v
 ## Verify via the cake (and headless runner)
 
 After `rune sync` + filling bodies + `deno check` + `rune lint`, **serve the app
-(`deno run -A bootstrap/mod.ts` — generated by sync) and open `/docs/<module>`** — keep renders a per-module **cake**: the endpoints
+(`deno run -A bootstrap/mod.ts` — generated by sync) and open `/docs/<module>`** — the runtime renders a per-module **cake**: the endpoints
 as an ordered, bulleted checklist. Click **Emulate process** down the list (or **Run all
 in order**) and read each response; a green checkmark on every step means the rune's
 logic actually works, not just type-checks. Each success captures its output and
@@ -558,13 +570,56 @@ good server keeps serving; cake session state survives the restart).
 For CI / unattended runs, call the same thing in code:
 
 ```ts
-import { exerciseEndpoints } from "@mrg-keystone/keep";
+import { exerciseEndpoints } from "@mrg-keystone/rune";
 const report = await exerciseEndpoints({ api });   // in-process; { passed, failed, … }
 ```
 
 Pass `overrides.seeds` / `overrides.byEndpoint` for values the chain can't produce (and
 `overrides.auth` to bootstrap a token), and `rateLimit` so retries don't hammer the
 server. Re-run after every spec change.
+
+## The runtime: bootstrap, auth, and where the depth lives
+
+You rarely write runtime wiring by hand — `rune sync` generates `bootstrap/`. But
+when you tune it or debug a running app, a few runtime facts matter:
+
+- **`bootstrapServer(appName, module | modules[], options?)` initializes but does
+  NOT listen.** It returns `{ listen, stop, backend, handler }`: call `listen()`
+  for a real port; use `backend.fetch(...)` immediately for in-process calls
+  (tests, SSR) with no token; mount `handler` to serve without binding. When you
+  serve via your own `Deno.serve`, forward the conn info —
+  `Deno.serve((req, info) => api.handler(req, info))` — or localhost trust and
+  `/_mint` break.
+- **Auth is deny-by-default for network callers; in-process and localhost are
+  trusted.** The common "401 in my project" cases:
+
+  | Caller | Credential needed |
+  | --- | --- |
+  | `backend.fetch(...)` | none — in-process trust |
+  | localhost | none by default (`TRUST_LOCALHOST=false` to require) |
+  | network | `Authorization: Bearer <token>` or `?token=` |
+
+  `MANUAL_KEY=<secret>` signs/verifies tokens (set it per deployment; tests use any
+  value, e.g. `MANUAL_KEY=k`, to silence the warning). `FIREBASE_PROJECT_ID=<id>`
+  additionally accepts Firebase ID tokens. Mint at `GET /_mint` (localhost-only) or
+  `signToken`. `@Public()` makes a route auth-optional; `@Roles("admin")` requires a
+  role. **Never route inbound network traffic through `backend.fetch`** — it's the
+  trusted channel and skips auth; expose the API by mounting `api.handler`.
+
+**References (read on demand)** — the runtime's full surface lives beside this skill:
+
+- `references/process.md` — every `@Endpoint`/`@EndpointController` option, the full
+  cake feature set (expectations, scenarios, module setup, `{{refs}}`, flows,
+  skip/run-from-here, cross-module captures), the self-healing panel + `/docs/_heal`,
+  the system map, dev mode, and every `exerciseEndpoints` option. **Read it when
+  authoring process chains, debugging the cake, the heal-rules schema, or wiring CI.**
+- `references/auth.md` — the complete trust model, token shape + minting,
+  `@Public`/`@Roles`, docs access, the browser/frontend token pattern,
+  `signToken`/`verifyToken`/`createFirebaseVerifier`. **Read before touching auth,
+  roles, or anything returning 401/403.**
+- `references/deployment.md` — standalone vs Fresh-embedded mounting,
+  `embed`/`withBasePath`, the in-process `backend` client, logging internals, Deno
+  Deploy, and the JSR release flow. **Read when deploying or embedding under Fresh.**
 
 ## Pitfalls (learned the hard way)
 
@@ -591,8 +646,8 @@ server. Re-run after every spec change.
 - Don't add language features by editing engine code — edit `keywords.json` (via
   the Studio); it's the single source of truth.
 - Don't hand-roll routing, request parsing, Swagger, or a dependency/run loop in an
-  entrypoint `mod.ts` — decorate a handler with keep's `@Endpoint` (declaring
-  `order`/`dependsOn`/`bind`) and let keep build the cake + harness.
+  entrypoint `mod.ts` — decorate a handler with the runtime's `@Endpoint` (declaring
+  `order`/`dependsOn`/`bind`) and let the runtime build the cake + harness.
 
 ## Worked examples
 

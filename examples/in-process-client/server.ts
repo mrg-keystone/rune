@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { bootstrapServer } from "@mrg-keystone/keep";
+import { bootstrapServer } from "@mrg-keystone/rune";
 import { AppModule } from "./users.ts";
 
 /**
