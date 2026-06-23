@@ -38,23 +38,38 @@ SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
 # the skill), so each fetch is version-matched to the tag being installed.
 tag="${RUNE_VERSION:-latest}"
 
-# install_skill <dir with SKILL.md (+ references/)> — install the rune Claude
-# Code skill into user scope, so the assistant always matches the installed
-# toolchain. Skipped when ~/.claude is absent (no Claude Code on this machine).
-# The managed set is SKILL.md + references/ — anything else in the skill folder
-# (evals/, notes) is the user's. A symlinked skill dir (the old README setup) is
-# replaced with a real dir so we never write through the link into a checkout.
+# install_skill <src skill dir> [name] — install/UPDATE one Claude Code skill
+# into user scope by BASE-LEVEL REPLACE: the skill folder is the base unit, so
+# its destination is removed and re-copied whole. This is the spread merge
+#   skillFolder = { ...skillFolder, ...toInstall }
+# applied one key at a time — the named skill is replaced outright; every other
+# skill already in $SKILLS_DIR is left untouched. `name` defaults to the source
+# dir's basename. A symlinked dest (the old README setup) is unlinked first so
+# we never write through the link into a checkout.
 install_skill() {
+  src="$1"
+  name="${2:-$(basename "$src")}"
+  dst="$SKILLS_DIR/$name"
+  [ -e "$src/SKILL.md" ] || { echo "rune: '$src' has no SKILL.md — skipping." >&2; return 0; }
+  [ -L "$dst" ] && rm -f "$dst"
+  rm -rf "$dst"
+  cp -R "$src" "$dst"
+  echo "Installed the $name skill -> $dst/"
+}
+
+# install_skills <dir of skill folders> — install/update EVERY skill under a
+# skills/ dir (the `toInstall` operand), each via base-level replace. Skipped
+# wholesale when ~/.claude is absent (no Claude Code on this machine).
+install_skills() {
   if [ ! -d "$HOME/.claude" ]; then
-    echo "rune: ~/.claude not found — skipping the Claude Code skill."
+    echo "rune: ~/.claude not found — skipping the Claude Code skills."
     return 0
   fi
-  [ -L "$SKILLS_DIR/rune" ] && rm -f "$SKILLS_DIR/rune"
-  mkdir -p "$SKILLS_DIR/rune"
-  cp "$1/SKILL.md" "$SKILLS_DIR/rune/SKILL.md"
-  rm -rf "$SKILLS_DIR/rune/references"
-  [ -d "$1/references" ] && cp -R "$1/references" "$SKILLS_DIR/rune/references"
-  echo "Installed the rune skill -> $SKILLS_DIR/rune/"
+  mkdir -p "$SKILLS_DIR"
+  for d in "$1"/*/; do
+    [ -d "$d" ] || continue
+    install_skill "${d%/}"
+  done
 }
 
 # --dev: build + install from this local checkout instead of a GitHub release.
@@ -111,7 +126,7 @@ if [ "$DEV" = "1" ]; then
   if [ "$(uname -s)" = "Darwin" ]; then
     for b in $BINS; do codesign -f -s - "$BINDIR/$b" 2>/dev/null || true; done
   fi
-  install_skill "$repo/skills/rune"
+  install_skills "$repo/skills"
   echo "Installed rune (dev build from $repo) -> $BINDIR"
   command -v deno >/dev/null 2>&1 && echo "Run: rune --help"
   exit 0
@@ -154,7 +169,7 @@ fi
 # tarball, version-matched to the binaries. Fallback for releases that predate
 # the dir: fetch SKILL.md + references/ from the repo at $RUNE_REF.
 if [ -d "$tmp/pkg/skill" ]; then
-  install_skill "$tmp/pkg/skill"
+  install_skill "$tmp/pkg/skill" rune
 else
   mkdir -p "$tmp/skill/references"
   if curl -fsSL "https://raw.githubusercontent.com/$REPO/$RUNE_REF/skills/rune/SKILL.md" \
@@ -163,7 +178,7 @@ else
       curl -fsSL "https://raw.githubusercontent.com/$REPO/$RUNE_REF/skills/rune/references/$ref.md" \
         -o "$tmp/skill/references/$ref.md" 2>/dev/null || true
     done
-    install_skill "$tmp/skill"
+    install_skill "$tmp/skill" rune
   else
     echo "rune: could not fetch the rune skill — binaries installed, skill left as-is." >&2
   fi
