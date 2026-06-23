@@ -37,6 +37,8 @@ The commands (run `rune <cmd>`; in the repo without an installed binary, prefix
 with `deno run -A src/bootstrap/mod.ts <cmd>`):
 
 ```text
+rune init  <project-name>  # scaffold a fresh project SKELETON: deno.json, src/core/core.rune, a starter
+                           #   module spec, and bootstrap/ — NO codegen (run `rune sync` to generate)
 rune check <file.rune>     # IS THIS RUNE GOOD? validate the spec — no codegen. exit 0 = clean, 2 = errors
 rune sync  <file.rune>     # generate/update the module from the spec (also writes the project's deno.json),
                            #   then RUNS the composed app's walk and prints the run-all verdict (--no-run skips)
