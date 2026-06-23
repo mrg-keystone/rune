@@ -9,7 +9,7 @@ import {
   type ManifestOptions,
 } from "@rune/domain/business/rune-manifest/mod.ts";
 import { loadArtifact } from "@rune/domain/business/artifact/mod.ts";
-import { applyCase, isProjectSpec } from "@rune/domain/business/rune-bindings/mod.ts";
+import { applyCase, isInProgSpec, isProjectSpec } from "@rune/domain/business/rune-bindings/mod.ts";
 import {
   type CseNode,
   parse,
@@ -263,15 +263,20 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
     // otherwise the moved spec lands at a path collectProjectSpecs() rejects, and
     // ghost-stub planning / input diagnostics (run later in THIS same sync)
     // silently skip it. Left in place when the spec is ALREADY canonical
-    // (spec.rune or <module>.rune in its module) OR lives in a dedicated `spec/`
-    // folder (the `rune init` layout) — there the spec IS the source and stays
-    // put while codegen lands in the sibling `src/`. The plural `specs/` is the
-    // older STAGING convention and is still moved into `src/<module>/`.
-    // Idempotent: a no-op once it's already at a canonical project path. Happens
-    // BEFORE ensureBootstrap so the just-synced spec is collected.
-    const inSpecFolder = basename(dirname(absRune)) === "spec";
+    // (spec.rune or <module>.rune in its module) OR is an `.in-prog.rune` DRAFT —
+    // drafts iterate freely in their staging folder (rune-bindings: "iterate
+    // freely … finalize by renaming"), so an explicit `rune sync` of a draft
+    // scaffolds src/<module>/ but never moves/renames the draft out from under
+    // you. Otherwise both staging layouts — the singular `spec/` folder (the
+    // `rune init` default) and the plural `specs/` — are STAGING areas: a
+    // FINALIZED spec authored there is MOVED into `src/<module>/<module>.rune` on
+    // its first sync, beside the code. resolveRoot keeps the project as the root
+    // for a `spec/`-folder spec, so the move target is the sibling `src/<module>/`
+    // (never nested under `spec/`). Idempotent: a no-op once it's already at a
+    // canonical project path. Happens BEFORE ensureBootstrap so the just-synced
+    // spec is collected.
     const canonicalDir = join(root, "src", plan.module);
-    const leaveInPlace = inSpecFolder ||
+    const leaveInPlace = isInProgSpec(absRune) ||
       (resolve(absRune) === resolve(join(canonicalDir, "spec.rune"))) ||
       (resolve(absRune) === resolve(join(canonicalDir, `${plan.module}.rune`)));
     const specTarget = leaveInPlace

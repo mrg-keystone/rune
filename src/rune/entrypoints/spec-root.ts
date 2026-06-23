@@ -4,10 +4,10 @@ import { CORE_SPEC_REL } from "@rune/domain/business/rune-bindings/mod.ts";
 
 // Where to scaffold, derived from the spec's OWN location (not cwd). Dead simple:
 //   - if the spec lives in a dedicated `spec/` folder (the `rune init` layout),
-//     the root is the dir above it — so the spec STAYS in `spec/` and codegen
-//     lands in the sibling `src/`. (The plural `specs/` is the older staging
-//     convention where sync MOVES the spec into `src/<module>/`, so it is NOT
-//     treated as a root here.)
+//     the root is the dir ABOVE it — so codegen and the moved spec land in the
+//     sibling `src/<module>/` at the root, never nested under `spec/`. The
+//     `spec/` folder is a STAGING area: sync moves the spec into its module on
+//     first sync (same as the plural `specs/`, the older staging convention).
 //   - if the spec already lives inside a `src/<module>/` (i.e. it was moved there
 //     by a previous run), the root is the dir above that `src/` — so re-syncing
 //     the moved spec stays put and never nests a second `src/<module>/`.

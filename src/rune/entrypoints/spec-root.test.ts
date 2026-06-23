@@ -73,8 +73,9 @@ Deno.test("resolveRoot — root is the dir above an outermost src/<module>/", ()
   assertEquals(resolveRoot("/p/todos.rune"), "/p");
 });
 
-Deno.test("resolveRoot — a singular spec/ folder is the project root (stay-in-place layout)", () => {
-  // The spec stays in spec/; codegen lands in the sibling src/ at the root.
+Deno.test("resolveRoot — a singular spec/ folder resolves to the project root (staging layout)", () => {
+  // spec/ is a STAGING area: the project (the dir above spec/) is the root, so
+  // sync moves the spec into the sibling src/<module>/ — never nested in spec/.
   assertEquals(resolveRoot("/p/spec/tasks.rune"), "/p");
   assertEquals(resolveRoot("/p/spec/core.rune"), "/p");
   // Plural specs/ is the legacy STAGING convention (sync moves the spec into

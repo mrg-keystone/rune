@@ -16,7 +16,8 @@ const CORE_TEMPLATE = `[MOD] core
 
 // This is a rune project. You author tiny .rune specs (here in spec/), and
 // "rune sync spec/<m>.rune" generates a typed, validated Deno module into
-// src/<m>/ — routed endpoints, auto Swagger, an interactive "cake" at /docs.
+// src/<m>/ AND moves the spec in beside its code (src/<m>/<m>.rune) — routed
+// endpoints, auto Swagger, an interactive "cake" at /docs.
 // The generated code runs on rune's runtime, @mrg-keystone/rune (on JSR).
 //
 // Working with an AI assistant (Claude Code)? Have it use the "rune" skill —
@@ -35,8 +36,9 @@ const CORE_TEMPLATE = `[MOD] core
 // layout: the import map (deno.json), the shared-services spec (spec/core.rune),
 // an empty src/ for generated code, and the runtime wiring (bootstrap/). It does
 // NOT generate module code — author module specs under spec/ (e.g. spec/tasks.rune)
-// and run `rune sync spec/tasks.rune` to generate them into src/tasks/; the specs
-// stay in spec/. deno.json and the bootstrap files come from the SAME renderers
+// and run `rune sync spec/tasks.rune` to generate them into src/tasks/; sync then
+// moves the spec in beside its code (src/tasks/tasks.rune). deno.json and the
+// bootstrap files come from the SAME renderers
 // `rune sync` uses, so they're byte-identical to engine output; bootstrap/modules.ts
 // starts empty and sync fills it in as modules with [ENT] surfaces are generated.
 export async function runInit(args: string[]): Promise<number> {
@@ -106,10 +108,10 @@ Next:
   ${BOLD}cd ${name}${RESET}
   ${DIM}# draft a module spec under spec/ as a work-in-progress (.in-prog.rune),${RESET}
   ${DIM}# which dev/run-all skip; iterate with rune check, then sync to scaffold:${RESET}
-  ${BOLD}rune sync spec/tasks.in-prog.rune${RESET}  # generate into src/tasks/ (the spec stays in spec/)
+  ${BOLD}rune sync spec/tasks.in-prog.rune${RESET}  # generate into src/tasks/ (the draft stays in spec/)
   ${BOLD}rune sync spec/core.rune${RESET}           # generate the shared service clients
   ${DIM}# fill the stub bodies + \`deno check\`; finalize by renaming the draft to${RESET}
-  ${DIM}# spec/tasks.rune, then \`rune dev\` picks it up and iterates live${RESET}
+  ${DIM}# spec/tasks.rune — sync then moves it in beside its code (src/tasks/tasks.rune)${RESET}
 `);
   return 0;
 }
