@@ -104,10 +104,12 @@ ${row("bootstrap/", "runtime wiring (bootstrapServer); modules.ts fills in on sy
 
 Next:
   ${BOLD}cd ${name}${RESET}
-  ${DIM}# author a module spec under spec/ (e.g. spec/tasks.rune), then:${RESET}
-  ${BOLD}rune sync spec/tasks.rune${RESET}     # generate it into src/tasks/ (the spec stays in spec/)
-  ${BOLD}rune sync spec/core.rune${RESET}      # generate the shared service clients
-  ${DIM}# then fill the stub bodies, \`deno check\`, and \`rune dev\` to iterate live${RESET}
+  ${DIM}# draft a module spec under spec/ as a work-in-progress (.in-prog.rune),${RESET}
+  ${DIM}# which dev/run-all skip; iterate with rune check, then sync to scaffold:${RESET}
+  ${BOLD}rune sync spec/tasks.in-prog.rune${RESET}  # generate into src/tasks/ (the spec stays in spec/)
+  ${BOLD}rune sync spec/core.rune${RESET}           # generate the shared service clients
+  ${DIM}# fill the stub bodies + \`deno check\`; finalize by renaming the draft to${RESET}
+  ${DIM}# spec/tasks.rune, then \`rune dev\` picks it up and iterates live${RESET}
 `);
   return 0;
 }

@@ -643,6 +643,8 @@ export function renderMain(appName: string): string {
     `export const api = await bootstrapServer("${appName}", modules, { port: config.port });`,
     "",
     "if (import.meta.main) {",
+    "  // listen() walks to the next free port if config.port is busy; the",
+    "  // runtime logs the actual bound port (\"Listening on <port>\").",
     "  await api.listen();",
     "  console.log(",
     `    \`${appName} on http://localhost:\${config.port} — emulator at /docs/<module>\`,`,

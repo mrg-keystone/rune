@@ -33,7 +33,10 @@ export function classifyPath(rel: string): "ignored" | "spec" | "source" {
   // Dotfiles anywhere in the path (.DS_Store, .git, editor droppings) and paths
   // outside the root ("../…" after relative()) never drive a cycle.
   if (parts.some((p) => p === "" || p.startsWith("."))) return "ignored";
-  if (rel.endsWith(".rune") && isProjectSpec(rel)) return "spec";
+  // A .rune that is NOT a project spec — a doc, a vendored spec, or a
+  // `.in-prog.rune` draft — never drives a cycle: it neither syncs nor restarts
+  // the app, keeping work-in-progress drafts isolated from the running app.
+  if (rel.endsWith(".rune")) return isProjectSpec(rel) ? "spec" : "ignored";
   return "source";
 }
 
@@ -198,7 +201,8 @@ export async function runDev(args: string[]): Promise<number> {
   for (
     const cand of [
       join(root, "src"),
-      join(root, "specs"),
+      join(root, "spec"), // the `rune init` default spec-folder layout (singular)
+      join(root, "specs"), // the older plural staging layout
       join(root, "bootstrap"),
       join(root, "deno.json"),
     ]

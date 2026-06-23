@@ -142,20 +142,53 @@ export const CORE_SPEC_REL = "src/core/core.rune";
 const SPEC_DIRS = ["spec/", "specs/"];
 
 // The core spec under any layout: src/core/core.rune (canonical) or
-// spec/core.rune / specs/core.rune (the flat spec-folder layouts).
-const CORE_SPEC_PATHS = [CORE_SPEC_REL, "spec/core.rune", "specs/core.rune"];
+// spec/core.rune / specs/core.rune (the flat spec-folder layouts). The
+// `.in-prog.rune` draft variants count too — core is shared infrastructure that
+// must keep supplying services (and accept `[SRV]`) even while it is a draft,
+// unlike a module draft which is excluded from auto-discovery entirely.
+const CORE_SPEC_PATHS = [
+  CORE_SPEC_REL,
+  "spec/core.rune",
+  "specs/core.rune",
+  "src/core/core.in-prog.rune",
+  "spec/core.in-prog.rune",
+  "specs/core.in-prog.rune",
+];
 
 /** Is this (root-relative) path the project's shared-service spec? */
 export function isCoreSpec(path: string): boolean {
   return CORE_SPEC_PATHS.includes(path);
 }
 
+// The draft suffix: a spec named `<name>.in-prog.rune` is a work in progress.
+// Drafts are EXCLUDED from every auto-discovery scan (the `rune dev` watch, the
+// composed-app run-all, ghost-stub planning, and the lint rules) so a half-built
+// spec can never break the running app — `isProjectSpec` returns false for them.
+// You still iterate freely: `rune check` validates a draft, and an explicit
+// `rune sync spec/<name>.in-prog.rune` scaffolds src/<name>/ (moduleFromSpecPath
+// strips the tag). Finalize by renaming to `<name>.rune` — then it is picked up.
+const IN_PROG_SUFFIX = ".in-prog.rune";
+
+/** Is this (root-relative) path a work-in-progress draft spec? */
+export function isInProgSpec(path: string): boolean {
+  return path.endsWith(IN_PROG_SUFFIX);
+}
+
+/** Strip the `.in-prog` draft tag, leaving the canonical `<name>.rune` path. */
+function canonicalSpecPath(path: string): string {
+  return isInProgSpec(path)
+    ? path.slice(0, -IN_PROG_SUFFIX.length) + ".rune"
+    : path;
+}
+
 // A rune file counts as a project spec only at one of these paths:
 //   spec/<name>.rune  |  specs/<name>.rune   (flat spec-folder layout)
 //   src/<module>/spec.rune
 //   src/<module>/<module>.rune
-// Documentation, vendored, and arbitrary rune files are skipped by rune rules.
+// Documentation, vendored, in-progress drafts (`.in-prog.rune`), and arbitrary
+// rune files are skipped by rune rules.
 export function isProjectSpec(path: string): boolean {
+  if (isInProgSpec(path)) return false; // drafts: excluded from auto-discovery
   for (const dir of SPEC_DIRS) {
     if (path.startsWith(dir) && !path.slice(dir.length).includes("/")) return true;
   }
@@ -170,16 +203,22 @@ export function isProjectSpec(path: string): boolean {
   return false;
 }
 
-// Derive the module name from a project-spec path.
-//   spec/recording.rune        → "recording"
-//   specs/recording.rune       → "recording"
-//   src/orders/spec.rune       → "orders"
-//   src/orders/orders.rune     → "orders"
+// Derive the module name from a project-spec path. Drafts derive from their
+// CANONICAL name (the `.in-prog` tag stripped), so an explicit sync of a draft
+// still resolves the right module.
+//   spec/recording.rune          → "recording"
+//   spec/recording.in-prog.rune  → "recording"
+//   specs/recording.rune         → "recording"
+//   src/orders/spec.rune         → "orders"
+//   src/orders/orders.rune       → "orders"
 export function moduleFromSpecPath(path: string): string | null {
-  if (!isProjectSpec(path)) return null;
+  const canonical = canonicalSpecPath(path);
+  if (!isProjectSpec(canonical)) return null;
   for (const dir of SPEC_DIRS) {
-    if (path.startsWith(dir)) return path.slice(dir.length, -".rune".length);
+    if (canonical.startsWith(dir)) {
+      return canonical.slice(dir.length, -".rune".length);
+    }
   }
   // src/<module>/...
-  return path.slice("src/".length).split("/")[0];
+  return canonical.slice("src/".length).split("/")[0];
 }

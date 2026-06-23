@@ -1,6 +1,38 @@
 import { assertEquals } from "#std/assert";
-import { applyCase, bindings, processName, transformName } from "./mod.ts";
+import {
+  applyCase,
+  bindings,
+  isInProgSpec,
+  isProjectSpec,
+  moduleFromSpecPath,
+  processName,
+  transformName,
+} from "./mod.ts";
 import { canonicalPaths as SHAPE } from "@rune/domain/business/artifact/canonical-paths.ts";
+
+Deno.test("isProjectSpec — recognizes the spec-folder and src layouts", () => {
+  assertEquals(isProjectSpec("spec/todos.rune"), true);
+  assertEquals(isProjectSpec("specs/todos.rune"), true);
+  assertEquals(isProjectSpec("src/todos/todos.rune"), true);
+  assertEquals(isProjectSpec("src/todos/spec.rune"), true);
+  assertEquals(isProjectSpec("docs/notes.rune"), false);
+});
+
+Deno.test("isProjectSpec — .in-prog.rune drafts are excluded", () => {
+  assertEquals(isInProgSpec("spec/todos.in-prog.rune"), true);
+  assertEquals(isInProgSpec("spec/todos.rune"), false);
+  // A draft is NOT a project spec anywhere — auto-discovery skips it entirely.
+  assertEquals(isProjectSpec("spec/todos.in-prog.rune"), false);
+  assertEquals(isProjectSpec("src/todos/todos.in-prog.rune"), false);
+});
+
+Deno.test("moduleFromSpecPath — strips the .in-prog tag so explicit sync resolves", () => {
+  assertEquals(moduleFromSpecPath("spec/todos.rune"), "todos");
+  assertEquals(moduleFromSpecPath("spec/todos.in-prog.rune"), "todos");
+  assertEquals(moduleFromSpecPath("specs/todos.in-prog.rune"), "todos");
+  assertEquals(moduleFromSpecPath("src/orders/orders.rune"), "orders");
+  assertEquals(moduleFromSpecPath("docs/notes.rune"), null);
+});
 
 Deno.test("applyCase — kebab", () => {
   assertEquals(applyCase("GetRecordingDto", "kebab"), "get-recording-dto");

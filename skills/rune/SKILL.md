@@ -38,7 +38,8 @@ with `deno run -A src/bootstrap/mod.ts <cmd>`):
 
 ```text
 rune init  <project-name>  # scaffold a fresh project: deno.json, spec/core.rune, an empty src/, bootstrap/.
-                           #   Author specs in spec/ (they stay there); `rune sync spec/<m>.rune` generates src/<m>/
+                           #   ALWAYS author specs in spec/, named `<m>.in-prog.rune` while drafting (see
+                           #   "Where specs live" below); `rune sync spec/<m>.rune` generates src/<m>/
 rune check <file.rune>     # IS THIS RUNE GOOD? validate the spec — no codegen. exit 0 = clean, 2 = errors
 rune sync  <file.rune>     # generate/update the module from the spec (also writes the project's deno.json),
                            #   then RUNS the composed app's walk and prints the run-all verdict (--no-run skips)
@@ -460,24 +461,33 @@ guess. To learn interactively, `deno task studio` documents every construct live
 
 ## The lifecycle: write → check → generate → fill in → verify → lint
 
-**Where output goes — dead simple, from the spec's own location (not cwd):**
-`rune sync <spec>.rune` scaffolds into `<spec-dir>/src/<module>/` — right beside
-the spec — and then **moves the spec into that module** (`src/<module>/<spec>.rune`).
-So you can just point at a fresh spec:
+**Where specs live — ALWAYS author in `spec/`, label drafts `.in-prog`.** Every
+rune you write goes in the project's `spec/` folder and STAYS there — that is the
+authoring home; codegen goes to `src/<module>/`, the spec never moves out of
+`spec/`. While a spec is a work in progress, name it
+`spec/<module>.in-prog.rune`. The `.in-prog` infix marks it "not ready to wire
+in": auto-discovery (the `rune dev` watch and the composed-app run-all) skips it,
+so a half-finished draft can't break the running app. You still iterate on it
+freely — `rune check spec/<module>.in-prog.rune` validates an in-prog file, and
+you can `rune sync` it explicitly to scaffold its `src/`. When the spec is ready
+to compose into the app, **finalize it by dropping the infix** (rename to
+`spec/<module>.rune`); from then on auto-discovery picks it up. So a new feature
+is born as `spec/<module>.in-prog.rune` and graduates to `spec/<module>.rune`.
+
+**Where output goes — from the spec's own location (not cwd):** `rune sync
+<spec>.rune` scaffolds into `<project-root>/src/<module>/`. So you can just point
+at a spec in `spec/`:
 
 ```sh
-rune sync path/to/<module>.rune
+rune sync spec/<module>.in-prog.rune    # or spec/<module>.rune once finalized
 ```
 
 (In the repo without an installed binary, use
 `deno run -A src/bootstrap/mod.ts sync …`.)
 
-After the first run the spec lives at `<root>/src/<module>/<module>.rune`.
-Re-syncing it from there is idempotent: when the spec already sits inside a
-`src/<module>/`, the root is taken as the dir above that `src/`, so it updates in
-place and never nests `src/<module>/src/<module>/`. Only the spec's immediate
-parents are inspected, so a `src` directory higher up the path can't hijack the
-root. Pass `--root <dir>` to scaffold somewhere other than beside the spec.
+The spec stays in `spec/`; re-syncing it is idempotent (it never nests
+`src/<module>/src/<module>/`). The project root is the dir above `spec/`. Pass
+`--root <dir>` to scaffold somewhere other than the default project root.
 
 This is one repeating cycle — **write → check → generate → fill in → verify → lint**
 — not a one-shot. Each step:

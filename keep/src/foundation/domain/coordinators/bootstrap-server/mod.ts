@@ -1069,7 +1069,9 @@ export class BootstrapServer {
     return this.adapter.handler;
   }
 
-  listen() {
+  /** Start serving. Resolves with the actually-bound port (which may differ
+   * from the requested one if it was busy — see DanetHttpAdapter.listen). */
+  listen(): Promise<{ port: number }> {
     return this.adapter.listen(this.module);
   }
 
@@ -1087,7 +1089,7 @@ export async function bootstrapServer(
   module: Type | Type[],
   options?: BootstrapOptions,
 ): Promise<{
-  listen: () => Promise<void>;
+  listen: () => Promise<{ port: number }>;
   stop: () => Promise<void>;
   backend: BackendClient;
   handler: FetchHandler;

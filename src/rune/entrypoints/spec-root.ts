@@ -42,6 +42,16 @@ export async function loadCoreSrvs(
     join(root, "spec", "core.rune"), // spec/ folder layout
     join(root, "specs", "core.rune"), // specs/ folder layout
     join(root, "core.rune"), // flat sibling
+    // A draft core (`core.in-prog.rune`) STILL supplies the shared services so
+    // every module resolves its boundary calls while core is iterated on. Core
+    // is infrastructure, not a composable module — it declares no endpoints and
+    // is never mounted — so unlike a module draft it must not be "ignored" here,
+    // else marking it in-prog silently breaks every module's `db:`/service step.
+    // Finalized core wins when both exist (these come last).
+    join(root, "src", "core", "core.in-prog.rune"),
+    join(root, "spec", "core.in-prog.rune"),
+    join(root, "specs", "core.in-prog.rune"),
+    join(root, "core.in-prog.rune"),
   ];
   for (const corePath of candidates) {
     if (resolve(corePath) === resolve(targetAbs)) continue; // never self-merge

@@ -55,6 +55,19 @@ Deno.test("loadCoreSrvs — returns undefined when no core spec exists", async (
   });
 });
 
+Deno.test("loadCoreSrvs — a draft core (core.in-prog.rune) still supplies services", async () => {
+  // Core is infrastructure: marking it in-prog must not strip a module's
+  // boundary services, so the draft variant resolves like a finalized core.
+  await withRoot(
+    { "spec/core.in-prog.rune": CORE, "spec/tasks.rune": "[MOD] tasks" },
+    async (root) => {
+      const srvs = await loadCoreSrvs(root, join(root, "spec/tasks.rune"));
+      assert(srvs !== undefined);
+      assertEquals([...srvs!.keys()].sort(), ["db", "ex"]);
+    },
+  );
+});
+
 Deno.test("resolveRoot — root is the dir above an outermost src/<module>/", () => {
   assertEquals(resolveRoot("/p/src/tasks/tasks.rune"), "/p");
   assertEquals(resolveRoot("/p/todos.rune"), "/p");

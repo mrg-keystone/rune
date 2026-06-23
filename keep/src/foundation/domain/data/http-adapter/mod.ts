@@ -17,15 +17,21 @@ function stripInternalHeader(req: Request): Request {
   return new Request(req, { headers });
 }
 
+// How many consecutive ports to try before giving up. The bind walks
+// startPort, startPort+1, … so a busy default never hard-errors the boot.
+const MAX_PORT_PROBES = 20;
+
 export abstract class HttpAdapter {
   constructor(public defaultPort?: number) {}
-  abstract listen(...args: unknown[]): Promise<void>;
+  abstract listen(...args: unknown[]): Promise<{ port: number }>;
   abstract grabComponent<T extends Type<any>>(cotr: T): InstanceType<T>;
 }
 
 export class DanetHttpAdapter extends HttpAdapter {
   app: DanetApplication = new DanetApplication();
   private initialized = false;
+  /** The port the server actually bound to — set once `listen()` succeeds. */
+  boundPort?: number;
   constructor(defaultPort?: number) {
     super(defaultPort);
   }
@@ -60,10 +66,41 @@ export class DanetHttpAdapter extends HttpAdapter {
       hono.fetch(req, info);
   }
 
-  async listen(rootModule: Type) {
-    const port = this.defaultPort ?? 3000;
+  /**
+   * Bind and start serving. If the requested port is already in use, walk to
+   * the next one (up to MAX_PORT_PROBES) instead of erroring — so a stray
+   * process on the default port can never stop the app from coming up. The
+   * actually-bound port is recorded on `boundPort` and returned.
+   */
+  async listen(rootModule: Type): Promise<{ port: number }> {
+    const startPort = this.defaultPort ?? 3000;
     await this.init(rootModule);
-    await this.app.listen(port);
+    let lastErr: unknown;
+    for (
+      let port = startPort;
+      port < startPort + MAX_PORT_PROBES;
+      port++
+    ) {
+      try {
+        const { port: bound } = await this.app.listen(port);
+        this.boundPort = bound;
+        if (bound !== startPort) {
+          console.warn(
+            `[keep] port ${startPort} in use — bound ${bound} instead`,
+          );
+        }
+        return { port: bound };
+      } catch (e) {
+        if (e instanceof Deno.errors.AddrInUse) {
+          lastErr = e;
+          continue; // try the next port
+        }
+        throw e; // any other failure is real — surface it
+      }
+    }
+    throw lastErr ?? new Deno.errors.AddrInUse(
+      `no free port in ${startPort}..${startPort + MAX_PORT_PROBES - 1}`,
+    );
   }
 
   registerSwaggerDocument(

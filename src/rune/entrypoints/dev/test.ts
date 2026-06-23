@@ -9,15 +9,22 @@ import {
 // ---- classifyPath -------------------------------------------------------------
 
 Deno.test("classifyPath — project specs are 'spec'", () => {
-  assertEquals(classifyPath("specs/orders.rune"), "spec");
+  assertEquals(classifyPath("spec/orders.rune"), "spec"); // singular (rune init)
+  assertEquals(classifyPath("specs/orders.rune"), "spec"); // plural (staging)
   assertEquals(classifyPath("src/orders/orders.rune"), "spec");
   assertEquals(classifyPath("src/orders/spec.rune"), "spec");
 });
 
-Deno.test("classifyPath — non-project .rune files are plain source", () => {
-  // Not a recognized project-spec slot → treated as a source change (restart).
-  assertEquals(classifyPath("src/orders/notes/scratch.rune"), "source");
-  assertEquals(classifyPath("orders.rune"), "source");
+Deno.test("classifyPath — non-project .rune files are ignored", () => {
+  // Not a recognized project-spec slot → never drives a cycle (no sync, no
+  // restart), so docs, scratch specs, and drafts stay out of the running app.
+  assertEquals(classifyPath("src/orders/notes/scratch.rune"), "ignored");
+  assertEquals(classifyPath("orders.rune"), "ignored");
+});
+
+Deno.test("classifyPath — .in-prog.rune drafts are ignored", () => {
+  assertEquals(classifyPath("spec/orders.in-prog.rune"), "ignored");
+  assertEquals(classifyPath("specs/orders.in-prog.rune"), "ignored");
 });
 
 Deno.test("classifyPath — generated/source files are 'source'", () => {
