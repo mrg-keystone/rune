@@ -14,9 +14,18 @@ const RESET = "\x1b[0m";
 
 const CORE_TEMPLATE = `[MOD] core
 
-// Shared services live here. Declare each ONCE; every module resolves its
-// boundary calls against this spec, and each [SRV] generates a client under
-// src/core/data/<name>/. Add one when you need it:
+// This is a rune project. You author tiny .rune specs (here in spec/), and
+// "rune sync spec/<m>.rune" generates a typed, validated Deno module into
+// src/<m>/ — routed endpoints, auto Swagger, an interactive "cake" at /docs.
+// The generated code runs on rune's runtime, @mrg-keystone/rune (on JSR).
+//
+// Working with an AI assistant (Claude Code)? Have it use the "rune" skill —
+// it knows the spec syntax, the lifecycle, and the runtime's rules. The rune
+// installer puts it at ~/.claude/skills/rune ("rune update" refreshes it).
+//
+// core.rune holds the project's SHARED SERVICES. Declare each ONCE; every
+// module resolves its boundary calls against this spec, and each [SRV]
+// generates a client under src/core/data/<name>/. Add one when you need it:
 //   [SRV] (SIDECAR)<name>: <ENV_VAR>
 //       one-line description
 //       @docs <url>
