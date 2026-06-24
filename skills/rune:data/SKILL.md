@@ -14,11 +14,18 @@ description: >-
   keys do we need". Trigger even when the user says "data layer", "storage design",
   or "persistence" without naming a store, and whenever a spec's flow does
   load→mutate→save (an in-place edit) that should become an appended record. This
-  skill produces ONE artifact — `spec/data.json` — and stops; it does NOT rewrite
-  specs or write adapters. NOT authoring the `.rune` DSL itself (entities, DTOs,
-  `[SRV]`) → use `rune:spec`; NOT generating/filling the data-adapter code → use
-  `rune:build`; NOT the runtime data clients or `[SRV]` transport wiring →
-  `rune:framework`; NOT the cake's real-data walk → `rune:cake`.
+  skill emits `spec/data.json` and then makes **minimal, data-driven nudges to the
+  EXISTING `.rune` specs** so they best exploit that design — surface an append-only
+  trail as a readable `(s)` field, add a projection-maintenance step to a write
+  flow, retag a restructured boundary verb — keeping the spec `rune check`-clean.
+  Also trigger on "nudge the runes to fit the data structure", "reconcile the spec
+  to the data design", "make the spec use the ideal data model". It does NOT write
+  adapters, and it does NOT author a `.rune` module from scratch (entities/DTOs/
+  `[SRV]` from nothing, brand-new endpoints) → that is `rune:spec`; this skill only
+  ADJUSTS an existing spec to fit the data design it just produced. NOT generating/
+  filling the data-adapter code → use `rune:build`; NOT the runtime data clients or
+  `[SRV]` transport wiring → `rune:framework`; NOT the cake's real-data walk →
+  `rune:cake`.
 user-invocable: true
 argument-hint: "[module or feature whose data structure to design]"
 ---
@@ -37,18 +44,30 @@ that decides for every entity:
 3. **How to make it immutable** — restructure any "load → change → save" mutation into
    an append of a *new* object, so history is never overwritten.
 
-The output is a **standalone design document**. It does not edit `.rune` files, does not
-touch `core.rune`'s `[SRV]` blocks, and does not write adapter code — those are
-`rune:spec` and `rune:build`. Your deliverable is `spec/data.json`: a faithful,
-performance-justified, immutable-by-construction map of the module's data.
+The primary deliverable is `spec/data.json`: a faithful, performance-justified,
+immutable-by-construction map of the module's data. But the design only pays off if the
+spec actually *uses* it, so this skill closes with a fourth step:
+
+4. **Nudge the runes to fit the design** — make the *smallest* edits to the existing
+   `.rune` specs that let the flows exploit the structure you just chose: surface an
+   append-only trail as a readable `(s)` field, add the step that keeps a projection
+   fresh, retag a verb whose meaning changed. **Create the data structure first, then
+   nudge the runes to best use it** — never the reverse, and never a from-scratch rewrite
+   (that is `rune:spec`). You still do **not** write adapter code or `[SRV]` transport
+   wiring — those stay with `rune:build` and `rune:framework`.
 
 ## This skill vs its siblings
 
 - **`rune:data` (here)** — *what* the data is and *where/how* it's stored: Firestore vs
-  Deno KV per operation, keys, indexes, immutability restructuring. Emits `spec/data.json`.
-- **`rune:spec`** — authors the `.rune` DSL (`[NON]` entities, `[DTO]`s, `[SRV]`
-  boundaries, `[TYP]`s). The entities and their save/load boundary steps that this skill
-  reads are *declared* there.
+  Deno KV per operation, keys, indexes, immutability restructuring. Emits `spec/data.json`,
+  then makes **minimal, data-driven nudges to an existing spec** so the flows exploit that
+  design (a readable trail field, a projection-maintenance step, a retagged verb).
+- **`rune:spec`** — *authors* the `.rune` DSL from intent: new `[NON]` entities, `[DTO]`s,
+  `[SRV]` boundaries, `[TYP]`s, whole endpoints and flows. The dividing line: `rune:spec`
+  decides what the module *does*; `rune:data` only adjusts an *already-authored* spec to
+  fit the data design it just produced. A from-scratch spec, a brand-new endpoint, or a
+  modelling decision about granularity is `rune:spec` — not here. When a nudge here grows
+  into real re-modelling, hand back to `rune:spec`.
 - **`rune:build`** — turns the spec into code, including the per-noun data **adapters**
   that actually call the store. This skill tells build's adapters *which* store and
   *which* shape; it doesn't write them.
@@ -170,8 +189,11 @@ audit {
 ```
 
 **How to apply it to a spec.** Any `[REQ]` flow shaped `load(noun) → noun.mutate() →
-save(noun)` is an in-place edit and a candidate to restructure. In `data.json` you don't
-rewrite the spec — you *describe the immutable shape the storage should take*:
+save(noun)` is an in-place edit and a candidate to restructure. First, in `data.json`,
+*describe the immutable shape the storage should take* (do not touch the spec yet) — then,
+in the reconcile step, nudge the spec to carry it **only if the trail must be visible in
+the read model** (see *Reconciling the spec*; a purely storage-internal trail needs no
+spec change — the adapter folds it). To describe the shape:
 
 - Identify the mutated field/state.
 - Replace "update field X" with "append a child object to collection `Xs`" — name the
@@ -311,6 +333,58 @@ require a `why`.
 Every entity from the spec must appear; every access pattern must trace to a spec step or a
 named prototype region in `source`.
 
+## Reconciling the spec — nudging the runes to fit the design
+
+`data.json` is the ideal data structure. This step makes the existing `.rune` specs
+*exploit* it — **after** the design is written and validated, never before. The governing
+rule is **minimal diff**: the spec already encodes the author's intent; you are nudging it
+to use a better data shape, not re-modelling it. Keep boundary opacity wherever the design
+has no read-model consequence — most append-only restructurings are an *adapter* concern
+(`rune:build`) and need **zero** spec change.
+
+### When a nudge IS warranted
+
+Touch the spec only when the data design has a consequence the spec must carry:
+
+1. **A trail must be readable.** `immutability.strategy: "append-child"` *and* the UI/API
+   needs the history (or the current-state derivation) exposed → add the append-only
+   collection as an `(s)` field on the read DTO and declare its child `[DTO]` + the `[TYP]`s
+   for its fields. This is the canonical `task` → `states(s)` nudge: the immutable redesign
+   adds `states(s)` to the spec, current `done` = last state. If the read model only ever
+   exposes *current* state flat (owner, resolved, latest disposition), **do not** add the
+   field — the adapter folds the trail and the spec stays as-is.
+2. **A projection must be maintained.** `data.json` defines a secondary `projection` (a
+   `denokv` `byId` mirror, a live counter) → the flow that writes the primary must also
+   refresh the projection. Add the maintenance step to that `[REQ]` (e.g. a
+   `state:queueDepth.bump()` after a resolve) and, if the projection rides a new service,
+   ensure its `[SRV]` exists in `core.rune`. A projection nobody updates is a stale read.
+3. **A verb's meaning changed.** A `load→mutate→save` you restructured to append-child
+   reads more honestly as an append. Retag the boundary step (`mirror:call.save` →
+   `mirror:call.appendAction`) so the spec name matches the immutable behavior — a rename,
+   not a re-flow.
+4. **A new field needs a type + example.** Any field you introduced (a child-shape field, a
+   projection key, a derived `atCap`) needs its `[TYP]` declaration, and an unbound required
+   field needs `[TYP:example=…]` or it 422s in the first cake walk (see `rune:docs`).
+
+### When to leave the spec ALONE
+
+- The append-only trail is storage-internal (current state exposed flat) — adapter folds it.
+- The change is a derived `aggregate` counter/cache — atomic in-place, no flow step, no field.
+- The store/key/index choice is invisible to the flow — it lives entirely in the adapter.
+- The nudge would grow into real re-modelling (new endpoint, new entity, granularity call) —
+  stop and hand back to `rune:spec`.
+
+### How to nudge safely
+
+- Make the **smallest** edit that carries the consequence; preserve surrounding lines,
+  ordering, and the author's naming style.
+- After editing, run **`rune check`** on each touched file — it must stay clean. Do **not**
+  run `rune fmt` (it can mangle indentation); fix any error by hand.
+- Re-run `scripts/scan_spec.ts` to confirm the inventory still matches `data.json` (same
+  entities, the restructured verbs now visible).
+- **Show the diff.** Summarize every spec edit and *why the data design forced it* — the
+  user is reviewing a change to their source of truth, not just a generated artifact.
+
 ## Scripts — the deterministic spine
 
 The *judgment* in this skill — Firestore vs KV, domain-record vs aggregate, what's
@@ -350,10 +424,18 @@ The scripts handle *plumbing and verification*; you handle *the design in the mi
 7. **Validate (script).** `deno run -A scripts/validate_data.ts spec/data.json spec/` —
    must exit 0. Fix every `✗` (and consider the `⚠`s) before continuing; the gate is how you
    know the design conforms, instead of hoping it does.
-8. **Render & hand off (script).** `deno run -A scripts/render_review.ts spec/data.json`
+8. **Render the review (script).** `deno run -A scripts/render_review.ts spec/data.json`
    then open `spec/data.review.html`. That visualizer — not the raw JSON — is what you show
-   the user to review the decisions and leave second-pass notes. Then stop; do not edit
-   specs or write adapters.
+   the user to review the decisions and leave second-pass notes.
+9. **Reconcile the spec — nudge the runes (judgment + `rune check`).** For each entity, ask:
+   does the design have a consequence the spec must carry (a readable trail, a projection to
+   maintain, a verb to retag, a new field needing a `[TYP]`)? See *Reconciling the spec*.
+   Make the **smallest** edits that carry those consequences and leave the rest of the spec
+   untouched; if the trail is storage-internal or the change is a pure aggregate, change
+   **nothing**. Run `rune check` on every touched file (never `rune fmt`) until clean, then
+   re-run `scan_spec.ts` to confirm the inventory still matches `data.json`.
+10. **Hand off.** Summarize the spec diff and *why the data design forced each edit*, then
+   stop. Do not write adapters (`rune:build`) or re-model the module (`rune:spec`).
 
 ## Worked references
 
@@ -362,7 +444,11 @@ The scripts handle *plumbing and verification*; you handle *the design in the mi
   order-history list.
 - `examples/todos/src/tasks/tasks.rune` — `task.complete` does `load → markDone → save`: a
   textbook in-place edit. The immutable redesign gives `task` a `states(s)` append-only
-  collection (`{ done, at }`), current `done` = last state; the task id never changes.
+  collection (`{ done, at }`), current `done` = last state; the task id never changes. The
+  reconcile nudge here: because the detail view shows when a task was completed, add
+  `state(s)` to the read DTO + a `TaskStateDto` child + the `done`/`at` `[TYP]`s, and retag
+  `db:task.save` → `db:task.appendState`. Had the UI only shown a flat done/undone checkbox,
+  the trail would stay storage-internal and the spec would need **no** edit.
 
 For the spec constructs referenced here (`[NON]`, `[DTO]`, `[SRV]`, `(s)` arrays) see
 `rune:spec`. For how the chosen store becomes a real client, see `rune:framework`.
