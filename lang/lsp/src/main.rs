@@ -22,11 +22,15 @@ fn full_sync_text(changes: Vec<TextDocumentContentChangeEvent>) -> Option<String
     changes.into_iter().last().map(|c| c.text)
 }
 
-/// The project's shared [SRV] service names for the spec at `uri`: resolve the
-/// root (dir above an outermost `src/<module>/`, else the spec's own dir) and
-/// read the core spec at `<root>/src/core/core.rune` or a flat `<root>/core.rune`.
-/// Best-effort + filesystem-based, mirroring the engine's `loadCoreSrvs`; returns
-/// an empty set when there's no core spec.
+/// The project's shared [SRV] service names for the spec at `uri`. Mirrors the
+/// engine's `resolveRoot` + `loadCoreSrvs`:
+///   - root = the dir above a singular `spec/` folder, else the dir above an
+///     outermost `src/<module>/`, else the spec's own dir;
+///   - core spec = the FIRST readable of `src/core/core.rune`, `spec/core.rune`,
+///     `specs/core.rune`, flat `core.rune`, then the `.in-prog.rune` draft
+///     variants of each (a draft core still supplies shared services while it is
+///     iterated on — finalized core, listed first, wins when both exist).
+/// Best-effort + filesystem-based; returns an empty set when there's no core spec.
 fn core_services_for(uri: &Url) -> HashSet<String> {
     let mut out = HashSet::new();
     let Ok(path) = uri.to_file_path() else {
@@ -35,17 +39,29 @@ fn core_services_for(uri: &Url) -> HashSet<String> {
     let Some(spec_dir) = path.parent() else {
         return out;
     };
-    let in_src_module = spec_dir
-        .parent()
-        .and_then(|p| p.file_name())
-        .map(|n| n == "src")
-        .unwrap_or(false);
-    let root = if in_src_module {
+    let dir_name = |p: &std::path::Path| {
+        p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string())
+    };
+    // resolveRoot: a `spec/` folder is the project's staging dir (root is its
+    // parent); a spec already moved into `src/<module>/` resolves to the dir
+    // above that `src/`; otherwise the spec's own dir is the root.
+    let root = if dir_name(spec_dir).as_deref() == Some("spec") {
+        spec_dir.parent().unwrap().to_path_buf()
+    } else if spec_dir.parent().and_then(dir_name).as_deref() == Some("src") {
         spec_dir.parent().unwrap().parent().unwrap().to_path_buf()
     } else {
         spec_dir.to_path_buf()
     };
-    for cand in [root.join("src/core/core.rune"), root.join("core.rune")] {
+    for cand in [
+        root.join("src/core/core.rune"),
+        root.join("spec/core.rune"),
+        root.join("specs/core.rune"),
+        root.join("core.rune"),
+        root.join("src/core/core.in-prog.rune"),
+        root.join("spec/core.in-prog.rune"),
+        root.join("specs/core.in-prog.rune"),
+        root.join("core.in-prog.rune"),
+    ] {
         if cand == path {
             continue; // never load the file being checked as its own core
         }
@@ -1409,6 +1425,43 @@ mod tests {
             "invalid fixtures produced no diagnostics: {}",
             failures.join(", ")
         );
+    }
+
+    /// Mirrors the dooks layout: a finalized module spec lives in
+    /// `src/<module>/` while the shared core is still a DRAFT in `spec/`. The LSP
+    /// must resolve `db` from `spec/core.in-prog.rune` — same candidates as the
+    /// engine's `loadCoreSrvs` — so a `db:` boundary step doesn't squiggle.
+    #[test]
+    fn core_services_resolve_from_a_spec_folder_draft_core() {
+        let base = std::env::temp_dir().join("rune-lsp-core-srv-test");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("spec")).unwrap();
+        std::fs::create_dir_all(base.join("src/todos")).unwrap();
+        std::fs::write(
+            base.join("spec/core.in-prog.rune"),
+            "[MOD] core\n[SRV] (SIDECAR)db: DB_URL\n    the datastore\n    @docs https://example.com\n",
+        )
+        .unwrap();
+
+        // A module spec already moved into src/<module>/ (root = above that src/).
+        let module = base.join("src/todos/todos.rune");
+        std::fs::write(&module, "[MOD] todos\n").unwrap();
+        let uri = Url::from_file_path(&module).unwrap();
+        assert!(
+            core_services_for(&uri).contains("db"),
+            "module in src/todos must see db from spec/core.in-prog.rune"
+        );
+
+        // A draft module spec still in spec/ (root = the dir above spec/).
+        let draft = base.join("spec/todos.in-prog.rune");
+        std::fs::write(&draft, "[MOD] todos\n").unwrap();
+        let draft_uri = Url::from_file_path(&draft).unwrap();
+        assert!(
+            core_services_for(&draft_uri).contains("db"),
+            "draft in spec/ must resolve root above spec/ and see db"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     fn change(text: &str) -> TextDocumentContentChangeEvent {
