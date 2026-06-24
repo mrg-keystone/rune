@@ -1,5 +1,5 @@
 import { dirname, fromFileUrl, join, resolve } from "#std/path";
-import { rules, runPipeline, parseArgs, printHeader, printResults, printJson, runManifest, runSync, runInit, runCheck, runDev, runValidate, runUpdate } from "@rune/mod-root.ts";
+import { rules, runPipeline, parseArgs, printHeader, printResults, printJson, runManifest, runSync, runInit, runCheck, runDev, runValidate, runUpdate, runVersion } from "@rune/mod-root.ts";
 import { getIgnoredPaths } from "@rune/domain/data/project/mod.ts";
 import { suggestForResults } from "@rune/domain/data/llm/openai.ts";
 import { canonicalPaths as SHAPE } from "@rune/domain/business/artifact/canonical-paths.ts";
@@ -22,6 +22,11 @@ function findProjectRoot(start: string): string {
   }
 }
 
+// ---- version ---- print this build's version and check for a newer release.
+if (["-v", "--version", "-V", "version"].includes(Deno.args[0] ?? "")) {
+  Deno.exit(await runVersion(Deno.args.slice(1)));
+}
+
 // ---- help ---- (bare `rune` with no args shows this too)
 if (["-h", "--help", "help"].includes(Deno.args[0] ?? "") || Deno.args.length === 0) {
   console.log(`rune — design a spec, generate the code, keep it honest.
@@ -39,6 +44,7 @@ USAGE
   rune lsp                   start the language server (editor integration)
   rune fmt <file.rune>       format a spec
   rune update [tag]          self-update to the latest release (or a pinned tag)
+  rune -v                     print the version and check for a newer release
 
 Generation is Deno/TypeScript. Edit the language in Rune Studio
 (\`deno task studio\`) — it writes keywords.json, the single source of truth.`);

@@ -2,7 +2,7 @@
   "workspace": ["./keep", "./e2e/cake", "./e2e/checkout", "./examples/in-process-client"],
   "tasks": {
     "hooks": "git config core.hooksPath .githooks",
-    "setup": "deno run --allow-read --allow-run --allow-write src/bootstrap/config.ts && deno run --allow-read --allow-write scripts/gen-shape-docs.ts",
+    "setup": "deno run --allow-read --allow-run --allow-write src/bootstrap/config.ts && deno run --allow-read --allow-write scripts/gen-shape-docs.ts && deno run --allow-read --allow-run --allow-write --allow-env scripts/gen-version.ts",
     "check": "deno run --allow-read --allow-write --allow-net --allow-env --allow-run src/bootstrap/mod.ts",
     "dev": "deno run --allow-read --allow-write --allow-net --allow-env --allow-run src/bootstrap/mod.ts",
     "gen": "deno run --allow-read --allow-write scripts/generate.mjs",

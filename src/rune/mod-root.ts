@@ -7,6 +7,7 @@ export { runCheck } from "./entrypoints/check/mod.ts";
 export { runDev } from "./entrypoints/dev/mod.ts";
 export { runValidate } from "./entrypoints/validate/mod.ts";
 export { runUpdate } from "./entrypoints/update/mod.ts";
+export { runVersion } from "./entrypoints/version/mod.ts";
 export type { RuleDefinition } from "@core/dto/types.ts";
 
 import type { RuleDefinition } from "@core/dto/types.ts";

@@ -61,6 +61,7 @@ jobs:
         run: |
           deno run --allow-read --allow-run --allow-write src/bootstrap/config.ts
           deno run --allow-read --allow-write scripts/gen-shape-docs.ts
+          deno run --allow-read --allow-run --allow-write --allow-env scripts/gen-version.ts
           deno compile --allow-read --allow-write --allow-net --allow-env --allow-run \
             --target ${{ matrix.target }} -o dist/rune src/bootstrap/mod.ts
           (cd lang && cargo build --release --target ${{ matrix.target }})
