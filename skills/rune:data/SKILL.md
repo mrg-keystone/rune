@@ -402,6 +402,15 @@ The scripts handle *plumbing and verification*; you handle *the design in the mi
 
 ## The procedure
 
+> **Terminal gate — show the review, ALWAYS, no matter how you entered.** However this skill
+> runs — a fresh design, a re-run where `spec/data.json` and `spec/data.review.html` already
+> exist, or just a spec-reconcile pass — you FINISH by re-running `render_review.ts` and
+> `open`ing `spec/data.review.html` for the user. An existing review file on disk is **not**
+> the same as having shown it: if you did not run `open` this session, you have not shown it.
+> Never substitute a prose summary in chat for the visualizer — the summary supplements it,
+> never replaces it. Do not skip this because the design "was already done"; that is the exact
+> failure this gate exists to stop. Steps 8 and 10 below enforce it.
+
 1. **Scan the spec (script).** `deno run -A scripts/scan_spec.ts spec/` → the entity/
    read/write inventory and the `mutationCandidates`. Read it: this is your checklist of
    entities to place and edits to make immutable. (In the repo, the spec dir is wherever the
@@ -424,9 +433,13 @@ The scripts handle *plumbing and verification*; you handle *the design in the mi
 7. **Validate (script).** `deno run -A scripts/validate_data.ts spec/data.json spec/` —
    must exit 0. Fix every `✗` (and consider the `⚠`s) before continuing; the gate is how you
    know the design conforms, instead of hoping it does.
-8. **Render the review (script).** `deno run -A scripts/render_review.ts spec/data.json`
-   then open `spec/data.review.html`. That visualizer — not the raw JSON — is what you show
-   the user to review the decisions and leave second-pass notes.
+8. **Render AND open the review — every run, no exceptions (script).**
+   `deno run -A scripts/render_review.ts spec/data.json` then `open spec/data.review.html`.
+   ALWAYS re-render and `open` it, even when `data.json`/`data.review.html` already exist from
+   a prior run — a file sitting on disk is NOT the same as having put it in front of the user
+   this session. That visualizer — not the raw JSON, and **never** a prose summary you type in
+   chat — is what you show the user to review the decisions and leave second-pass notes. Do not
+   advance to step 9 until you have actually run `open`.
 9. **Reconcile the spec — nudge the runes (judgment + `rune check`).** For each entity, ask:
    does the design have a consequence the spec must carry (a readable trail, a projection to
    maintain, a verb to retag, a new field needing a `[TYP]`)? See *Reconciling the spec*.
@@ -434,8 +447,12 @@ The scripts handle *plumbing and verification*; you handle *the design in the mi
    untouched; if the trail is storage-internal or the change is a pure aggregate, change
    **nothing**. Run `rune check` on every touched file (never `rune fmt`) until clean, then
    re-run `scan_spec.ts` to confirm the inventory still matches `data.json`.
-10. **Hand off.** Summarize the spec diff and *why the data design forced each edit*, then
-   stop. Do not write adapters (`rune:build`) or re-model the module (`rune:spec`).
+10. **Hand off.** First confirm you actually ran step 8 *this session* — rendered the review
+   and `open`ed `spec/data.review.html`. If you somehow reached here without it (e.g. the
+   design already existed and you jumped straight to reconcile), STOP and do step 8 now before
+   writing anything else: the chat handoff supplements the visualizer, it never replaces it.
+   Then summarize the spec diff and *why the data design forced each edit*, and stop. Do not
+   write adapters (`rune:build`) or re-model the module (`rune:spec`).
 
 ## Worked references
 

@@ -116,6 +116,11 @@ if [ "$DEV" = "1" ]; then
   mkdir -p "$BINDIR"
 
   echo "Compiling rune from source…"
+  # Stamp the build identity (version + commit) so the compiled binary's `rune -v`
+  # reports this checkout — matches what `deno task compile` does via `setup`, and
+  # is required because `deno compile` below statically imports the generated file.
+  ( cd "$repo" && deno run --allow-read --allow-run --allow-write --allow-env \
+    scripts/gen-version.ts )
   deno compile --allow-read --allow-write --allow-net --allow-env --allow-run \
     --config "$repo/deno.json" -o "$BINDIR/rune" "$repo/src/bootstrap/mod.ts"
 
