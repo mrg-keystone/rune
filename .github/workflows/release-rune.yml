@@ -92,8 +92,24 @@ jobs:
           path: rune-${{ matrix.target }}.tar.gz*
           retention-days: 3
 
+  # The commit this release was built from, shipped as a sibling asset so
+  # `rune -v` can tell whether an installed binary is stale WITHOUT reading the
+  # git `latest` tag (which gh-release freezes — it lags the served binary by
+  # weeks). commit.txt is uploaded into the same `latest` release as the
+  # binaries, so it can never disagree with what you'd download. Emitted as a
+  # `release-*` artifact so the existing artifact-pattern picks it up.
+  meta:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "${{ github.sha }}" > commit.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-meta
+          path: commit.txt
+          retention-days: 3
+
   release:
-    needs: [build]
+    needs: [build, meta]
     uses: mrg-keystone/actions/.github/workflows/gh-release.yml@main
     permissions:
       contents: write

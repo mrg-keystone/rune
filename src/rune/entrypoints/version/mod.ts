@@ -13,16 +13,24 @@ const REPO = "mrg-keystone/rune";
 // rune ships as a ROLLING `latest` GitHub release (the binary carries no semver
 // tag of its own), so "am I stale?" can't be answered by comparing semvers — a
 // keep-only auto-bump would false-nag. The honest signal is the COMMIT: the
-// binary bakes the commit it was built from (RUNE_COMMIT, see gen-version.ts),
-// and the release moves the `latest` tag to that same commit. So if the commit
-// `latest` points at differs from the baked one, a newer rune is out.
+// binary bakes the commit it was built from (RUNE_COMMIT, see gen-version.ts).
+//
+// Crucially, the comparison target is NOT the git `latest` tag: gh-release
+// freezes that tag (and the release's published_at) and only swaps the ASSETS
+// in place, so the tag ref lags the served binary by weeks. Instead the CI run
+// that builds the binaries also uploads its commit as a sibling release asset,
+// `commit.txt`. Reading that asset compares the running binary against the
+// commit of the binary you'd actually download — same release, no lag, and (as
+// a plain asset download, like install.sh) not subject to the API rate limit.
 
-const LATEST_REF = `https://api.github.com/repos/${REPO}/git/refs/tags/latest`;
+export function latestCommitUrl(tag = "latest"): string {
+  return `https://github.com/${REPO}/releases/download/${tag}/commit.txt`;
+}
 
-// Pure: given the baked commit and whatever the `latest` tag resolves to,
-// decide if a newer build is available. Unknown/missing data => no nag (never
-// cry wolf): a dev build (RUNE_COMMIT "unknown") or an unreachable API both
-// fall through to false.
+// Pure: given the baked commit and the latest release's commit, decide if a
+// newer build is available. Unknown/missing data => no nag (never cry wolf): a
+// dev build (RUNE_COMMIT "unknown"), an unreachable network, or a release that
+// predates commit.txt (404 => undefined) all fall through to false.
 export function isNewer(
   baked: string | undefined,
   latest: string | undefined,
@@ -32,18 +40,16 @@ export function isNewer(
   return baked !== latest;
 }
 
-// Fetch the commit sha the `latest` release tag points at. Returns undefined on
-// any failure (offline, rate-limited, shape change) — `rune -v` stays useful
-// offline and simply skips the update check.
+// Fetch the commit the `latest` release was built from, from its own
+// `commit.txt` asset. Returns undefined on any failure (offline, 404 on
+// pre-commit.txt releases, etc.) — `rune -v` stays useful offline and simply
+// skips the update check rather than nagging on bad data.
 export async function fetchLatestCommit(): Promise<string | undefined> {
   try {
-    const res = await fetch(LATEST_REF, {
-      headers: { "Accept": "application/vnd.github+json" },
-    });
+    const res = await fetch(latestCommitUrl());
     if (!res.ok) return undefined;
-    const body = await res.json();
-    const sha = body?.object?.sha;
-    return typeof sha === "string" ? sha : undefined;
+    const sha = (await res.text()).trim();
+    return sha || undefined;
   } catch {
     return undefined;
   }
