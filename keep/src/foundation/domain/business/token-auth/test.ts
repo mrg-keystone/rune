@@ -15,8 +15,7 @@ import {
 } from "@foundation/domain/business/infra-client/mod.ts";
 import { INTERNAL_REQUEST_HEADER } from "@foundation/domain/business/backend-client/mod.ts";
 import { PUBLIC_METADATA_KEY } from "@foundation/domain/business/public-route/mod.ts";
-import { ROLES_METADATA_KEY } from "@foundation/domain/business/roles/mod.ts";
-import { CLAIMS_METADATA_KEY } from "@foundation/domain/business/claims/mod.ts";
+import { GRANTS_METADATA_KEY } from "@foundation/domain/business/grants/mod.ts";
 import { Logger } from "@foundation/domain/business/logger/mod.ts";
 
 const INTERNAL = "internal-process-key";
@@ -281,17 +280,13 @@ function guardCtx(opts: {
   query?: Record<string, string>;
   hostname?: string;
   isPublic?: boolean;
-  roles?: string[];
-  claims?: string[];
+  grants?: string[];
   websocketTopic?: string;
 }) {
   function handler() {}
   if (opts.isPublic) Reflect.defineMetadata(PUBLIC_METADATA_KEY, true, handler);
-  if (opts.roles) {
-    Reflect.defineMetadata(ROLES_METADATA_KEY, opts.roles, handler);
-  }
-  if (opts.claims) {
-    Reflect.defineMetadata(CLAIMS_METADATA_KEY, opts.claims, handler);
+  if (opts.grants) {
+    Reflect.defineMetadata(GRANTS_METADATA_KEY, opts.grants, handler);
   }
   const store = new Map<string, unknown>();
   const responseHeaders = new Map<string, string>();
@@ -349,11 +344,12 @@ Deno.test("guard: @Public route is allowed with no credential", async () => {
   );
 });
 
-Deno.test("guard: valid session bearer authorizes and sets source", async () => {
+Deno.test("guard: valid session bearer authorizes (a held grant) and sets source", async () => {
   const { g, logger } = guard();
-  const token = await bearerFor({ source: "svc" });
+  const token = await bearerFor({ source: "svc", claims: { test: "go" } });
   const ctx = guardCtx({
     hostname: "203.0.113.1",
+    grants: ["go"],
     headers: { authorization: `Bearer ${token}` },
   });
   const ok = await logger.runInRequest("r", async () => {
@@ -389,25 +385,36 @@ Deno.test("guard: WS message contexts are skipped", async () => {
   );
 });
 
-// ---- @Roles / @claims enforcement ----
+// ---- @Grants enforcement (fail-closed) ----
 
-Deno.test("guard: @Roles allows a caller holding the (scoped) role", async () => {
+Deno.test("guard: @Grants allows a caller holding the grant", async () => {
   const { g } = guard();
-  const token = await bearerFor({ claims: { role: "test:admin" } });
+  const token = await bearerFor({ claims: { test: "admin" } });
   const ctx = guardCtx({
     hostname: "203.0.113.1",
-    roles: ["admin"],
+    grants: ["admin"],
     headers: { authorization: `Bearer ${token}` },
   });
   assertEquals(await g.canActivate(ctx as unknown as Context), true);
 });
 
-Deno.test("guard: a role for a different app does not satisfy @Roles", async () => {
+Deno.test("guard: @Grants accepts any-of (one of several listed)", async () => {
   const { g } = guard();
-  const token = await bearerFor({ claims: { role: "other:admin" } });
+  const token = await bearerFor({ claims: { test: "deploy" } });
   const ctx = guardCtx({
     hostname: "203.0.113.1",
-    roles: ["admin"],
+    grants: ["admin", "deploy"],
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assertEquals(await g.canActivate(ctx as unknown as Context), true);
+});
+
+Deno.test("guard: a grant for a DIFFERENT app does not satisfy @Grants", async () => {
+  const { g } = guard();
+  const token = await bearerFor({ claims: { other: "admin" } });
+  const ctx = guardCtx({
+    hostname: "203.0.113.1",
+    grants: ["admin"],
     headers: { authorization: `Bearer ${token}` },
   });
   await assertRejects(
@@ -416,23 +423,12 @@ Deno.test("guard: a role for a different app does not satisfy @Roles", async () 
   );
 });
 
-Deno.test("guard: @claims authorizes against the scoped role claims", async () => {
+Deno.test("guard: @Grants rejects a caller missing the grant with 403", async () => {
   const { g } = guard();
-  const token = await bearerFor({ claims: { role: "test:docs" } });
+  const token = await bearerFor({ claims: { test: "editor" } });
   const ctx = guardCtx({
     hostname: "203.0.113.1",
-    claims: ["docs"],
-    headers: { authorization: `Bearer ${token}` },
-  });
-  assertEquals(await g.canActivate(ctx as unknown as Context), true);
-});
-
-Deno.test("guard: @claims rejects a caller missing the claim with 403", async () => {
-  const { g } = guard();
-  const token = await bearerFor({ claims: { role: "test:editor" } });
-  const ctx = guardCtx({
-    hostname: "203.0.113.1",
-    claims: ["docs"],
+    grants: ["docs"],
     headers: { authorization: `Bearer ${token}` },
   });
   await assertRejects(
@@ -441,23 +437,24 @@ Deno.test("guard: @claims rejects a caller missing the claim with 403", async ()
   );
 });
 
-Deno.test("guard: @Roles without any credential is 401", async () => {
+Deno.test("guard: @Grants without any credential is 401", async () => {
   const { g } = guard();
-  const ctx = guardCtx({ hostname: "203.0.113.1", roles: ["admin"] });
+  const ctx = guardCtx({ hostname: "203.0.113.1", grants: ["admin"] });
   await assertRejects(
     () => Promise.resolve(g.canActivate(ctx as unknown as Context)),
     UnauthorizedException,
   );
 });
 
-Deno.test("guard: a bare-prefix role does NOT satisfy a mis-typed @Roles('')", async () => {
-  // A caller holding the bare app-prefix role "test:" scopes to an empty remainder. A route
-  // mis-decorated @Roles("") must NOT be opened by that empty===empty match (fail-closed).
+// ---- fail-closed: no @Public and no @Grants is denied ----
+
+Deno.test("guard: a route with NO @Public and NO @Grants is CLOSED (403) even when authenticated", async () => {
+  // The crux of the model: default-closed. A valid identity with real grants still can't reach a
+  // route that names no grant — only `@Public`, `@Grants`, or the `*` universal grant open one.
   const { g } = guard();
-  const token = await bearerFor({ claims: { role: "test:" } });
+  const token = await bearerFor({ source: "svc", claims: { test: "admin" } });
   const ctx = guardCtx({
-    hostname: "203.0.113.1",
-    roles: [""],
+    hostname: "203.0.113.1", // no isPublic, no grants
     headers: { authorization: `Bearer ${token}` },
   });
   await assertRejects(
@@ -466,50 +463,59 @@ Deno.test("guard: a bare-prefix role does NOT satisfy a mis-typed @Roles('')", a
   );
 });
 
-Deno.test("guard: a bare-prefix role yields no scoped role (identity has no empty role)", async () => {
-  // The bare-prefix "test:" claim must not surface as an "" scoped role on the identity.
+Deno.test("guard: empty grant remainders are dropped (no spurious match)", async () => {
+  // claims[appName] = ",admin," → grants ["admin"]; a mis-typed @Grants("") must NOT match.
   const { g } = guard();
-  const token = await bearerFor({
-    source: "svc",
-    claims: { role: "test:,test:admin" },
-  });
+  const token = await bearerFor({ claims: { test: ",admin," } });
   const ctx = guardCtx({
     hostname: "203.0.113.1",
+    grants: [""],
     headers: { authorization: `Bearer ${token}` },
   });
-  await g.canActivate(ctx as unknown as Context);
-  const id = getIdentity(ctx as unknown as Context)!;
-  // Only the real role survives — the empty remainder from "test:" is dropped.
-  assertEquals(id.roles, ["admin"]);
+  await assertRejects(
+    () => Promise.resolve(g.canActivate(ctx as unknown as Context)),
+    ForbiddenException,
+  );
 });
 
-Deno.test("guard: attaches the resolved identity (claims + scoped roles)", async () => {
+Deno.test("guard: attaches the resolved identity (claims + app grants)", async () => {
   const { g } = guard();
   const token = await bearerFor({
     source: "svc",
-    claims: { role: "test:admin,other:x", team: "core" },
+    claims: { test: "admin,deploy", other: "x", team: "core" },
   });
   const ctx = guardCtx({
     hostname: "203.0.113.1",
+    grants: ["admin"], // a route this caller can reach, so canActivate returns
     headers: { authorization: `Bearer ${token}` },
   });
-  await g.canActivate(ctx as unknown as Context);
+  assertEquals(await g.canActivate(ctx as unknown as Context), true);
   const id = getIdentity(ctx as unknown as Context)!;
   assertEquals(id.source, "svc");
-  assertEquals(id.roles, ["admin"]); // scoped to "test"
+  assertEquals(id.grants, ["admin", "deploy"]); // this app's grants
   assertEquals(id.claims.team, "core");
 });
 
-// ---- skeleton `*` ----
+// ---- `*` universal grant ----
 
 const recent = () => Math.floor(Date.now() / 1000) - 60;
 
-Deno.test("guard: a fresh `*` skeleton bypasses required claims", async () => {
+Deno.test("guard: a fresh `*` grant opens a @Grants route the caller doesn't hold", async () => {
   const { g } = guard(); // honorSkeleton defaults true
-  const token = await bearerFor({ claims: { role: "*" }, mintedAt: recent() });
+  const token = await bearerFor({ claims: { test: "*" }, mintedAt: recent() });
   const ctx = guardCtx({
     hostname: "203.0.113.1",
-    claims: ["docs"], // caller doesn't hold it, but `*` opens it
+    grants: ["docs"], // caller doesn't hold it, but `*` opens it
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assertEquals(await g.canActivate(ctx as unknown as Context), true);
+});
+
+Deno.test("guard: a fresh `*` grant opens a route with NO @Grants too (treated as public)", async () => {
+  const { g } = guard();
+  const token = await bearerFor({ claims: { test: "*" }, mintedAt: recent() });
+  const ctx = guardCtx({
+    hostname: "203.0.113.1", // closed-by-default, but `*` opens it
     headers: { authorization: `Bearer ${token}` },
   });
   assertEquals(await g.canActivate(ctx as unknown as Context), true);
@@ -517,10 +523,10 @@ Deno.test("guard: a fresh `*` skeleton bypasses required claims", async () => {
 
 Deno.test("guard: honorSkeleton:false ignores `*` (infra posture)", async () => {
   const { g } = guard({ honorSkeleton: false });
-  const token = await bearerFor({ claims: { role: "*" }, mintedAt: recent() });
+  const token = await bearerFor({ claims: { test: "*" }, mintedAt: recent() });
   const ctx = guardCtx({
     hostname: "203.0.113.1",
-    claims: ["docs"],
+    grants: ["docs"],
     headers: { authorization: `Bearer ${token}` },
   });
   await assertRejects(
@@ -529,13 +535,13 @@ Deno.test("guard: honorSkeleton:false ignores `*` (infra posture)", async () => 
   );
 });
 
-Deno.test("guard: a `*` older than the 24h cap is not honored as skeleton", async () => {
+Deno.test("guard: a `*` older than the 24h cap is not honored", async () => {
   const { g } = guard();
   const stale = Math.floor(Date.now() / 1000) - 25 * 60 * 60;
-  const token = await bearerFor({ claims: { role: "*" }, mintedAt: stale });
+  const token = await bearerFor({ claims: { test: "*" }, mintedAt: stale });
   const ctx = guardCtx({
     hostname: "203.0.113.1",
-    claims: ["docs"],
+    grants: ["docs"],
     headers: { authorization: `Bearer ${token}` },
   });
   await assertRejects(
@@ -546,10 +552,10 @@ Deno.test("guard: a `*` older than the 24h cap is not honored as skeleton", asyn
 
 Deno.test("guard: a `*` with no mintedAt fails closed (not honored)", async () => {
   const { g } = guard();
-  const token = await bearerFor({ claims: { role: "*" } }); // no mintedAt
+  const token = await bearerFor({ claims: { test: "*" } }); // no mintedAt
   const ctx = guardCtx({
     hostname: "203.0.113.1",
-    claims: ["docs"],
+    grants: ["docs"],
     headers: { authorization: `Bearer ${token}` },
   });
   await assertRejects(
@@ -558,23 +564,16 @@ Deno.test("guard: a `*` with no mintedAt fails closed (not honored)", async () =
   );
 });
 
-Deno.test("guard: a `*` caller still authorizes a no-required-claims route (authenticated)", async () => {
-  const { g } = guard();
-  const token = await bearerFor({ claims: { role: "*" } });
-  const ctx = guardCtx({
-    hostname: "203.0.113.1",
-    headers: { authorization: `Bearer ${token}` },
-  });
-  // No required claims ⇒ any authenticated identity passes regardless of skeleton.
-  assertEquals(await g.canActivate(ctx as unknown as Context), true);
-});
-
 // ---- ?token query-param + opaque exchange via the guard ----
 
-Deno.test("guard: a valid session bearer in ?token authorizes", async () => {
+Deno.test("guard: a valid session bearer in ?token authorizes a @Grants route it holds", async () => {
   const { g } = guard();
-  const token = await bearerFor({ source: "link" });
-  const ctx = guardCtx({ hostname: "203.0.113.1", query: { token } });
+  const token = await bearerFor({ source: "link", claims: { test: "docs" } });
+  const ctx = guardCtx({
+    hostname: "203.0.113.1",
+    grants: ["docs"],
+    query: { token },
+  });
   assertEquals(await g.canActivate(ctx as unknown as Context), true);
 });
 
@@ -592,12 +591,12 @@ Deno.test("guard: an invalid ?token on a protected route is rejected (401)", asy
 
 Deno.test("guard: exchanges an opaque token and hands the bearer back via response header", async () => {
   const infraClient = stubInfra(() =>
-    bearerFor({ source: "exch", claims: { role: "test:admin" } })
+    bearerFor({ source: "exch", claims: { test: "admin" } })
   );
   const { g } = guard({ infraClient });
   const ctx = guardCtx({
     hostname: "203.0.113.1",
-    roles: ["admin"],
+    grants: ["admin"],
     headers: { authorization: "Bearer mtk_xyz" },
   });
   assertEquals(await g.canActivate(ctx as unknown as Context), true);

@@ -78,25 +78,19 @@ export {
   PUBLIC_METADATA_KEY,
 } from "@foundation/domain/business/public-route/mod.ts";
 export {
-  requiredRoles,
-  Roles,
-  ROLES_METADATA_KEY,
-} from "@foundation/domain/business/roles/mod.ts";
-export {
-  claims,
-  CLAIMS_METADATA_KEY,
-  requiredClaims,
-} from "@foundation/domain/business/claims/mod.ts";
+  Grants,
+  GRANTS_METADATA_KEY,
+  requiredGrants,
+} from "@foundation/domain/business/grants/mod.ts";
 export {
   createCredentialGuard,
   DEFAULT_SKELETON_MAX_AGE_SECONDS,
   getIdentity,
+  grantsForApp,
   IDENTITY_CONTEXT_KEY,
   isLoopbackRequest,
   isOpaqueToken,
   resolveNetworkCredential,
-  rolesFromClaims,
-  scopeRoles,
   SESSION_BEARER_CONTEXT_KEY,
   SESSION_BEARER_HEADER,
   validateCredential,

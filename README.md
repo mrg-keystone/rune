@@ -26,7 +26,7 @@ from "write it" to "watch it run green."
   `@mrg-keystone/rune` is a stable identifier, not a separate product.
 
 Everything else is shared across both layers and lives in exactly one place:
-`skills/` (the one rune skill, covering spec *and* runtime), `examples/` (spec→code
+`skills/` (the five rune skills — `rune:spec`/`build`/`framework`/`cake`/`docs`), `examples/` (spec→code
 demos and runnable backends), `e2e/` (the spec→runtime acceptance suite), `docs/`,
 `todos/`.
 
@@ -51,7 +51,7 @@ known location — `~/.deno/bin`, `~/.cargo/bin`, `~/.local/bin`, …) and then 
 in one fresh copy, so you never end up with stale or duplicate binaries on your
 `PATH`. Pulls the latest prebuilt release (`rune` + the `rune-lsp` / `rune-syntax`
 helpers) into `~/.deno/bin` — no Deno or Rust toolchain required. It also installs
-the **rune Claude Code skill** into `~/.claude/skills/rune/` (skipped when
+the **rune Claude Code skills** into `~/.claude/skills/rune:*/` (skipped when
 `~/.claude` doesn't exist), so Claude always matches the installed toolchain.
 
 Already installed? `rune update` (alias: `rune upgrade`) re-runs this installer —
@@ -77,16 +77,16 @@ curl -fsSL https://github.com/mrg-keystone/rune/releases/download/latest/uninsta
 ```
 
 Removes `rune` + `rune-lsp` + `rune-syntax` from every known install location,
-plus the managed skill (`~/.claude/skills/rune/`: `SKILL.md` + `references/`, and
-any legacy `~/.claude/skills/keep/` now folded into it) — anything else you keep
+plus the managed skills (`~/.claude/skills/rune:*/`, and any legacy
+`~/.claude/skills/rune/` or `~/.claude/skills/keep/` now folded into them) — anything else you keep
 in that folder (evals, notes) is left alone.
 
 ### Claude Code skill
 
-Installed for you: the skill ships inside every release tarball, and every
-install path (`scripts/install.sh`, `deno task install`, `rune update`) drops it
-into `~/.claude/skills/rune/` so Claude knows the syntax, lifecycle, and pitfalls
-of the version you actually have — a pinned `RUNE_VERSION` install gets the skill
+Installed for you: the skills ship inside every release tarball, and every
+install path (`scripts/install.sh`, `deno task install`, `rune update`) drops them
+into `~/.claude/skills/rune:*/` so Claude knows the syntax, lifecycle, and pitfalls
+of the version you actually have — a pinned `RUNE_VERSION` install gets the skills
 matching those binaries. Working on the skill itself? `deno task install`
 copies it straight from your checkout.
 
@@ -195,7 +195,7 @@ deno task test:e2e                # the spec→runtime integration acceptance (e
 CI is path-filtered by layer:
 
 - `release-rune` rebuilds rune's rolling `latest` release — the three binaries
-  plus the one Claude skill (`skills/rune`: `SKILL.md` + `references/`, bundled as
+  plus the five Claude skills (`skills/rune:*`, bundled as
   a `skill/` dir inside each tarball) — on any push **except** ones touching only
   runtime-owned or non-binary facets (`keep/`, `e2e/`, `examples/`, `docs/`,
   `todos/`).

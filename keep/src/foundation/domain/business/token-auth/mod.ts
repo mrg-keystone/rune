@@ -12,8 +12,7 @@ import {
   InfraError,
 } from "@foundation/domain/business/infra-client/mod.ts";
 import { isPublicContext } from "@foundation/domain/business/public-route/mod.ts";
-import { requiredRoles } from "@foundation/domain/business/roles/mod.ts";
-import { requiredClaims } from "@foundation/domain/business/claims/mod.ts";
+import { requiredGrants } from "@foundation/domain/business/grants/mod.ts";
 
 /**
  * Network credential handling for the infra-centralized model. A request from a trusted origin
@@ -128,28 +127,21 @@ export interface CredentialGuardConfig {
 }
 
 /**
- * Scopes namespaced `appName:role` claims to this app, returning the bare role names.
+ * The grants a caller holds on THIS app. infra stores a user's per-app grants as the comma-separated
+ * value under the app's own key in the verified claim map (`claims[appName] = "grant1,grant2"`); this
+ * returns them trimmed and non-empty. A user with no entry for the app holds no grants here (and, by
+ * fail-closed default, reaches only its `@Public` routes).
  *
- * Hardening: an empty bare role is dropped. A claim that is exactly the app prefix (e.g. `"test:"`)
- * slices to `""`; left in, that empty remainder could spuriously satisfy a mis-typed `@Roles("")` /
- * `@claims([""])` (the `required.some((r) => scoped.includes(r))` check would match `"" === ""`) and
- * would also leak onto the resolved identity. No legitimate role is named `""`, so filtering empty
- * remainders changes nothing for any real, non-empty role.
+ * The `*` universal grant is just one of these strings — see {@link createCredentialGuard}.
  */
-export function scopeRoles(roles: string[], appName: string): string[] {
-  const prefix = `${appName}:`;
-  return roles
-    .filter((r) => r.startsWith(prefix))
-    .map((r) => r.slice(prefix.length))
-    .filter((r) => r.length > 0);
-}
-
-/** Splits the comma-separated `role` claim into trimmed, non-empty namespaced role entries. */
-export function rolesFromClaims(claims: Record<string, string>): string[] {
-  return (claims.role ?? "")
+export function grantsForApp(
+  claims: Record<string, string>,
+  appName: string,
+): string[] {
+  return (claims[appName] ?? "")
     .split(",")
-    .map((r) => r.trim())
-    .filter((r) => r.length > 0);
+    .map((g) => g.trim())
+    .filter((g) => g.length > 0);
 }
 
 /** A Danet guard: returns true to allow, throws to reject. */
@@ -160,11 +152,13 @@ export interface DanetGuard {
 /**
  * The global credential guard. Deny-by-default for every controller route, with `@Public()` as the
  * only opt-out. A request is allowed when it is `@Public` (credential optional), from a trusted
- * origin, or carrying a valid credential that also satisfies the route's required claims.
+ * origin, or carrying a valid credential that also satisfies the route's required grants.
  *
- * Authorization is claims-based: `@claims([...])` and `@Roles(...)` both contribute an ANY-of list
- * matched against the caller's app-scoped role claims. The `*` skeleton key bypasses the list when
- * honored (config `honorSkeleton`, and only within the 24h mint-age cap).
+ * Authorization is **grant-based and fail-closed**: infra assigns each user a set of app-scoped
+ * grant strings (carried in the session bearer under `claims[appName]`); `@Grants([...])` lists the
+ * grants (ANY-of) that open a route. A route with no `@Grants` and no `@Public` is closed to everyone
+ * but the `*` universal grant. The `*` grant bypasses the required list when honored (config
+ * `honorSkeleton`, and only within the 24h mint-age cap) — it treats every endpoint as `@Public`.
  */
 export function createCredentialGuard(
   config: CredentialGuardConfig,
@@ -183,8 +177,9 @@ export function createCredentialGuard(
       if (ctx.websocketTopic !== undefined) return true;
 
       const isPublic = isPublicContext(ctx);
-      // `@claims` and `@Roles` both authorize ANY-of against the caller's scoped role claims.
-      const required = [...requiredClaims(ctx), ...requiredRoles(ctx)];
+      // `@Grants(...)` lists the grants (ANY-of) that open this route. Empty = no grant named,
+      // which (being non-@Public) is closed unless the caller holds the `*` universal grant.
+      const required = requiredGrants(ctx);
 
       if (isTrustedOrigin(context, config.internalKey, trustLocalhost)) {
         return true;
@@ -207,14 +202,11 @@ export function createCredentialGuard(
         } else {
           resolved = outcome.resolved;
           config.logger.setSource(resolved.source);
-          const scoped = scopeRoles(
-            rolesFromClaims(resolved.claims),
-            config.appName,
-          );
+          const grants = grantsForApp(resolved.claims, config.appName);
           const identity: Identity = {
             source: resolved.source,
             claims: resolved.claims,
-            roles: scoped,
+            grants,
           };
           if (typeof ctx.set === "function") {
             ctx.set(IDENTITY_CONTEXT_KEY, identity);
@@ -230,32 +222,31 @@ export function createCredentialGuard(
         }
       }
 
-      // Authentication: a credential is required unless @Public — and a required-claims route always
-      // needs one (claims can't be checked without a verified identity).
+      // Authentication: every non-@Public route needs a verified credential (grants can't be
+      // checked without one). @Public routes allow an absent/ignored credential.
       if (!resolved) {
-        if (required.length > 0 || !isPublic) throw new UnauthorizedException();
-        return true;
+        if (isPublic) return true;
+        throw new UnauthorizedException();
       }
 
-      // Authorization. Skeleton `*` bypasses the required list when honored and within the cap.
-      const rawRoles = rolesFromClaims(resolved.claims);
-      const scoped = scopeRoles(rawRoles, config.appName);
+      // Authorization — FAIL-CLOSED. The `*` universal grant opens everything (when honored and
+      // within the 24h cap); a @Public route is open to any resolved identity; otherwise the caller
+      // must hold one of the route's @Grants. A non-@Public route with no @Grants and no `*` is
+      // closed — there is no "any authenticated identity" allowance.
+      const grants = grantsForApp(resolved.claims, config.appName);
       if (
-        honorSkeleton && hasSkeleton(rawRoles, scoped) &&
+        honorSkeleton && grants.includes("*") &&
         skeletonFresh(resolved.mintedAt, skeletonMaxAge)
       ) {
         return true;
       }
-      if (required.length === 0) return true; // any authenticated identity
-      if (required.some((r) => scoped.includes(r))) return true;
+      if (isPublic) return true;
+      if (required.length > 0 && required.some((g) => grants.includes(g))) {
+        return true;
+      }
       throw new ForbiddenException();
     },
   };
-}
-
-/** True when the caller holds the `*` skeleton key (bare, or scoped `<app>:*`). */
-function hasSkeleton(rawRoles: string[], scopedRoles: string[]): boolean {
-  return rawRoles.includes("*") || scopedRoles.includes("*");
 }
 
 /**
@@ -276,8 +267,8 @@ export interface Identity {
   source: string;
   /** The verified claim map — the authorization surface. */
   claims: Record<string, string>;
-  /** Convenience: this app's scoped (bare) role names, derived from `claims.role`. */
-  roles: string[];
+  /** Convenience: this app's grants, from `claims[appName]` (the strings infra assigned). */
+  grants: string[];
 }
 
 /** A resolved credential before it becomes an {@link Identity} (carries the credential kind). */

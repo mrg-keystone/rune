@@ -6,15 +6,21 @@ import {
   type TestSigner,
 } from "@foundation/domain/business/token/session.testkit.ts";
 import { Public } from "@foundation/domain/business/public-route/mod.ts";
+import { Grants } from "@foundation/domain/business/grants/mod.ts";
 import { INTERNAL_REQUEST_HEADER } from "@foundation/domain/business/backend-client/mod.ts";
 import { Controller, Get, Module } from "#danet/core";
 import { endpointModule } from "@foundation/domain/business/endpoint-decorator/mod.ts";
 
 // A test signer stands in for infra; a stub HTTP server publishes its JWKS, exchanges opaque
 // tokens for freshly-signed session bearers, and answers the revocation poll. Pointing keep at it
-// via INFRA_BASE_URL exercises the real verify / exchange / poll paths without a live infra.
+// via INFRA_URL exercises the real verify / exchange / poll paths without a live infra.
 const signer = await createTestSigner();
-const sessionBearer = (source = "svc") => signer.sign({ source, claims: {} });
+// The bootstrap app name is "test-app", so grants for it live under claims["test-app"].
+const sessionBearer = (source = "svc", appGrants?: string) =>
+  signer.sign({
+    source,
+    claims: appGrants ? { "test-app": appGrants } : {},
+  });
 
 function startStubInfra(
   s: TestSigner,
@@ -69,7 +75,16 @@ class OpenController {
   }
 }
 
-@Module({ controllers: [SecretController, OpenController] })
+@Controller("granted")
+class GrantedController {
+  @Grants("read")
+  @Get()
+  data() {
+    return { granted: true };
+  }
+}
+
+@Module({ controllers: [SecretController, OpenController, GrantedController] })
 class GuardModule {}
 
 let portCounter = 7000;
@@ -111,7 +126,7 @@ Deno.test("bootstrapServer - enables swagger by default", async () => {
 
 Deno.test("global guard: deny-by-default for controllers, @Public exempts", async () => {
   const infra = startStubInfra(signer);
-  Deno.env.set("INFRA_BASE_URL", infra.url);
+  Deno.env.set("INFRA_URL", infra.url);
   try {
     const port = portCounter++;
     const server = await bootstrapServer("test-app", GuardModule, {
@@ -129,7 +144,7 @@ Deno.test("global guard: deny-by-default for controllers, @Public exempts", asyn
       // deno-lint-ignore no-explicit-any
       server.handler(new Request(`http://app${path}`, init), remote as any);
 
-    // Protected controller: network caller without a credential → 401.
+    // No credential, network caller → 401 (needs auth).
     assertEquals((await net("/secret")).status, 401);
 
     // @Public controller: reachable with no credential.
@@ -137,15 +152,31 @@ Deno.test("global guard: deny-by-default for controllers, @Public exempts", asyn
     assertEquals(open.status, 200);
     assertEquals((await open.json()).open, true);
 
-    // Protected controller with a valid session bearer → 200.
-    const token = await sessionBearer();
-    const ok = await net("/secret", {
-      headers: { authorization: `Bearer ${token}` },
+    // FAIL-CLOSED: a plain controller has no @Grants, so a valid bearer that holds no matching
+    // grant is still DENIED (403) — default-closed, not "any authenticated identity".
+    const bare = await sessionBearer();
+    assertEquals(
+      (await net("/secret", { headers: { authorization: `Bearer ${bare}` } }))
+        .status,
+      403,
+    );
+
+    // @Grants("read"): a bearer carrying that grant for this app → 200.
+    const granted = await sessionBearer("svc", "read");
+    const ok = await net("/granted", {
+      headers: { authorization: `Bearer ${granted}` },
     });
     assertEquals(ok.status, 200);
-    assertEquals((await ok.json()).secret, true);
+    assertEquals((await ok.json()).granted, true);
 
-    // Localhost is trusted → no credential needed.
+    // …and a bearer WITHOUT the grant is rejected at the same @Grants route (403).
+    assertEquals(
+      (await net("/granted", { headers: { authorization: `Bearer ${bare}` } }))
+        .status,
+      403,
+    );
+
+    // Localhost is trusted → no credential needed (bypasses grants entirely).
     const local = await server.handler(
       new Request("http://app/secret"),
       // deno-lint-ignore no-explicit-any
@@ -154,7 +185,7 @@ Deno.test("global guard: deny-by-default for controllers, @Public exempts", asyn
     assertEquals(local.status, 200);
     await server.stop();
   } finally {
-    Deno.env.delete("INFRA_BASE_URL");
+    Deno.env.delete("INFRA_URL");
     await infra.stop();
   }
 });
@@ -183,7 +214,7 @@ Deno.test("a forged in-process header on a network request cannot bypass auth (s
 
 Deno.test("/_token: exchanges an opaque manual token for a session bearer", async () => {
   const infra = startStubInfra(signer);
-  Deno.env.set("INFRA_BASE_URL", infra.url);
+  Deno.env.set("INFRA_URL", infra.url);
   try {
     const port = portCounter++;
     const server = await bootstrapServer("test-app", AppModule, {
@@ -210,7 +241,7 @@ Deno.test("/_token: exchanges an opaque manual token for a session bearer", asyn
     assertEquals(bad.status, 400);
     await server.stop();
   } finally {
-    Deno.env.delete("INFRA_BASE_URL");
+    Deno.env.delete("INFRA_URL");
     await infra.stop();
   }
 });
@@ -235,7 +266,7 @@ Deno.test("/_token: 503 when no infra is configured", async () => {
 
 Deno.test("docs: shell is public, spec /json is token-gated (seeded via ?token)", async () => {
   const infra = startStubInfra(signer);
-  Deno.env.set("INFRA_BASE_URL", infra.url);
+  Deno.env.set("INFRA_URL", infra.url);
   try {
     const port = portCounter++;
     const server = await bootstrapServer("test-app", AppModule, { port });
@@ -263,7 +294,7 @@ Deno.test("docs: shell is public, spec /json is token-gated (seeded via ?token)"
     assertEquals((await ok.json()).openapi !== undefined || true, true);
     await server.stop();
   } finally {
-    Deno.env.delete("INFRA_BASE_URL");
+    Deno.env.delete("INFRA_URL");
     await infra.stop();
   }
 });
@@ -519,7 +550,7 @@ Deno.test("boot awaits the revocation poll: revokeAll is fresh before the first 
   // flag MUST already reflect that — so a network request carrying a cached session bearer is
   // rejected (force re-exchange), not authorized against the stale initial revokeAll=false.
   const infra = startSlowRevokeInfra(signer, 150);
-  Deno.env.set("INFRA_BASE_URL", infra.url);
+  Deno.env.set("INFRA_URL", infra.url);
   try {
     const port = portCounter++;
     const server = await bootstrapServer("test-app", GuardModule, {
@@ -544,7 +575,7 @@ Deno.test("boot awaits the revocation poll: revokeAll is fresh before the first 
     );
     await server.stop();
   } finally {
-    Deno.env.delete("INFRA_BASE_URL");
+    Deno.env.delete("INFRA_URL");
     await infra.stop();
   }
 });

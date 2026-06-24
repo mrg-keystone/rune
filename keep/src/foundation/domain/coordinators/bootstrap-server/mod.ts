@@ -33,7 +33,6 @@ import {
   healConfigured,
 } from "@foundation/domain/business/heal/mod.ts";
 import { appModule } from "@foundation/domain/business/endpoint-decorator/mod.ts";
-import { createFirebaseVerifier } from "@foundation/domain/business/firebase-auth/mod.ts";
 import {
   createDocsJsonHandler,
   injectDocsScript,
@@ -65,10 +64,11 @@ interface BootstrapOptions {
   swagger?: boolean | { filters: string[] };
 }
 
-// infra is the minting + signing authority; keep is a verifier + exchange broker. These point keep
-// at infra. Read from the environment so they never live in the (public) package source.
-const INFRA_BASE_URL_ENV = "INFRA_BASE_URL"; // exchange + revocation poll (+ JWKS, if not overridden)
-const INFRA_JWKS_URL_ENV = "INFRA_JWKS_URL"; // explicit JWKS URL (else derived from the base)
+// infra is the minting + signing authority; keep is a verifier + exchange broker. One env var points
+// keep at infra — it serves grants, the JWKS to verify session bearers, opaque-token exchange, and
+// the revocation poll. Read from the environment so it never lives in the (public) package source.
+const INFRA_URL_ENV = "INFRA_URL"; // exchange + revocation poll + JWKS (the single infra endpoint)
+const INFRA_JWKS_URL_ENV = "INFRA_JWKS_URL"; // optional explicit JWKS URL (else derived from INFRA_URL)
 const HONOR_SKELETON_ENV = "HONOR_SKELETON"; // default true; set false for the infra service itself
 
 // Defaults for the revocation poll cadence and how long a fetched JWKS is trusted before refetch.
@@ -252,9 +252,9 @@ export class BootstrapServer {
     });
 
     // infra connection: the exchange broker + JWKS verifier + revocation poller. Without an
-    // INFRA_BASE_URL, keep cannot exchange opaque tokens or verify session bearers — only Firebase
-    // (if configured) and trusted origins authorize. Mirrors the old "no MANUAL_KEY" fail-closed.
-    const infraBaseUrl = Deno.env.get(INFRA_BASE_URL_ENV) ?? "";
+    // INFRA_URL, keep cannot exchange opaque tokens or verify session bearers — only trusted origins
+    // (in-process / localhost) authorize, and every network call fails closed.
+    const infraBaseUrl = Deno.env.get(INFRA_URL_ENV) ?? "";
     const infraClient: InfraClient | undefined = infraBaseUrl
       ? createInfraClient({
         baseUrl: infraBaseUrl,
@@ -263,7 +263,7 @@ export class BootstrapServer {
       : undefined;
     if (!infraClient) {
       warnOnce(
-        `[${appName}] ${INFRA_BASE_URL_ENV} not set — opaque-token exchange and session-bearer verification are disabled (only Firebase / trusted origins authorize).`,
+        `[${appName}] ${INFRA_URL_ENV} not set — opaque-token exchange and session-bearer verification are disabled (only trusted origins authorize).`,
       );
     }
     // Offline session-bearer verifier, backed by infra's JWKS (cached, kid-selected, alg-from-key).
@@ -330,18 +330,9 @@ export class BootstrapServer {
       }
     }
 
-    // Optional Firebase Auth: a request authorizes with EITHER a signed token OR a Firebase
-    // ID token. Verifying ID tokens needs only the project id (signature is checked against
-    // Google's public certs). Unset ⇒ Firebase path is off (signed tokens only).
-    const firebaseProjectId = Deno.env.get("FIREBASE_PROJECT_ID") ?? "";
-    const firebaseVerifier = firebaseProjectId
-      ? createFirebaseVerifier({ projectId: firebaseProjectId })
-      : undefined;
-    if (!firebaseVerifier) {
-      warnOnce(
-        `[${appName}] FIREBASE_PROJECT_ID not set — Firebase Auth disabled; only signed tokens are accepted on network requests.`,
-      );
-    }
+    // Network callers authorize with an infra-signed session bearer (verified offline via infra's
+    // JWKS) or an opaque token exchanged at infra — both reached through INFRA_URL. There is no
+    // direct Firebase path here: users sign in at infra (which mints the bearer); keep only verifies.
 
     // Process-private key that identifies in-process (BackendClient) requests. Minted per boot,
     // shared only between the in-process client and the auth middleware; never leaves the process.
@@ -373,7 +364,7 @@ export class BootstrapServer {
       (async (c: Context) => {
         if (!infraClient) {
           return c.json({
-            error: "Token exchange unavailable — INFRA_BASE_URL is not set.",
+            error: "Token exchange unavailable — INFRA_URL is not set.",
           }, 503);
         }
         let body: Record<string, unknown> = {};
@@ -546,7 +537,6 @@ export class BootstrapServer {
           createDocsJsonHandler({
             specJson: JSON.stringify(doc),
             verifier,
-            firebaseVerifier,
             infraClient,
             logger: log,
             trustLocalhost,
@@ -1028,7 +1018,6 @@ export class BootstrapServer {
       appName,
       verifier,
       internalKey,
-      firebaseVerifier,
       infraClient,
       revokeAll: () => revokeAllState.value,
       honorSkeleton,

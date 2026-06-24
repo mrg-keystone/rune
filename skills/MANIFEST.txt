@@ -1,0 +1,15 @@
+skills/rune:build/SKILL.md
+skills/rune:build/agents/method-impl.md
+skills/rune:build/agents/test-author.md
+skills/rune:build/agents/validator.md
+skills/rune:cake/SKILL.md
+skills/rune:cake/agents/e2e-driver.md
+skills/rune:cake/references/cake.md
+skills/rune:cake/references/heal-rules.md
+skills/rune:docs/SKILL.md
+skills/rune:docs/references/swagger.md
+skills/rune:framework/SKILL.md
+skills/rune:framework/references/auth.md
+skills/rune:framework/references/deployment.md
+skills/rune:framework/references/endpoints.md
+skills/rune:spec/SKILL.md

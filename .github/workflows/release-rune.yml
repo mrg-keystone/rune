@@ -10,8 +10,9 @@ name: release-rune
 # `paths-ignore` stops pushes that touch ONLY runtime-owned or non-binary facets
 # (the keep/ runtime source, the e2e/examples/docs/todos facets, incl. the
 # runtime's auto-bump commit) from rebuilding rune's 3 binary targets. The rune
-# binary's real inputs are src/, lang/ (incl. keywords.json), skills/ (the one
-# skill), and scripts/ (the gen scripts) — none of which are ignored here. NOTE: GitHub does not apply
+# binary's real inputs are src/, lang/ (incl. keywords.json), skills/ (the five
+# skills: rune:spec/build/framework/cake/docs), and scripts/ (the gen scripts) —
+# none of which are ignored here. NOTE: GitHub does not apply
 # paths-ignore to TAG pushes, so `v*` snapshot releases still build. If a `v*`
 # tag is ever unexpectedly skipped, move the tag trigger into its own workflow.
 on:
@@ -72,14 +73,14 @@ jobs:
         run: codesign -s - --force dist/rune dist/rune-lsp dist/rune-syntax
 
       - name: Package
-        # The Claude Code skill ships INSIDE the tarball as a skill/ dir
-        # (SKILL.md + references/) so a pinned install gets the skill matching its
-        # binaries (install.sh extracts the skill/ dir and places it). evals/ is
-        # dev-only and not shipped.
+        # The Claude Code skills ship INSIDE the tarball as a skill/ dir holding
+        # all five skill folders (rune:spec/build/framework/cake/docs), so a
+        # pinned install gets the skills matching its binaries (install.sh
+        # extracts the skill/ dir and installs each folder). evals/ is dev-only
+        # and not shipped.
         run: |
           rm -rf dist/skill && mkdir -p dist/skill
-          cp skills/rune/SKILL.md dist/skill/
-          cp -R skills/rune/references dist/skill/
+          cp -R skills/. dist/skill/
           tar -C dist -czf "rune-${{ matrix.target }}.tar.gz" rune rune-lsp rune-syntax skill
           shasum -a 256 "rune-${{ matrix.target }}.tar.gz" > "rune-${{ matrix.target }}.tar.gz.sha256"
 
@@ -98,8 +99,8 @@ jobs:
     with:
       artifact-pattern: release-*
       # rune's asset surface is a contract with install.sh + `rune update`: the
-      # skill ships as a skill/ dir INSIDE each tarball (SKILL.md + references/),
-      # not as a separately packed asset — so pack-skills stays off.
+      # skills ship as a skill/ dir INSIDE each tarball (all five skill folders),
+      # not as separately packed assets — so pack-skills stays off.
       pack-skills: false
       extra-assets: |
         scripts/install.sh

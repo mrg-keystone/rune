@@ -15,7 +15,7 @@ import { exportSPKI, generateKeyPair, type KeyLike, SignJWT } from "npm:jose@5";
 const PORT = 8173;
 const INFRA_PORT = 8174;
 const BASE = `http://127.0.0.1:${PORT}`;
-const INFRA_BASE_URL = `http://127.0.0.1:${INFRA_PORT}`;
+const INFRA_URL = `http://127.0.0.1:${INFRA_PORT}`;
 const KID = "infra-dev-2026";
 
 // Stub infra signer: an RS256 keypair published as a JWKS (SPKI PEM).
@@ -64,7 +64,7 @@ const dev = new Deno.Command("deno", {
   ],
   env: {
     ...Deno.env.toObject(),
-    INFRA_BASE_URL,
+    INFRA_URL,
     TRUST_LOCALHOST: "false",
   },
   stdout: "null",

@@ -1,7 +1,8 @@
 #!/usr/bin/env sh
 # Install the rune CLI (rune + rune-lsp + rune-syntax) from GitHub Releases,
-# plus the rune Claude Code skill (SKILL.md + references/) into user scope
-# (~/.claude/skills/rune). The skill covers both layers — spec and runtime.
+# plus the rune Claude Code skills (rune:spec, rune:build, rune:framework,
+# rune:cake, rune:docs) into user scope (~/.claude/skills/). Between them the
+# skills cover both layers — spec authoring and the generated runtime.
 #
 # Installs CLEANLY: it first UNINSTALLS any existing rune (every known location),
 # then installs one fresh copy — so you never accumulate stale/duplicate binaries.
@@ -66,6 +67,10 @@ install_skills() {
     return 0
   fi
   mkdir -p "$SKILLS_DIR"
+  # Cutover: the monolith `rune` skill was split into rune:spec/build/framework/
+  # cake/docs. Remove a stale colon-less `rune` so it can't linger as a sixth
+  # skill whose triggers collide with the five (harmless if it was never there).
+  [ -d "$SKILLS_DIR/rune" ] && rm -rf "$SKILLS_DIR/rune"
   for d in "$1"/*/; do
     [ -d "$d" ] || continue
     install_skill "${d%/}"
@@ -165,22 +170,36 @@ if [ "$os" = "Darwin" ]; then
   for b in $BINS; do xattr -d com.apple.quarantine "$BINDIR/$b" 2>/dev/null || true; done
 fi
 
-# The skill (SKILL.md + references/) ships as a skill/ dir inside the release
-# tarball, version-matched to the binaries. Fallback for releases that predate
-# the dir: fetch SKILL.md + references/ from the repo at $RUNE_REF.
+# The skills ship as a skill/ dir inside the release tarball, version-matched to
+# the binaries — that dir CONTAINS all five skill folders (rune:spec, rune:build,
+# rune:framework, rune:cake, rune:docs), so install_skills replaces each in turn.
+# Fallback for releases that predate the dir: fetch skills/MANIFEST.txt from the
+# repo at $RUNE_REF and curl each listed repo-relative path into a staging tree
+# mirroring skills/, then install every folder under it.
 if [ -d "$tmp/pkg/skill" ]; then
-  install_skill "$tmp/pkg/skill" rune
+  install_skills "$tmp/pkg/skill"
+elif curl -fsSL "https://raw.githubusercontent.com/$REPO/$RUNE_REF/skills/MANIFEST.txt" \
+       -o "$tmp/MANIFEST.txt" 2>/dev/null; then
+  # Each line is a repo-relative path like skills/rune:spec/SKILL.md. Mirror the
+  # skills/ layout under $tmp/skill so install_skills sees one folder per skill.
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    case "$path" in skills/*) rel="${path#skills/}" ;; *) continue ;; esac
+    dst="$tmp/skill/$rel"
+    mkdir -p "$(dirname "$dst")"
+    curl -fsSL "https://raw.githubusercontent.com/$REPO/$RUNE_REF/$path" \
+      -o "$dst" 2>/dev/null || true
+  done < "$tmp/MANIFEST.txt"
+  install_skills "$tmp/skill"
 else
-  mkdir -p "$tmp/skill/references"
-  if curl -fsSL "https://raw.githubusercontent.com/$REPO/$RUNE_REF/skills/rune/SKILL.md" \
-       -o "$tmp/skill/SKILL.md" 2>/dev/null; then
-    for ref in process auth deployment; do
-      curl -fsSL "https://raw.githubusercontent.com/$REPO/$RUNE_REF/skills/rune/references/$ref.md" \
-        -o "$tmp/skill/references/$ref.md" 2>/dev/null || true
-    done
-    install_skill "$tmp/skill" rune
+  # No manifest either — fetch just rune:spec/SKILL.md so something installs.
+  mkdir -p "$tmp/skill/rune:spec"
+  if curl -fsSL "https://raw.githubusercontent.com/$REPO/$RUNE_REF/skills/rune:spec/SKILL.md" \
+       -o "$tmp/skill/rune:spec/SKILL.md" 2>/dev/null; then
+    install_skills "$tmp/skill"
+    echo "rune: skills manifest unavailable — installed rune:spec only." >&2
   else
-    echo "rune: could not fetch the rune skill — binaries installed, skill left as-is." >&2
+    echo "rune: could not fetch the rune skills — binaries installed, skills left as-is." >&2
   fi
 fi
 
