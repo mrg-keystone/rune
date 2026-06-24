@@ -11,6 +11,8 @@ src/core/dto/lsp-config.ts
 # scratch / os
 .claude/
 .playwright-mcp/
+skills/*-workspace/
+.skill-active
 .DS_Store
 .env
 .env*

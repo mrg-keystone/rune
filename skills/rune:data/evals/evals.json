@@ -1,0 +1,19 @@
+{
+  "skill_name": "rune:data",
+  "evals": [
+    {
+      "id": 0,
+      "name": "audits-immutability-and-store-split",
+      "prompt": "Design the data structure for the audits module. The spec is in spec/audits.rune (with spec/core.rune) and there's a UI prototype at spec/audits.html. Figure out where each entity should be stored and produce the data design.",
+      "expected_output": "spec/data.json that (a) assigns audit's queue/list+live views to Firestore and the by-id detail lookup to Deno KV (projection), and (b) catches that audit.appeal mutates the audit in place and restructures it to an append-only reviews collection (audit + appeal as separate appended objects, original never edited).",
+      "files": ["fixtures/audits/spec/core.rune", "fixtures/audits/spec/audits.rune", "fixtures/audits/spec/audits.html"]
+    },
+    {
+      "id": 1,
+      "name": "shop-orders-store-selection",
+      "prompt": "I need the persistence design for the orders module. Specs are in spec/ (core.rune, orders.rune) and the UI prototype is spec/orders.html. Pick Firebase or Deno KV per entity and write it up.",
+      "expected_output": "spec/data.json recognizing order.place only saves a fresh id (already append-friendly); order-history list → Firestore, receipt by-id lookup → Deno KV (projection), and the stock counter → Deno KV atomic.",
+      "files": ["fixtures/shop/spec/core.rune", "fixtures/shop/spec/orders.rune", "fixtures/shop/spec/orders.html"]
+    }
+  ]
+}

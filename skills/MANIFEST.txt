@@ -6,6 +6,10 @@ skills/rune:cake/SKILL.md
 skills/rune:cake/agents/e2e-driver.md
 skills/rune:cake/references/cake.md
 skills/rune:cake/references/heal-rules.md
+skills/rune:data/SKILL.md
+skills/rune:data/scripts/scan_spec.ts
+skills/rune:data/scripts/validate_data.ts
+skills/rune:data/scripts/render_review.ts
 skills/rune:docs/SKILL.md
 skills/rune:docs/references/swagger.md
 skills/rune:framework/SKILL.md
