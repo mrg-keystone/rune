@@ -1,0 +1,26 @@
+[MOD] sample
+
+[REQ] fragment.ingest(FragmentDto): AckDto
+    db:fragment.save(FragmentDto): AckDto
+      write-failed
+    [RET] AckDto
+
+[ENT] http.ingest(FragmentDto): AckDto
+    [REQ] fragment.ingest(FragmentDto): AckDto
+
+[DTO] FragmentDto: service
+    one tier's fragment, posted to the collector (e.g. web, backend)
+[DTO] AckDto: ok
+    acknowledgement that the fragment was stored
+
+[TYP:example=backend] service: string
+    the tier that produced the span (e.g. web, backend)
+[TYP] ok: boolean
+    whether the ingest was accepted
+
+[NON] fragment
+    a profiler trace fragment from one tier (e.g. web)
+
+[SRV] (SIDECAR)db: DB_URL
+    the datastore, e.g. a local sqlite file
+    @docs https://docs.example.com/db

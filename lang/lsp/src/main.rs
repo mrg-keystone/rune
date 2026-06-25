@@ -151,16 +151,20 @@ impl Backend {
             }
         }
 
-        // 80 column limit.
+        // 80 column limit. Count CHARACTERS, not bytes — a multibyte char (e.g.
+        // an em-dash, 1 char / 3 UTF-8 bytes) must not be counted as 3 columns,
+        // else a line that is exactly 80 columns wide false-positives. Mirrors the
+        // engine, which measures display width in characters.
         for (line_num, line) in text.lines().enumerate() {
-            if line.len() > 80 {
+            let cols = line.chars().count();
+            if cols > 80 {
                 diagnostics.push(Diagnostic {
                     range: Range {
                         start: Position { line: line_num as u32, character: 80 },
-                        end: Position { line: line_num as u32, character: line.len() as u32 },
+                        end: Position { line: line_num as u32, character: cols as u32 },
                     },
                     severity: Some(DiagnosticSeverity::ERROR),
-                    message: format!("Line exceeds 80 columns ({} chars)", line.len()),
+                    message: format!("Line exceeds 80 columns ({} chars)", cols),
                     ..Default::default()
                 });
             }
@@ -293,6 +297,11 @@ impl Backend {
         let mut method_signatures: HashMap<String, (usize, Vec<String>, String)> = HashMap::new();
         let mut poly_stack: Vec<usize> = Vec::new(); // indents of open [PLY] scopes
         let mut in_req = false;
+        // True while we are in an [ENT]'s dispatch body: an [ENT] line is followed
+        // by an INDENTED `[REQ] noun.verb(...)` that REFERENCES the [REQ] it
+        // dispatches to (the documented form, spec.md §[ENT]). That reference is
+        // not a declaration, so it must not be flagged as misplaced or duplicate.
+        let mut in_ent = false;
         let mut last_step_indent: Option<usize> = None;
         let mut last_was_req = false;
         let mut consecutive_empty: usize = 0;
@@ -319,6 +328,7 @@ impl Backend {
             match &parsed_line.kind {
                 LineKind::Mod { .. } => {
                     in_req = false;
+                    in_ent = false;
                     poly_stack.clear();
                     last_was_req = false;
                     consecutive_empty = 0;
@@ -335,12 +345,20 @@ impl Backend {
                         diagnostics.push(diag_err(line_num, format!("[ENT] output must be a DTO, got '{}'", output)));
                     }
                     in_req = false;
+                    in_ent = true;
                     poly_stack.clear();
                     last_was_req = false;
                     consecutive_empty = 0;
                 }
 
                 LineKind::Req { noun, verb, input, output, indent, modifier, .. } => {
+                    // An INDENTED [REQ] directly under an [ENT] is that entrypoint's
+                    // dispatch reference, not a new declaration — the engine accepts
+                    // it, so skip the column/duplicate checks to stay in lock-step.
+                    if in_ent && *indent != 0 {
+                        continue;
+                    }
+                    in_ent = false;
                     if let Some(m) = modifier {
                         // Parity with the TS parser: the core modifier keeps its
                         // specific message; any other modifier gets the generic one.

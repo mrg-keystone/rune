@@ -372,8 +372,10 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
             continue;
         }
 
-        // NON description line (4-space indent, plain text after [NON])
-        if in_non_block && actual_indent == 4 && !trimmed.contains('.') && !trimmed.starts_with('[') {
+        // NON description line (4-space indent, plain text after [NON]). Block
+        // state only — NO period/paren heuristic (like [MOD]/[SRV] below and the
+        // TS engine), so prose containing "e.g." or "put()" stays a description.
+        if in_non_block && actual_indent == 4 && !trimmed.starts_with('[') {
             results.push(ParsedLine {
                 line_num,
                 kind: LineKind::NonDesc {
@@ -384,8 +386,10 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
             continue;
         }
 
-        // TYP description line (4-space indent, plain text after [TYP])
-        if in_typ_block && actual_indent == 4 && !trimmed.contains('.') && !trimmed.starts_with('[') {
+        // TYP description line (4-space indent, plain text after [TYP]). Block
+        // state only — NO period/paren heuristic, so prose like "(e.g. web,
+        // backend)" is a description, not a mis-parsed step.
+        if in_typ_block && actual_indent == 4 && !trimmed.starts_with('[') {
             results.push(ParsedLine {
                 line_num,
                 kind: LineKind::TypDesc {
@@ -396,8 +400,10 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
             continue;
         }
 
-        // DTO description line (4-space indent, plain text after [DTO])
-        if in_dto_block && actual_indent == 4 && !trimmed.contains('.') && !trimmed.starts_with('[') {
+        // DTO description line (4-space indent, plain text after [DTO]). Block
+        // state only — NO period/paren heuristic, matching [MOD]/[SRV] and the
+        // TS engine.
+        if in_dto_block && actual_indent == 4 && !trimmed.starts_with('[') {
             results.push(ParsedLine {
                 line_num,
                 kind: LineKind::DtoDesc {

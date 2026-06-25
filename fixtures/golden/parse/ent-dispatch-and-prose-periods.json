@@ -1,0 +1,113 @@
+{
+  "module": "sample",
+  "moduleDescription": null,
+  "reqs": [
+    {
+      "noun": "fragment",
+      "verb": "ingest",
+      "input": "FragmentDto",
+      "output": "AckDto",
+      "steps": [
+        {
+          "kind": "boundary",
+          "service": "db",
+          "noun": "fragment",
+          "verb": "save",
+          "params": [
+            "FragmentDto"
+          ],
+          "output": "AckDto",
+          "isStatic": false,
+          "faults": [
+            "write-failed"
+          ],
+          "line": 3
+        },
+        {
+          "kind": "ret",
+          "value": "AckDto",
+          "line": 5
+        }
+      ],
+      "line": 2
+    }
+  ],
+  "ents": [
+    {
+      "surface": "http",
+      "action": "ingest",
+      "input": "FragmentDto",
+      "output": "AckDto",
+      "modifier": null,
+      "line": 7,
+      "delegate": {
+        "noun": "fragment",
+        "verb": "ingest"
+      }
+    }
+  ],
+  "dtos": [
+    {
+      "name": "FragmentDto",
+      "properties": [
+        "service"
+      ],
+      "description": "one tier's fragment, posted to the collector (e.g. web, backend)",
+      "isCore": false,
+      "isOpen": false,
+      "line": 10
+    },
+    {
+      "name": "AckDto",
+      "properties": [
+        "ok"
+      ],
+      "description": "acknowledgement that the fragment was stored",
+      "isCore": false,
+      "isOpen": false,
+      "line": 12
+    }
+  ],
+  "typs": [
+    {
+      "name": "service",
+      "typeName": "string",
+      "description": "the tier that produced the span (e.g. web, backend)",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [
+        "example=backend"
+      ],
+      "line": 15
+    },
+    {
+      "name": "ok",
+      "typeName": "boolean",
+      "description": "whether the ingest was accepted",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 17
+    }
+  ],
+  "nons": [
+    {
+      "name": "fragment",
+      "description": "a profiler trace fragment from one tier (e.g. web)",
+      "line": 20
+    }
+  ],
+  "srvs": [
+    {
+      "transport": "SIDECAR",
+      "name": "db",
+      "envVars": [
+        "DB_URL"
+      ],
+      "description": "the datastore, e.g. a local sqlite file",
+      "docsLink": "https://docs.example.com/db",
+      "line": 23
+    }
+  ],
+  "errors": []
+}
