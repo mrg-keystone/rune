@@ -820,19 +820,26 @@ async function ensureGhostStubs(
 // ---- heal-rules (keep cake self-healer) ------------------------------------
 //
 // A keep app's cake turns endpoint failures into one-click fixes via a
-// per-project rules file: fixtures/heal-rules.json, keyed on the fault slug
+// per-project rules file: spec/misc/heal-rules.json, keyed on the fault slug
 // (the failed response body's `message`). rune knows every endpoint's slugs
 // from the spec, so it scaffolds the file — one entry per slug, pre-filling a
 // `run-step` where the slug names an obvious precondition, a TODO note
-// otherwise. The dir mirrors keep's cake config (fixtures/cake.json) and obeys
-// the same KEEP_FIXTURES_DIR override.
+// otherwise. The dir mirrors keep's cake config (spec/misc/cake.json): it is
+// the project's spec/misc/ when a spec/ dir exists, else the legacy fixtures/,
+// and obeys the same KEEP_FIXTURES_DIR override.
 
-function fixturesDir(): string {
+function fixturesDir(root: string): string {
   const env = Deno.env.get("KEEP_FIXTURES_DIR");
-  return env && env.trim() ? env.trim() : "fixtures";
+  if (env && env.trim()) return env.trim();
+  try {
+    if (Deno.statSync(join(root, "spec")).isDirectory) return "spec/misc";
+  } catch {
+    // no spec/ dir (or stat not permitted) — fall through to the legacy default
+  }
+  return "fixtures";
 }
 
-/** Reconcile fixtures/heal-rules.json with the project's endpoint fault slugs.
+/** Reconcile spec/misc/heal-rules.json with the project's endpoint fault slugs.
  * Creates it when endpoints declare slugs, merges new slugs into an existing
  * file without ever clobbering human/LLM edits, and reports slugs the spec no
  * longer declares (kept, never auto-deleted). Returns report notes; never
@@ -843,7 +850,7 @@ export async function ensureHealRules(
   written?: string[],
 ): Promise<string[]> {
   const notes: string[] = [];
-  const dir = fixturesDir();
+  const dir = fixturesDir(root);
   const path = join(root, dir, "heal-rules.json");
   const existingRaw = await readMaybe(path);
 
@@ -1009,7 +1016,7 @@ export function formatRunAllVerdict(
   }
   L.push(
     `    ${YELLOW}→ fix the spec/bindings until run-all is green, or enrich${RESET}`,
-    `    ${YELLOW}  fixtures/heal-rules.json where the failure is environmental.${RESET}`,
+    `    ${YELLOW}  spec/misc/heal-rules.json where the failure is environmental.${RESET}`,
   );
   return L;
 }
@@ -1102,7 +1109,7 @@ async function runAllGate(
 
 /** The project's heal-rules file, parsed leniently (null when absent/foreign). */
 async function loadProjectHealRules(root: string): Promise<HealRules | null> {
-  const raw = await readMaybe(join(root, fixturesDir(), "heal-rules.json"));
+  const raw = await readMaybe(join(root, fixturesDir(root), "heal-rules.json"));
   if (raw === null) return null;
   try {
     return readHealRules(JSON.parse(raw));

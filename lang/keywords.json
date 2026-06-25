@@ -1325,12 +1325,30 @@
       }
     },
     "spec/": {
-      "$desc": "Rune spec files — one per module (the `rune init` layout)",
+      "$desc": "rune staging area — authored specs (runes/), data design + cake artifacts (misc/), UI prototype (ui/)",
       "<name>": {
         "ext": [
           ".rune"
         ],
-        "desc": "rune spec for a module"
+        "desc": "rune spec for a module (legacy flat layout — prefer spec/runes/)",
+        "optional": true
+      },
+      "runes/": {
+        "$desc": "Rune spec files — one per module (the canonical authoring home; core.rune holds shared [SRV]s)",
+        "<name>": {
+          "ext": [
+            ".rune"
+          ],
+          "desc": "rune spec for a module"
+        }
+      },
+      "misc/": {
+        "$desc": "data design (data.json, data.review.html) + keep cake artifacts (cake.json, heal-rules.json, scenarios/)",
+        "$ignore": "*"
+      },
+      "ui/": {
+        "$desc": "sprig UI prototype + design system (sprig:prototype / sprig:design output)",
+        "$ignore": "*"
       }
     },
     "specs/": {
@@ -1343,7 +1361,7 @@
       }
     },
     "fixtures/": {
-      "$desc": "Test fixtures and keep cake artifacts (cake.json, heal-rules.json)",
+      "$desc": "Legacy cake-artifact home (used when the project has no spec/ dir): cake.json, heal-rules.json",
       "cake": {
         "ext": [
           ".json"

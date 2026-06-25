@@ -19,7 +19,7 @@ Every *structured* failure shape becomes one-click fixes with **Apply** buttons:
 | `timeout` / `unauthorized` / `rate-limited` (no project rule) | retry-with-reason |
 | anything else | run the declared dependencies that aren't green |
 
-## Project rules — `fixtures/heal-rules.json`
+## Project rules — `spec/misc/heal-rules.json`
 
 Slug diagnosis is **project vocabulary, not framework knowledge** (which endpoint
 un-blocks `not-enabled` is *this app's* business), so keep ships no domain slugs.
@@ -69,7 +69,7 @@ The project declares them in a committed file keep loads through the localhost-o
 
 ### The `todo: true` marker — what rune writes at sync
 
-**`rune sync` generates a starter `fixtures/heal-rules.json`** from the spec's
+**`rune sync` generates a starter `spec/misc/heal-rules.json`** from the spec's
 declared **fault slugs** — one entry per slug, stamped with **`todo: true`** so it's
 visible as un-enriched scaffolding. The merge is **don't-clobber**: hand edits and
 appended rules survive re-syncs; sync only adds entries for newly-declared slugs.

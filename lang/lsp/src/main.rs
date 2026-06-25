@@ -24,12 +24,15 @@ fn full_sync_text(changes: Vec<TextDocumentContentChangeEvent>) -> Option<String
 
 /// The project's shared [SRV] service names for the spec at `uri`. Mirrors the
 /// engine's `resolveRoot` + `loadCoreSrvs`:
-///   - root = the dir above a singular `spec/` folder, else the dir above an
-///     outermost `src/<module>/`, else the spec's own dir;
-///   - core spec = the FIRST readable of `src/core/core.rune`, `spec/core.rune`,
-///     `specs/core.rune`, flat `core.rune`, then the `.in-prog.rune` draft
-///     variants of each (a draft core still supplies shared services while it is
-///     iterated on — finalized core, listed first, wins when both exist).
+///   - root = the dir above the canonical `spec/runes/` staging dir or a singular
+///     `spec/` folder, else the dir above an outermost `src/<module>/`, else the
+///     spec's own dir;
+///   - core spec = the FIRST readable of `src/core/core.rune`, the `spec/runes/`
+///     staging dir (`spec/runes/core.rune`, `specs/runes/core.rune`), the legacy
+///     flat `spec/core.rune` / `specs/core.rune`, flat `core.rune`, then the
+///     `.in-prog.rune` draft variants of each (a draft core still supplies shared
+///     services while it is iterated on — finalized core, listed first, wins when
+///     both exist).
 /// Best-effort + filesystem-based; returns an empty set when there's no core spec.
 fn core_services_for(uri: &Url) -> HashSet<String> {
     let mut out = HashSet::new();
@@ -42,10 +45,15 @@ fn core_services_for(uri: &Url) -> HashSet<String> {
     let dir_name = |p: &std::path::Path| {
         p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string())
     };
-    // resolveRoot: a `spec/` folder is the project's staging dir (root is its
-    // parent); a spec already moved into `src/<module>/` resolves to the dir
-    // above that `src/`; otherwise the spec's own dir is the root.
-    let root = if dir_name(spec_dir).as_deref() == Some("spec") {
+    // resolveRoot: the canonical `spec/runes/` staging dir (root is two levels up,
+    // past `runes/` and `spec/`) or a singular `spec/` folder (root is its parent)
+    // is the project's staging dir; a spec already moved into `src/<module>/`
+    // resolves to the dir above that `src/`; otherwise the spec's own dir is root.
+    let root = if dir_name(spec_dir).as_deref() == Some("runes")
+        && spec_dir.parent().and_then(dir_name).as_deref() == Some("spec")
+    {
+        spec_dir.parent().unwrap().parent().unwrap().to_path_buf()
+    } else if dir_name(spec_dir).as_deref() == Some("spec") {
         spec_dir.parent().unwrap().to_path_buf()
     } else if spec_dir.parent().and_then(dir_name).as_deref() == Some("src") {
         spec_dir.parent().unwrap().parent().unwrap().to_path_buf()
@@ -54,10 +62,14 @@ fn core_services_for(uri: &Url) -> HashSet<String> {
     };
     for cand in [
         root.join("src/core/core.rune"),
+        root.join("spec/runes/core.rune"),
+        root.join("specs/runes/core.rune"),
         root.join("spec/core.rune"),
         root.join("specs/core.rune"),
         root.join("core.rune"),
         root.join("src/core/core.in-prog.rune"),
+        root.join("spec/runes/core.in-prog.rune"),
+        root.join("specs/runes/core.in-prog.rune"),
         root.join("spec/core.in-prog.rune"),
         root.join("specs/core.in-prog.rune"),
         root.join("core.in-prog.rune"),
@@ -1459,6 +1471,32 @@ mod tests {
         assert!(
             core_services_for(&draft_uri).contains("db"),
             "draft in spec/ must resolve root above spec/ and see db"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The canonical layout: specs live in `spec/runes/` (beside `spec/misc/` and
+    /// `spec/ui/`). A module spec there must hop TWO levels to the project root
+    /// and resolve `db` from `spec/runes/core.rune` — mirroring `resolveRoot` +
+    /// `loadCoreSrvs` so a `db:` boundary step doesn't squiggle in the new layout.
+    #[test]
+    fn core_services_resolve_from_the_spec_runes_staging_dir() {
+        let base = std::env::temp_dir().join("rune-lsp-core-srv-runes-test");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("spec/runes")).unwrap();
+        std::fs::write(
+            base.join("spec/runes/core.rune"),
+            "[MOD] core\n[SRV] (SIDECAR)db: DB_URL\n    the datastore\n    @docs https://example.com\n",
+        )
+        .unwrap();
+
+        let module = base.join("spec/runes/todos.rune");
+        std::fs::write(&module, "[MOD] todos\n").unwrap();
+        let uri = Url::from_file_path(&module).unwrap();
+        assert!(
+            core_services_for(&uri).contains("db"),
+            "spec/runes/ module must resolve root above spec/ and see db from spec/runes/core.rune"
         );
 
         let _ = std::fs::remove_dir_all(&base);

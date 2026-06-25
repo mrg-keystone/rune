@@ -83,11 +83,29 @@ Deno.test("resolveRoot — a singular spec/ folder resolves to the project root 
   assertEquals(resolveRoot("/p/specs/tasks.rune"), "/p/specs");
 });
 
+Deno.test("resolveRoot — the canonical spec/runes/ staging dir resolves to the project root", () => {
+  // spec/runes/ sits beside spec/misc/ and spec/ui/ under one spec/; the project
+  // root is the dir ABOVE spec/, so sync still lands code in the sibling src/.
+  assertEquals(resolveRoot("/p/spec/runes/tasks.rune"), "/p");
+  assertEquals(resolveRoot("/p/spec/runes/core.rune"), "/p");
+});
+
 Deno.test("loadCoreSrvs — finds the core spec in a spec/ folder layout", async () => {
   await withRoot(
     { "spec/core.rune": CORE, "spec/tasks.rune": "[MOD] tasks" },
     async (root) => {
       const srvs = await loadCoreSrvs(root, join(root, "spec/tasks.rune"));
+      assert(srvs !== undefined);
+      assertEquals([...srvs!.keys()].sort(), ["db", "ex"]);
+    },
+  );
+});
+
+Deno.test("loadCoreSrvs — finds the core spec in the canonical spec/runes/ staging dir", async () => {
+  await withRoot(
+    { "spec/runes/core.rune": CORE, "spec/runes/tasks.rune": "[MOD] tasks" },
+    async (root) => {
+      const srvs = await loadCoreSrvs(root, join(root, "spec/runes/tasks.rune"));
       assert(srvs !== undefined);
       assertEquals([...srvs!.keys()].sort(), ["db", "ex"]);
     },

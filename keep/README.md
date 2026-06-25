@@ -747,7 +747,7 @@ With expectations pinned, a step only goes green when the response **meets
 them**: a 200 whose body is wrong turns the step red (`expect ✗`), shows each
 check's verdict with the actual value, and stops Run all with the failing
 expectation named in the banner. Expectations ride **Save fixtures** into
-`fixtures/cake.json`, so a committed artifact is a clickable contract test:
+`spec/misc/cake.json`, so a committed artifact is a clickable contract test:
 clone the repo, open the cake, Run all — green now means the process behaves,
 not merely responds.
 
@@ -755,7 +755,7 @@ not merely responds.
 
 The **Scenarios** rail card freezes the entire walk — the active flow, every
 step's body text and params (refs intact), and skips — under a name, one JSON
-file per scenario in **`fixtures/scenarios/`** (`happy-path.json`,
+file per scenario in **`spec/misc/scenarios/`** (`happy-path.json`,
 `refund-flow.json`, …). **load** applies one over the page; **run** loads it
 and runs all. They're served and saved through the localhost-only
 `GET`/`POST /docs/_scenarios`, and CI can replay one headlessly:
@@ -784,7 +784,7 @@ overrides the auto-wiring; clearing it back to empty returns to auto.
 Endpoints declared `stub: true` carry an amber **`stub`** chip marking them as
 generated stand-ins minting placeholder values, not part of the real process.
 
-#### Module setup & the `fixtures/cake.json` artifact
+#### Module setup & the `spec/misc/cake.json` artifact
 
 `localStorage` keeps the working session, but a session is browser-local and
 disappears with the cache. The **Module setup** rail card is the durable
@@ -802,7 +802,7 @@ a setup call fails. A cross-module setup step writes its result into **that
 module's** session and the shared capture scope (the same write-back the
 map's Run all uses), so every page agrees on what happened.
 
-**Save fixtures** writes the whole configuration to **`fixtures/cake.json`**:
+**Save fixtures** writes the whole configuration to **`spec/misc/cake.json`**:
 this module's setup steps, its pinned **expectations**, plus every environment
 variable you ticked **`persist`** (a checkbox next to each variable in the
 Variables card). The file is plain JSON you can commit, so the setup and the
@@ -810,10 +810,11 @@ contract a process needs travel with the repo. On load, the cake reads it
 back — even in a fresh browser with no `localStorage` — restoring setup,
 expectations, and persisted variables as the baseline. The read/write door is
 `POST`/`GET /docs/_fixtures`, **localhost-only** like `/_run` and `/_mint`;
-the default path is `<cwd>/fixtures/cake.json` (`KEEP_FIXTURES_DIR` overrides
+the default path is `<cwd>/spec/misc/cake.json` when the project has a `spec/`
+dir, else the legacy `<cwd>/fixtures/cake.json` (`KEEP_FIXTURES_DIR` overrides
 the directory).
 
-A sibling artifact, **`fixtures/heal-rules.json`**, holds the project's tier
+A sibling artifact, **`spec/misc/heal-rules.json`**, holds the project's tier
 of the cake's heal panel: a declarative map from your API's **error slugs**
 (`"not-enabled"`, `"not-armed"`, …) to one-click fixes (`run-step`,
 `set-input`, `pick`, `retry`, `note`, …). keep ships only generic diagnosis
@@ -1006,7 +1007,7 @@ await exerciseEndpoints({ api, flow: "card", overrides: { seeds: { memberId: "m-
 - **Transient retries** (`retry: { slugs, delayMs?, attempts? }`): a failed
   response whose `body.message` matches a listed slug is re-attempted after a
   delay instead of failing the walk. `/docs/_run` derives the slugs from the
-  project's heal rules (`retry` actions in `fixtures/heal-rules.json`) plus
+  project's heal rules (`retry` actions in `spec/misc/heal-rules.json`) plus
   the built-in transients (`timeout`, `rate-limited`) — heal knowledge feeds
   the runner, not just the UI.
 - **`rateLimit`** (`{ requestsPerSecond?, maxConcurrency? }`) and
@@ -1019,7 +1020,7 @@ await exerciseEndpoints({ api, flow: "card", overrides: { seeds: { memberId: "m-
 Against a **running** server, `POST /docs/_run` (localhost-only) is the HTTP
 door to the same walk: `{ flow?, seeds?, byEndpoint?, rateLimit?,
 maxIterations?, dryRun?, scenario?, orderBy?, skip?, stream? }` —
-`scenario: "happy-path"` replays a saved `fixtures/scenarios/` file (its flow
+`scenario: "happy-path"` replays a saved `spec/misc/scenarios/` file (its flow
 + literal body fields); `orderBy: "module"` walks lane-by-lane (modules in
 docs order, topological within — forward cross-module deps converge on a
 later iteration); `skip: ["module:op", …]` excludes steps like the cake's

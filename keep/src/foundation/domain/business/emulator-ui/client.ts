@@ -298,7 +298,7 @@ export const emulatorClientJs: string = String.raw`
   // published on every successful run, referenced cross-module as {{cake:driveToStore.storeId}}.
   var GKEY = "keep:emulator:globals";
   var MODULE = DATA.title;
-  // persist: which environment variables (by name) are written to fixtures/cake.json — the
+  // persist: which environment variables (by name) are written to spec/misc/cake.json — the
   // durable artifact. Shared across pages like the rest of the scope.
   var globals = { v: 1, vars: {}, captured: {}, persist: {} };
   function loadGlobals() {
@@ -743,7 +743,7 @@ export const emulatorClientJs: string = String.raw`
   // ── expectations (per-step asserts) ─────────────────────────────────────────
   // A step is green only when the response also MEETS ITS PINNED EXPECTATIONS: an exact status
   // (optional; default any 2xx) plus body checks (path op value, values may hold {{refs}}).
-  // Persisted with the session and into fixtures/cake.json — the committable contract-test layer.
+  // Persisted with the session and into spec/misc/cake.json — the committable contract-test layer.
   function assertSpec(ep) {
     var s = state.asserts[ep.id];
     if (!s) return null;
@@ -1797,7 +1797,7 @@ export const emulatorClientJs: string = String.raw`
         html += '<div class="var-row">' +
           '<span class="var-name" data-ref="' + esc(name) + '" title="click to copy {{' + esc(name) + '}}">' + esc(name) + "</span>" +
           '<input data-uservar="' + esc(name) + '" value="' + esc(globals.vars[name]) + '">' +
-          '<label class="persist" title="save this variable to fixtures/cake.json on Save fixtures">' +
+          '<label class="persist" title="save this variable to spec/misc/cake.json on Save fixtures">' +
             '<input type="checkbox" data-persist="' + esc(name) + '"' + (persisted ? " checked" : "") + ">persist</label>" +
           '<button class="mini del-var" data-name="' + esc(name) + '">×</button>' +
         "</div>";
@@ -2138,7 +2138,7 @@ export const emulatorClientJs: string = String.raw`
     });
   }
 
-  // ── fixtures artifact (fixtures/cake.json) ──────────────────────────────────
+  // ── fixtures artifact (spec/misc/cake.json) ──────────────────────────────────
   // The durable counterpart to localStorage: setup steps (this module's slice) plus the
   // environment variables marked persist, written through the localhost-only /docs/_fixtures door.
   function persistedVars() {
@@ -2176,7 +2176,7 @@ export const emulatorClientJs: string = String.raw`
         banner("err", "Save failed — " + esc(r.v && r.v.error ? r.v.error : "HTTP " + r.res.status) + ".");
         return;
       }
-      banner("ok", "Saved fixtures/cake.json — " + patch.setup.length + " setup step(s), " + Object.keys(asserts).length + " expectation(s), " + Object.keys(vars).length + " variable(s).");
+      banner("ok", "Saved spec/misc/cake.json — " + patch.setup.length + " setup step(s), " + Object.keys(asserts).length + " expectation(s), " + Object.keys(vars).length + " variable(s).");
     }).catch(function (err) {
       if (saveBtn) saveBtn.disabled = runningAll;
       banner("err", "Save failed — " + esc(err && err.message ? err.message : String(err)) + ".");
@@ -2732,7 +2732,7 @@ export const emulatorClientJs: string = String.raw`
     }).join("; ")) + ". These steps wait on each other and can never unlock; fix their dependsOn.");
   }
   populateSetupPicker();
-  // Pull the saved artifact (fixtures/cake.json) and apply its setup + persisted variables, the
+  // Pull the saved artifact (spec/misc/cake.json) and apply its setup + persisted variables, the
   // project heal rules, and the saved scenarios. Async, localhost-only; remote fetches no-op.
   loadFixtures();
   loadHealRules();

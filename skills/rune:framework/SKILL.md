@@ -34,7 +34,7 @@ facts here are what bite.
 
 - **`rune:spec`** — author/edit the `.rune` DSL (tags, scope, DTO suffixes,
   `[TYP]` modifiers, how the spec *expresses* order/deps/flows). The seam: a
-  `rune check`-clean `spec/<m>.in-prog.rune`. Come here once you're tuning the
+  `rune check`-clean `spec/runes/<m>.in-prog.rune`. Come here once you're tuning the
   app it generates.
 - **`rune:build`** — finalize that spec (`.in-prog` → `.rune`), `rune sync`,
   fill bodies, the TDD fleet, `rune lint`, green run-all. `rune:build` *runs*

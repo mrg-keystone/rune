@@ -1,13 +1,13 @@
 #!/usr/bin/env -S deno run -A
 // validate_data.ts — deterministic gate for a rune:data design.
 //
-// Checks spec/data.json against the schema AND for completeness against the
+// Checks spec/misc/data.json against the schema AND for completeness against the
 // spec (every [NON] entity must be designed). Catches the model drifting from
 // the contract — ad-hoc shapes, missing entities, an `aggregate` that smuggled
 // in an event ledger, an `overwrite-justified` with no `why`. Exit 0 = clean,
 // 1 = errors. Warnings never fail the build but are printed.
 //
-// Usage: deno run -A validate_data.ts spec/data.json [spec/ or spec/*.rune ...]
+// Usage: deno run -A validate_data.ts spec/misc/data.json [spec/runes/ or spec/runes/*.rune ...]
 //   (pass the spec path(s) to enable entity-coverage checking)
 
 const STORES = new Set(["firestore", "denokv"]);
@@ -19,12 +19,22 @@ const warns: string[] = [];
 const E = (m: string) => errs.push(m);
 const W = (m: string) => warns.push(m);
 
+async function collectRunes(dir: string, out: string[]): Promise<void> {
+  // Recurse so a bare `spec/` reaches `spec/runes/*.rune` (the canonical staging
+  // dir) and skips the sibling `spec/misc/` + `spec/ui/`, which hold no specs.
+  for await (const e of Deno.readDir(dir)) {
+    const p = `${dir.replace(/\/$/, "")}/${e.name}`;
+    if (e.isDirectory) await collectRunes(p, out);
+    else if (e.isFile && e.name.endsWith(".rune")) out.push(p);
+  }
+}
+
 async function specEntities(paths: string[]): Promise<Set<string>> {
   const out = new Set<string>();
   for (const p of paths) {
     const info = await Deno.stat(p).catch(() => null);
     const files: string[] = [];
-    if (info?.isDirectory) { for await (const e of Deno.readDir(p)) if (e.name.endsWith(".rune")) files.push(`${p.replace(/\/$/, "")}/${e.name}`); }
+    if (info?.isDirectory) await collectRunes(p, files);
     else if (info?.isFile) files.push(p);
     for (const f of files) {
       const t = await Deno.readTextFile(f);
@@ -39,7 +49,7 @@ async function specEntities(paths: string[]): Promise<Set<string>> {
 
 async function main() {
   const [dataPath, ...specPaths] = Deno.args;
-  if (!dataPath) { console.error("usage: validate_data.ts spec/data.json [spec/ ...]"); Deno.exit(2); }
+  if (!dataPath) { console.error("usage: validate_data.ts spec/misc/data.json [spec/runes/ ...]"); Deno.exit(2); }
 
   let doc: any;
   try { doc = JSON.parse(await Deno.readTextFile(dataPath)); }

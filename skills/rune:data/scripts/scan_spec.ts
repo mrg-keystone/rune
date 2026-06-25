@@ -11,8 +11,9 @@
 // missed mutation silently corrupts the design. The store/immutability
 // DECISIONS stay with the model — this only hands it a complete, accurate map.
 //
-// Usage:  deno run -A scan_spec.ts spec/audits.rune [spec/core.rune ...]
-//         deno run -A scan_spec.ts spec/            (scans every *.rune in dir)
+// Usage:  deno run -A scan_spec.ts spec/runes/audits.rune [spec/runes/core.rune ...]
+//         deno run -A scan_spec.ts spec/runes/      (scans every *.rune under dir)
+//         deno run -A scan_spec.ts spec/            (recurses into spec/runes/ etc.)
 
 interface Step { raw: string; kind: "boundary" | "static" | "instance" | "new" | "other"; service?: string; noun?: string; verb?: string; }
 interface Req { name: string; input: string; output: string; steps: Step[]; }
@@ -30,13 +31,20 @@ interface Inventory {
 
 async function collectFiles(args: string[]): Promise<string[]> {
   const out: string[] = [];
+  // Recurse so a bare `spec/` finds `spec/runes/*.rune` (the canonical staging
+  // dir) while ignoring the sibling `spec/misc/` (data + cake artifacts) and
+  // `spec/ui/` (the sprig prototype), which hold no `.rune` files.
+  async function walkDir(dir: string): Promise<void> {
+    for await (const e of Deno.readDir(dir)) {
+      const p = `${dir.replace(/\/$/, "")}/${e.name}`;
+      if (e.isDirectory) await walkDir(p);
+      else if (e.isFile && e.name.endsWith(".rune")) out.push(p);
+    }
+  }
   for (const a of args) {
     const info = await Deno.stat(a).catch(() => null);
-    if (info?.isDirectory) {
-      for await (const e of Deno.readDir(a)) {
-        if (e.isFile && e.name.endsWith(".rune")) out.push(`${a.replace(/\/$/, "")}/${e.name}`);
-      }
-    } else if (info?.isFile) out.push(a);
+    if (info?.isDirectory) await walkDir(a);
+    else if (info?.isFile) out.push(a);
   }
   return out;
 }
@@ -59,7 +67,7 @@ function isWriteVerb(v?: string) { return !!v && /^(save|put|set|store|write|ins
 
 async function main() {
   const args = Deno.args;
-  if (!args.length) { console.error("usage: scan_spec.ts <spec.rune|spec/dir> ..."); Deno.exit(2); }
+  if (!args.length) { console.error("usage: scan_spec.ts <spec.rune|spec/runes/dir> ..."); Deno.exit(2); }
   const files = await collectFiles(args);
   const inv: Inventory = { module: "", specs: files, entities: [], dtos: [], reqs: [], writes: [], reads: [], mutationCandidates: [], notes: [] };
 

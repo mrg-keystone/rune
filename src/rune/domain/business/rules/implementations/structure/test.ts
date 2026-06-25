@@ -89,6 +89,38 @@ Deno.test("check — fixture allows any file (ignore)", async () => {
   assertEquals(result, null);
 });
 
+Deno.test("check — the spec/ staging layout: runes/ holds specs, misc/ + ui/ are ignore buckets", async () => {
+  const ctx = makeCtx(
+    [
+      "spec/runes/core.rune",
+      "spec/runes/orders.rune",
+      "spec/misc/data.json",
+      "spec/misc/data.review.html",
+      "spec/misc/cake.json",
+      "spec/misc/scenarios/happy.json",
+      "spec/ui/index.html",
+      "spec/ui/pages/queue.tsx",
+      "spec/orders.rune", // legacy flat — still allowed
+    ],
+    ["spec", "spec/runes", "spec/misc", "spec/misc/scenarios", "spec/ui", "spec/ui/pages"],
+  );
+  // The three staging folders are recognized.
+  assertEquals(await check("spec/runes", "folder", ctx), null);
+  assertEquals(await check("spec/misc", "folder", ctx), null);
+  assertEquals(await check("spec/ui", "folder", ctx), null);
+  // Authored specs in spec/runes/, plus a legacy flat spec, are allowed.
+  assertEquals(await check("spec/runes/core.rune", "rune", ctx), null);
+  assertEquals(await check("spec/runes/orders.rune", "rune", ctx), null);
+  assertEquals(await check("spec/orders.rune", "rune", ctx), null);
+  // spec/misc/ and spec/ui/ are ignore buckets — any artifact is allowed.
+  assertEquals(await check("spec/misc/data.json", "json", ctx), null);
+  assertEquals(await check("spec/misc/data.review.html", "html", ctx), null);
+  assertEquals(await check("spec/misc/cake.json", "json", ctx), null);
+  assertEquals(await check("spec/misc/scenarios/happy.json", "json", ctx), null);
+  assertEquals(await check("spec/ui/index.html", "html", ctx), null);
+  assertEquals(await check("spec/ui/pages/queue.tsx", "tsx", ctx), null);
+});
+
 Deno.test("check — dto .ts file is allowed", async () => {
   const ctx = makeCtx(
     ["src/core/dto/types.ts"],

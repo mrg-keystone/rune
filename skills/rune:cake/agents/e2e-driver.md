@@ -11,7 +11,7 @@ works, not gaming a verdict.
   `POST /docs/_run` is **localhost-only** and refuses in-process dispatch — the
   server must be a real listening process on loopback.
 - Optional: the module(s) in scope, any known `seeds` (JSON-typed, by field
-  name), and the project's `fixtures/heal-rules.json`.
+  name), and the project's `spec/misc/heal-rules.json`.
 
 ## Loop
 
@@ -25,14 +25,14 @@ works, not gaming a verdict.
    response: `{ ok, passed[], failed[], optionalFailed[], order, cycles, iterations }`.
    Each `failed[]` row carries `module`, `status`, the response `body`, and `ms`.
 3. **If `ok` — done.** Optionally pin the contract: open `/docs/<module>`, set
-   Expectations, **Save fixtures** (`fixtures/cake.json`), freeze a Scenario.
+   Expectations, **Save fixtures** (`spec/misc/cake.json`), freeze a Scenario.
 4. **If not `ok` — diagnose each `failed` row** (use the `rune:cake` SKILL §5
    table). Classify by the response body:
    - unresolved `$input` / `{{ref}}` → add a `seed`, or run/compose the producer.
    - 422 with a path + constraint → the body names the failing field; fix the
      `byEndpoint` override or the seed, or route a real contract fix to
      `rune:spec`/`rune:build`.
-   - a project error slug → consult `fixtures/heal-rules.json` for the prescribed
+   - a project error slug → consult `spec/misc/heal-rules.json` for the prescribed
      fix (`references/heal-rules.md`). For a `retry`/`note(retryAfter)` slug, pass
      it through `retry` (or just re-run — `/docs/_run` derives retry slugs from the
      rules).

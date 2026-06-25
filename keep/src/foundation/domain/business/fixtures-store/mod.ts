@@ -1,5 +1,5 @@
 /**
- * The cake's persistent configuration artifact — `fixtures/cake.json`.
+ * The cake's persistent configuration artifact — `spec/misc/cake.json`.
  *
  * The cake (process emulator) keeps its working session in `localStorage`, which is browser-local
  * and ephemeral. This module is the durable, shareable, version-controllable counterpart: the
@@ -50,7 +50,7 @@ export interface ModuleFixtures {
   asserts?: Record<string, AssertSpec>;
 }
 
-/** The whole `fixtures/cake.json` artifact. */
+/** The whole `spec/misc/cake.json` artifact. */
 export interface CakeFixtures {
   v: 1;
   /** Environment variables the user marked `persist`, by name. Shared across every module. */
@@ -166,9 +166,12 @@ export function mergeFixtures(
 }
 
 /**
- * The directory holding `cake.json`. Defaults to `<cwd>/fixtures`; `KEEP_FIXTURES_DIR` overrides
- * it (used by tests to redirect writes to a temp dir, and by consumers who keep fixtures
- * elsewhere).
+ * The directory holding `cake.json` (and `scenarios/`, `heal-rules.json`). When the project
+ * has a `spec/` dir, this is the canonical `<cwd>/spec/misc` — beside `spec/runes/` (the
+ * authored specs) and `spec/ui/` (the UI prototype). Projects without a `spec/` dir (older keep
+ * apps, standalone usage) fall back to the legacy `<cwd>/fixtures`, so the default stays
+ * non-breaking. `KEEP_FIXTURES_DIR` overrides everything (used by tests to redirect writes to a
+ * temp dir, and by consumers who keep fixtures elsewhere).
  */
 export function fixturesDir(): string {
   const override = (() => {
@@ -178,7 +181,19 @@ export function fixturesDir(): string {
       return undefined; // env access not granted — fall back to cwd
     }
   })();
-  return override && override !== "" ? override : `${Deno.cwd()}/fixtures`;
+  if (override && override !== "") return override;
+  let cwd: string;
+  try {
+    cwd = Deno.cwd();
+  } catch {
+    return "fixtures"; // no cwd/perms — best-effort relative legacy path
+  }
+  try {
+    if (Deno.statSync(`${cwd}/spec`).isDirectory) return `${cwd}/spec/misc`;
+  } catch {
+    // no spec/ dir (or stat not permitted) — fall through to the legacy default
+  }
+  return `${cwd}/fixtures`;
 }
 
 function fixturesFile(dir: string): string {
@@ -214,7 +229,7 @@ export async function writeFixtures(
   return stamped;
 }
 
-// ── project heal rules (fixtures/heal-rules.json) ────────────────────────────
+// ── project heal rules (spec/misc/heal-rules.json) ────────────────────────────
 // The declarative per-project tier of the cake's heal panel. keep executes these; the project
 // (usually rune, from its spec's fault slugs) authors them. Schema is the cross-repo contract
 // between keep and rune — keep both sides in lockstep when changing it.
@@ -236,7 +251,7 @@ export interface HealRule {
   retryAfter?: boolean;
 }
 
-/** The whole `fixtures/heal-rules.json` artifact: error slug → suggestions. */
+/** The whole `spec/misc/heal-rules.json` artifact: error slug → suggestions. */
 export interface HealRules {
   v: 1;
   slugs: Record<string, HealRule[]>;
@@ -274,7 +289,7 @@ export async function readHealRules(dir = fixturesDir()): Promise<HealRules> {
   }
 }
 
-// ── scenarios (fixtures/scenarios/<name>.json) ───────────────────────────────
+// ── scenarios (spec/misc/scenarios/<name>.json) ───────────────────────────────
 // A scenario is a named, committable snapshot of one module's walk configuration: the flow plus
 // every step's body text and params (refs intact — they resolve at send time as usual). Loading
 // one overwrites the page's editor state; running one is load + Run all. One file per scenario

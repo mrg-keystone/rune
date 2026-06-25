@@ -1,5 +1,5 @@
 // Heal-rules scaffolding: turn the fault slugs a project's endpoints declare
-// into a starter `fixtures/heal-rules.json` for keep's cake self-healing panel.
+// into a starter `spec/misc/heal-rules.json` for keep's cake self-healing panel.
 //
 // keep owns the generic heal tier (missing $input → run producer, validation →
 // fix field, timeout/unauthorized → retry); the PROJECT owns the slug-specific

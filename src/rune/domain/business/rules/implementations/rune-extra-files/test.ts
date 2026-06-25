@@ -74,6 +74,23 @@ Deno.test("check — predicted typ file passes", async () => {
   assertEquals(await check("src/recording/dto/url.ts", "ts", ctx), null);
 });
 
+Deno.test("check — typ colliding with a same-dir DTO stem passes at -type", async () => {
+  // [TYP] cap + [DTO] CapDto: cap collide on the `cap` stem, so the generator
+  // (and rune-typ-shape) write/expect the TYP at `cap-type.ts`. The orphan rule
+  // must predict it the same way — not flag the real file.
+  const rune = `[MOD] recording
+
+[REQ] recording.set(InDto): OutDto
+    id::create(name): id
+
+[DTO] CapDto: cap
+
+[TYP] cap: number
+    desc`;
+  const ctx = makeCtx(rune, ["src/recording/dto/cap-type.ts"], []);
+  assertEquals(await check("src/recording/dto/cap-type.ts", "ts", ctx), null);
+});
+
 Deno.test("check — files outside rune-managed slots are skipped", async () => {
   const ctx = makeCtx(RUNE, ["src/recording/domain/business/id/mod.ts"], []);
   // This is a file inside a managed folder but not the folder itself — rule skips it.

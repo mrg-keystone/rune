@@ -132,7 +132,7 @@ export function emulatorShellHtml(
     </div>
     <div class="railcard" id="setup-card">
       <div class="railhead">Module setup
-        <button class="mini" id="save-fixtures" title="write setup steps + expectations + persisted variables to fixtures/cake.json">Save fixtures</button>
+        <button class="mini" id="save-fixtures" title="write setup steps + expectations + persisted variables to spec/misc/cake.json">Save fixtures</button>
       </div>
       <div id="setup"></div>
       <select id="setup-add" title="add any endpoint in the app — any module — as a setup step"></select>
@@ -141,7 +141,7 @@ export function emulatorShellHtml(
         Calls that put the <b>whole app</b> in a known state before the process runs — pick any
         module's endpoint above, or snapshot one of this page's steps with <code>+ setup</code>.
         <b>Save fixtures</b> writes them — plus expectations and any variable you mark
-        <code>persist</code> — to <code>fixtures/cake.json</code>, so the config persists and can
+        <code>persist</code> — to <code>spec/misc/cake.json</code>, so the config persists and can
         be checked in.
       </div>
     </div>
@@ -153,7 +153,7 @@ export function emulatorShellHtml(
         <button title="snapshot the whole walk (flow, bodies, params, skips) under this name">Save</button>
       </form>
       <div class="hint">
-        Named snapshots of this walk, stored in <code>fixtures/scenarios/</code>.
+        Named snapshots of this walk, stored in <code>spec/misc/scenarios/</code>.
         <b>load</b> applies one (overwrites bodies/params/flow); <b>run</b> loads then runs all.
         CI: <code>POST /docs/_run {"scenario":"name"}</code>.
       </div>

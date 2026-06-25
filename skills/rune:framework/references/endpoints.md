@@ -169,7 +169,7 @@ the in-process backend exists.
   its `module` (bare op-ids collide across composed modules) plus the response
   `body` and per-call `ms` — enough to show/replay outcomes, not just verdicts
   (the map's write-back is built on this).
-- `scenario: "<name>"` replays a saved `fixtures/scenarios/` file: its flow
+- `scenario: "<name>"` replays a saved `spec/misc/scenarios/` file: its flow
   (an explicit `flow` in the body wins) and each step's literal body fields as
   `byEndpoint` overrides (`{{ref}}`-holding fields are left to bind). Unknown
   name → `404`. (Saving scenarios from the cake is the **`rune:cake`** skill.)

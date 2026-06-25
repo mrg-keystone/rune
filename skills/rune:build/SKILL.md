@@ -11,7 +11,7 @@ description: >-
   you have a `rune check`-clean spec and want it BUILT — "build this module",
   "implement the rune / fill in the bodies", "write the tests for X", "make it
   green", "generate and implement", "finalize and sync this spec", pointing at a
-  `spec/<m>.rune` (or a freshly synced `src/<module>/` full of `not implemented`
+  `spec/runes/<m>.rune` (or a freshly synced `src/<module>/` full of `not implemented`
   throws) and asking to make it work. NOT writing or editing the spec itself
   (that's `rune:spec` — this skill STARTS from a clean spec); NOT real-data
   end-to-end via the cake (`/docs/<m>` walks, heal panel → `rune:cake`); NOT
@@ -24,7 +24,7 @@ argument-hint: "[path to the finalized spec/module to build]"
 # rune:build — the spec-to-green factory
 
 You are the **orchestrator**. You take a `rune check`-clean spec from
-"`spec/<m>.rune`" to "every test green, lint clean, run-all verdict green" by
+"`spec/runes/<m>.rune`" to "every test green, lint clean, run-all verdict green" by
 driving a staged pipeline of focused, **isolated** agents — generate, learn,
 enumerate, write tests (TDD), implement, validate, lint+heal — then hand the
 working module to `rune:cake` for real-data end-to-end. You don't write tests or
@@ -34,7 +34,7 @@ brief, and gate each stage on evidence.
 ## This skill vs its siblings
 
 - **`rune:spec`** — authors and edits the `.rune` DSL and gets it `rune check`-clean
-  as `spec/<m>.in-prog.rune`. **The seam:** spec ends at a clean draft; *build owns
+  as `spec/runes/<m>.in-prog.rune`. **The seam:** spec ends at a clean draft; *build owns
   everything from finalize onward* — dropping the `.in-prog` infix, `rune sync`,
   filling bodies, the test fleet, `rune lint`, the green run-all. If the work is
   changing what the module *should do*, go back to `rune:spec`.
@@ -149,22 +149,25 @@ artifacts, never shared memory.
 
 ## Stage 0 — Finalize (the seam from `rune:spec`)
 
-Build owns the finalize step. Take the clean draft `spec/<m>.in-prog.rune` and:
+Build owns the finalize step. Take the clean draft `spec/runes/<m>.in-prog.rune` and:
 
-1. `rune check spec/<m>.in-prog.rune` — must exit 0. A non-clean spec is `rune:spec`'s
+1. `rune check spec/runes/<m>.in-prog.rune` — must exit 0. A non-clean spec is `rune:spec`'s
    job; bounce it back. (In the repo without an installed binary, prefix every `rune`
    command with `deno run -A src/bootstrap/mod.ts`.)
-2. **Drop the `.in-prog` infix** — rename to `spec/<m>.rune`. That graduation is what
+2. **Drop the `.in-prog` infix** — rename to `spec/runes/<m>.rune`. That graduation is what
    makes auto-discovery (the `rune dev` watch, the composed-app run-all) pick the
-   module up. The spec stays in `spec/`; it never moves out.
+   module up. The spec stays in `spec/runes/`; it never moves out. (Canonical staging
+   layout: `spec/runes/` holds the authored `.rune` specs, `spec/misc/` holds the
+   data-design + cake artifacts, `spec/ui/` holds the sprig UI prototype. Legacy flat
+   `spec/` still works, but `spec/runes/` is the new canonical home.)
 
 ## Stage 1 — GENERATE (`rune sync`, red by design)
 
 ```sh
-rune sync spec/<m>.rune              # scaffolds src/<module>/, writes deno.json, runs the walk
-rune sync spec/<m>.rune --no-run     # … but skip the composed-app run-all gate at the end
-rune sync spec/<m>.rune --force      # … and prune orphans (see below); otherwise held back
-rune manifest spec/<m>.rune          # one-shot generate, NO prune — see the import-map caveat
+rune sync spec/runes/<m>.rune              # scaffolds src/<module>/, writes deno.json, runs the walk
+rune sync spec/runes/<m>.rune --no-run     # … but skip the composed-app run-all gate at the end
+rune sync spec/runes/<m>.rune --force      # … and prune orphans (see below); otherwise held back
+rune manifest spec/runes/<m>.rune          # one-shot generate, NO prune — see the import-map caveat
 ```
 
 `rune sync` is the **only** generator you should use. It scaffolds, then **executes the
@@ -186,7 +189,7 @@ What `sync` writes:
 | `entrypoints/<surface>/mod.ts` — `@Endpoint` controller (one per `[ENT]`) | **create-once / dev-owned** |
 | `bootstrap/modules.ts` | **regenerated** every sync — never edit |
 | `bootstrap/mod.ts` + `config.ts` | **create-once / dev-owned** |
-| `fixtures/heal-rules.json` — one entry per fault slug | **merge-owned** — new slugs added, your edits kept |
+| `spec/misc/heal-rules.json` — one entry per fault slug | **merge-owned** — new slugs added, your edits kept |
 
 **A fresh scaffold's run-all is RED by design** — the bodies throw, so every step
 fails. That red is your pinned baseline, not a problem. Read the verdict and the
@@ -309,7 +312,7 @@ declare done over a red check.
    `module-fragmentation` — that's a real signal the module is too small, not filler
    to add.)
 2. **Enrich every `todo: true` heal-rules entry.** `rune sync` scaffolds
-   `fixtures/heal-rules.json` with one entry per fault slug, each flagged `todo: true`
+   `spec/misc/heal-rules.json` with one entry per fault slug, each flagged `todo: true`
    ("rune guessed — confirm"). Filling these is dev work like filling a stub: replace
    the placeholder with a concrete suggestion, write a real one-line `why`, then drop
    the `todo` flag. (The full heal-rules **schema** — every `kind` and its fields —

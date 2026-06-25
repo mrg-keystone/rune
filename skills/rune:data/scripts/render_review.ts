@@ -11,11 +11,12 @@
 // Reads entity.document (an example stored record) when present; falls back to a
 // shape built from key/dto/immutability when it isn't.
 //
-// Usage: deno run -A render_review.ts spec/data.json [out.html]
+// Usage: deno run -A render_review.ts spec/misc/data.json [out.html]
+//   (default out is data.review.html beside the input — i.e. spec/misc/data.review.html)
 
 async function main() {
   const [dataPath, outArg] = Deno.args;
-  if (!dataPath) { console.error("usage: render_review.ts spec/data.json [out.html]"); Deno.exit(2); }
+  if (!dataPath) { console.error("usage: render_review.ts spec/misc/data.json [out.html]"); Deno.exit(2); }
   const doc = JSON.parse(await Deno.readTextFile(dataPath));
   const out = outArg ?? dataPath.replace(/[^/]*$/, "") + "data.review.html";
   await Deno.writeTextFile(out, PAGE.replace("/*__DATA__*/", JSON.stringify(doc)));

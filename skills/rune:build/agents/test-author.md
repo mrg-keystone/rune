@@ -19,7 +19,7 @@ implement any body. Think step by step: read the intent, decide the exact assert
 write it, run it, prove it is red.
 
 PROJECT ROOT: <abs path to the generated project>
-SPEC: <project>/spec/<m>.rune        (the contract — already rune check-clean)
+SPEC: <project>/spec/runes/<m>.rune        (the contract — already rune check-clean)
 TEST FILE: <project>/src/<module>/.../<test.ts | int.test.ts | smk.test.ts>
 UNDER TEST: <the mod.ts / coordinator the test exercises>
 INTENT (from LEARN): <what this method/step/coordinator is supposed to do, its DTO

@@ -11,7 +11,7 @@ description: >-
   check`/`rune fmt`; and whenever a spec "won't parse / won't lint" with a spec
   error — DTO-suffix, scope, indentation, line-length, untyped-field, ambiguous-
   endpoint complaints. The spec is the source of truth; this skill produces a
-  `rune check`-clean `spec/<m>.in-prog.rune` and stops there. NOT generating the
+  `rune check`-clean `spec/runes/<m>.in-prog.rune` and stops there. NOT generating the
   module, filling bodies, or the test fleet → use `rune:build`; NOT the runtime
   (`@Endpoint` semantics, `bootstrapServer`, auth, deploy) → use `rune:framework`;
   NOT the interactive cake / heal-rules schema → use `rune:cake`; NOT the Swagger
@@ -32,7 +32,7 @@ that spec and driving it to a clean state; it stops the moment the spec is good.
 
 - **`rune:spec` (here)** — author/edit the `.rune` DSL: tags, granularity, `[SRV]`,
   `[TYP]`, the rules that bite, `rune check`/`rune fmt`. **You end at a `rune
-  check`-clean `spec/<m>.in-prog.rune`.**
+  check`-clean `spec/runes/<m>.in-prog.rune`.**
 - **`rune:build`** — owns everything from *finalize onward*: dropping the `.in-prog`
   infix, `rune sync` (codegen), filling bodies, the TDD test fleet, `rune lint`, the
   green run-all. Hand off the instant your spec checks clean.
@@ -49,22 +49,22 @@ that spec and driving it to a clean state; it stops the moment the spec is good.
 ## The loop you own
 
 ```text
-write spec/<m>.in-prog.rune  ─▶  rune check  ─▶  (errors? iterate)  ─▶  clean
-                                                                          │
-                              finalize: drop .in-prog  ◀─────────────────┘
+write spec/runes/<m>.in-prog.rune  ─▶  rune check  ─▶  (errors? iterate)  ─▶  clean
+                                                                                │
+                              finalize: drop .in-prog  ◀───────────────────────┘
                                         │
                                         ▼
                                   hand to rune:build  (sync → fill → test → lint)
 ```
 
-You stay in `spec/`, iterate `write → rune check → fix → re-check` until exit 0, then
-finalize (rename `spec/<m>.in-prog.rune` → `spec/<m>.rune`) and hand the finalized
-spec to the **`rune:build`** skill. You never run `rune sync` or fill code here — your
-deliverable is a valid spec.
+You stay in `spec/runes/`, iterate `write → rune check → fix → re-check` until exit 0,
+then finalize (rename `spec/runes/<m>.in-prog.rune` → `spec/runes/<m>.rune`) and hand the
+finalized spec to the **`rune:build`** skill. You never run `rune sync` or fill code here
+— your deliverable is a valid spec.
 
 > In the repo without an installed `rune` binary, prefix any command with
 > `deno run -A src/bootstrap/mod.ts` (e.g. `deno run -A src/bootstrap/mod.ts check
-> spec/<m>.rune`). Elsewhere, just `rune check …`.
+> spec/runes/<m>.rune`). Elsewhere, just `rune check …`.
 
 ## Mental model (read this first)
 
@@ -271,7 +271,7 @@ flags such near-misses in its `inputs:` diagnostics.
 
 **Heal-rules (mention only).** When your boundary steps declare **fault slugs** (the
 lowercase-hyphenated names indented under boundary steps), `rune sync` *also* scaffolds
-a starter `fixtures/heal-rules.json`. Authoring the slugs is your job here; the rule
+a starter `spec/misc/heal-rules.json`. Authoring the slugs is your job here; the rule
 **schema** and the cake's heal panel belong to the **`rune:cake`** skill, and
 **enriching** each scaffolded entry (the `todo: true` flag) is the **`rune:build`**
 skill's job. Just write good fault slugs.
@@ -375,29 +375,32 @@ These cause the "won't parse / won't lint (spec error)" surprises. When in doubt
   synonym — `discard`, `remove`, `archive`. (This bites at `rune sync` in **`rune:build`**,
   but the fix is a spec decision: choose the verb name here.)
 
-## Where specs live — author in `spec/`, label drafts `.in-prog`
+## Where specs live — author in `spec/runes/`, label drafts `.in-prog`
 
-Every rune you write goes in the project's `spec/` folder and **STAYS there** — that is
-the authoring home; codegen goes to `src/<module>/`, the spec never moves out of
-`spec/`. While a spec is a work in progress, name it **`spec/<module>.in-prog.rune`**.
-The `.in-prog` infix marks it "not ready to wire in": auto-discovery (the `rune dev`
-watch and the composed-app run-all) skips it, so a half-finished draft can't break the
-running app. You still iterate freely — `rune check spec/<module>.in-prog.rune`
-validates an in-prog file.
+Every rune you write goes in the project's `spec/runes/` folder and **STAYS there** —
+that is the authoring home. It sits beside two siblings under the same `spec/`:
+`spec/misc/` (the data design + cake artifacts: `data.json`, `cake.json`) and `spec/ui/`
+(the sprig UI prototype + design system you read from). Codegen goes to `src/<module>/`,
+the spec never moves out of `spec/runes/`. While a spec is a work in progress, name it
+**`spec/runes/<module>.in-prog.rune`**. The `.in-prog` infix marks it "not ready to wire
+in": auto-discovery (the `rune dev` watch and the composed-app run-all) skips it, so a
+half-finished draft can't break the running app. You still iterate freely —
+`rune check spec/runes/<module>.in-prog.rune` validates an in-prog file. (The legacy flat
+`spec/<module>.rune` layout still resolves, but `spec/runes/` is the canonical home.)
 
-**Finalize by dropping the infix** (rename `spec/<module>.in-prog.rune` →
-`spec/<module>.rune`); from then on auto-discovery picks it up. That rename **is the
+**Finalize by dropping the infix** (rename `spec/runes/<module>.in-prog.rune` →
+`spec/runes/<module>.rune`); from then on auto-discovery picks it up. That rename **is the
 seam** to the **`rune:build`** skill — build owns finalize, `rune sync`, and everything
-downstream. So a new feature is born as `spec/<module>.in-prog.rune` and graduates to
-`spec/<module>.rune`.
+downstream. So a new feature is born as `spec/runes/<module>.in-prog.rune` and graduates to
+`spec/runes/<module>.rune`.
 
 ## The commands you own — `init`, `check`, `fmt`, `validate`
 
 ```sh
-rune init  <project-name>                # scaffold a fresh project: deno.json, spec/core.rune,
-                                         #   an empty src/, bootstrap/. Author specs in spec/.
-rune check spec/<module>.in-prog.rune    # IS THIS RUNE GOOD? exit 0 = clean, 2 = errors
-rune fmt   spec/<module>.in-prog.rune    # format the spec
+rune init  <project-name>                # scaffold a fresh project: deno.json, spec/runes/core.rune,
+                                         #   spec/misc/ + spec/ui/, an empty src/, bootstrap/.
+rune check spec/runes/<module>.in-prog.rune  # IS THIS RUNE GOOD? exit 0 = clean, 2 = errors
+rune fmt   spec/runes/<module>.in-prog.rune  # format the spec
 rune validate <artifact.json>            # validate a keywords.json artifact (the language source)
 rune lsp                                 # language server — the editor's squiggles mirror `rune check`
 rune --help                              # the full command set (the rest live in `rune:build`/`rune:framework`)

@@ -10,7 +10,7 @@ description: >-
   expectation / save fixtures", "save/replay a scenario", "fix the heal rules /
   heal panel", or "drive the whole composed app headless" (`POST /docs/_run`,
   `exerciseEndpoints`). Covers serve-and-walk, the real-data e2e discipline,
-  headless replay, Expectations→`fixtures/cake.json`, Scenarios, response-diff,
+  headless replay, Expectations→`spec/misc/cake.json`, Scenarios, response-diff,
   the system map, and the FIX-CAKE assist (stale entrypoint controller, missing
   schema example, unproduced `$input`, 422 assert failure, heal panel rules→Claude).
   NOT for writing/editing the `.rune` spec → use `rune:spec`; NOT for generating
@@ -36,7 +36,7 @@ and fixes it when it goes red.
   modifiers, `rune check`) → **`rune:spec`**. When a red walk traces to the spec
   (wrong order/deps/bind, a missing `[TYP:example=]`), hand the fix back there.
 - **Generating + filling bodies + the unit/smoke test fleet + `rune lint` + enriching
-  `fixtures/heal-rules.json`** → **`rune:build`**. Build's smoke (`smk`) tests share
+  `spec/misc/heal-rules.json`** → **`rune:build`**. Build's smoke (`smk`) tests share
   this skill's real-connectivity premise; build *authors* the heal rules, this skill
   *uses* them and owns their schema. A red walk caused by an unimplemented body or a
   stale entrypoint controller is fixed by re-syncing/filling — hand back to `rune:build`.
@@ -51,7 +51,7 @@ and fixes it when it goes red.
   right now, with real data?" or "the cake/heal/run-all is broken — get it green".
 
 The seam from `rune:spec`: a `.rune` draft becomes a `rune check`-clean
-`spec/<m>.in-prog.rune`. **`rune:build` owns everything from finalize onward** —
+`spec/runes/<m>.in-prog.rune`. **`rune:build` owns everything from finalize onward** —
 dropping the `.in-prog` infix, `rune sync`, bodies, tests, lint, the green run-all.
 This skill picks up *after* that, to prove the green build behaves end to end with
 real services.
@@ -156,13 +156,13 @@ is in `agents/e2e-driver.md`.
 A green walk is ephemeral until you pin it. Two committable artifacts make the cake a
 contract-test layer:
 
-- **Expectations → `fixtures/cake.json`.** Each step's Expect block pins an exact HTTP
+- **Expectations → `spec/misc/cake.json`.** Each step's Expect block pins an exact HTTP
   status and body checks (`path == / != / contains / exists value`; values may hold
   `{{refs}}`). With expectations pinned, "green" means the response *meets them* — a 200
   with a wrong body goes **red** (`expect ✗`). **Save fixtures** writes this module's
-  setup steps + pinned expectations + persisted variables to `fixtures/cake.json`, plain
+  setup steps + pinned expectations + persisted variables to `spec/misc/cake.json`, plain
   committable JSON. On load the cake applies it as the baseline even in a fresh browser.
-- **Scenarios → `fixtures/scenarios/<name>.json`.** The Scenarios card freezes the whole
+- **Scenarios → `spec/misc/scenarios/<name>.json`.** The Scenarios card freezes the whole
   walk (active flow, every step's body + params with refs intact, skips) under a name —
   one committable file per scenario. **load** applies it; **run** is load + Run all. CI
   replays one headlessly: `POST /docs/_run {"scenario":"<name>"}`.
@@ -196,7 +196,7 @@ dot (not red) and a **heal** panel of one-click fixes. It works in two tiers by 
 
 1. **Rules (instant, offline, free)** — deterministic, client-side. Structured failure
    shapes (unresolved ref, 422 assert, a project error slug) become Apply buttons. The
-   project's slug vocabulary lives in `fixtures/heal-rules.json` — `rune sync` scaffolds
+   project's slug vocabulary lives in `spec/misc/heal-rules.json` — `rune sync` scaffolds
    a starter from the spec's fault slugs (with `todo: true` markers); **`rune:build`**
    enriches those. This skill **owns the heal-rules schema**.
 2. **Ask Claude (the long tail)** — `POST /docs/_heal` forwards the failure bundle + the
@@ -213,7 +213,7 @@ The two tiers, `POST /docs/_heal`, and the **full heal-rules JSON schema** (ever
 ```text
 serve (deno run -A bootstrap/mod.ts) ─▶ open /docs/<module> ─▶ Run all in order
         │
-   green? ──yes──▶ pin: Expectations → Save fixtures (fixtures/cake.json) ─▶ freeze a Scenario ─▶ done
+   green? ──yes──▶ pin: Expectations → Save fixtures (spec/misc/cake.json) ─▶ freeze a Scenario ─▶ done
         │
         no ─▶ diagnose (§5) ─▶ heal (rules → Claude) ─▶ route the real fix:
                  spec   → rune:spec      bodies/controller/tests/heal-enrichment → rune:build

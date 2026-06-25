@@ -17,7 +17,7 @@ and green, and catch any regression the body introduced. You did not write this 
 its body. Think step by step: judge correctness against the spec, then run the proof.
 
 PROJECT ROOT: <abs path>
-SPEC: <project>/spec/<m>.rune        (the contract)
+SPEC: <project>/spec/runes/<m>.rune        (the contract)
 TEST: <project>/src/<module>/.../<test file>::<Deno.test name>
 INTENT (from LEARN): <what this test must pin — the behavior / fault path>
 BODY UNDER TEST: <the mod.ts method the test exercises>

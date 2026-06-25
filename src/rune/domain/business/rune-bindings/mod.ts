@@ -135,22 +135,32 @@ export function processName(noun: string, verb: string): string {
 // convention is the path. Shared by the loader (spec-root) and the lint rules.
 export const CORE_SPEC_REL = "src/core/core.rune";
 
-// Dedicated spec-folder layouts: a flat folder of authored `.rune` specs that
+// Dedicated spec-folder layouts: a folder of authored `.rune` specs that
 // generate into the project's `src/` (the specs stay put — they are the source).
-// Both the singular `spec/` (the `rune init` default) and plural `specs/` names
-// resolve, so either project shape works.
-const SPEC_DIRS = ["spec/", "specs/"];
+// The canonical staging dir is `spec/runes/` (the `rune init` default), which
+// sits beside its sibling `spec/misc/` (data design + cake artifacts) and
+// `spec/ui/` (the sprig prototype + design system). The flat `spec/` and the
+// plural `specs/` / `specs/runes/` names also resolve, so older projects keep
+// working. ORDER MATTERS: the more specific `…/runes/` prefixes must come first
+// so `moduleFromSpecPath` strips `spec/runes/` (not just `spec/`) — otherwise a
+// `spec/runes/orders.rune` would derive the module "runes/orders".
+const SPEC_DIRS = ["spec/runes/", "specs/runes/", "spec/", "specs/"];
 
-// The core spec under any layout: src/core/core.rune (canonical) or
-// spec/core.rune / specs/core.rune (the flat spec-folder layouts). The
+// The core spec under any layout: src/core/core.rune (canonical), the
+// `spec/runes/` staging dir (`spec/runes/core.rune`), or the flat
+// `spec/core.rune` / `specs/core.rune` legacy spec-folder layouts. The
 // `.in-prog.rune` draft variants count too — core is shared infrastructure that
 // must keep supplying services (and accept `[SRV]`) even while it is a draft,
 // unlike a module draft which is excluded from auto-discovery entirely.
 const CORE_SPEC_PATHS = [
   CORE_SPEC_REL,
+  "spec/runes/core.rune",
+  "specs/runes/core.rune",
   "spec/core.rune",
   "specs/core.rune",
   "src/core/core.in-prog.rune",
+  "spec/runes/core.in-prog.rune",
+  "specs/runes/core.in-prog.rune",
   "spec/core.in-prog.rune",
   "specs/core.in-prog.rune",
 ];
@@ -182,9 +192,14 @@ function canonicalSpecPath(path: string): string {
 }
 
 // A rune file counts as a project spec only at one of these paths:
-//   spec/<name>.rune  |  specs/<name>.rune   (flat spec-folder layout)
+//   spec/runes/<name>.rune  |  specs/runes/<name>.rune   (canonical staging dir)
+//   spec/<name>.rune        |  specs/<name>.rune         (legacy flat layout)
 //   src/<module>/spec.rune
 //   src/<module>/<module>.rune
+// Note the sibling `spec/misc/` (data design + cake artifacts) and `spec/ui/`
+// (sprig prototype) are NOT spec dirs — their files have a slash after `spec/`
+// and aren't `<name>.rune` directly under a recognized staging dir, so they fall
+// through here (and a stray `.rune` nested deeper than one level is skipped).
 // Documentation, vendored, in-progress drafts (`.in-prog.rune`), and arbitrary
 // rune files are skipped by rune rules.
 export function isProjectSpec(path: string): boolean {
@@ -206,11 +221,12 @@ export function isProjectSpec(path: string): boolean {
 // Derive the module name from a project-spec path. Drafts derive from their
 // CANONICAL name (the `.in-prog` tag stripped), so an explicit sync of a draft
 // still resolves the right module.
-//   spec/recording.rune          → "recording"
-//   spec/recording.in-prog.rune  → "recording"
-//   specs/recording.rune         → "recording"
-//   src/orders/spec.rune         → "orders"
-//   src/orders/orders.rune       → "orders"
+//   spec/runes/recording.rune          → "recording"
+//   spec/runes/recording.in-prog.rune  → "recording"
+//   spec/recording.rune                → "recording"  (legacy flat)
+//   specs/recording.rune               → "recording"
+//   src/orders/spec.rune               → "orders"
+//   src/orders/orders.rune             → "orders"
 export function moduleFromSpecPath(path: string): string | null {
   const canonical = canonicalSpecPath(path);
   if (!isProjectSpec(canonical)) return null;

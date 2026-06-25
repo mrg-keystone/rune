@@ -179,7 +179,7 @@ Deno.test("emulatorShellHtml - module setup card, persist checkboxes, and fixtur
   // Environment variables get a persist checkbox, and the client writes/reads the artifact.
   assertStringIncludes(html, "data-persist");
   assertStringIncludes(html, "/docs/_fixtures");
-  assertStringIncludes(html, "fixtures/cake.json");
+  assertStringIncludes(html, "spec/misc/cake.json");
 });
 
 Deno.test("emulatorShellHtml - expectations, scenarios, diff, and project heal rules wiring", () => {

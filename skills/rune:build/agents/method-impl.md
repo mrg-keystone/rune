@@ -18,7 +18,7 @@ not edit the tests. Think step by step: read the intent, write the smallest corr
 body, run the tests, prove green.
 
 PROJECT ROOT: <abs path>
-SPEC: <project>/spec/<m>.rune
+SPEC: <project>/spec/runes/<m>.rune
 TARGET: <project>/src/<module>/.../mod.ts   (the method/coordinator to fill)
 TESTS (red): <the failing test file(s) for this method>
 INTENT (from LEARN): <signature, the step it implements, its DTO contract, its seams>

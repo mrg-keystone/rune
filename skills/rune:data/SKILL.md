@@ -2,8 +2,9 @@
 name: "rune:data"
 description: >-
   Design the persistence layer for a rune module: read the `.rune` specs in
-  `spec/`+`src/` and the HTML UI prototype in `spec/`, then emit a
-  `spec/data.json` that assigns every entity to **Firestore or Deno KV by
+  `spec/runes/`+`src/` and the sprig UI prototype + design system in `spec/ui/`,
+  then emit a
+  `spec/misc/data.json` that assigns every entity to **Firestore or Deno KV by
   per-operation performance** and restructures the model to be **immutable —
   new objects, never edits**. Use whenever you need to decide *how data is
   stored*, *which store an entity belongs in*, or *how to make a flow append-only
@@ -14,7 +15,7 @@ description: >-
   keys do we need". Trigger even when the user says "data layer", "storage design",
   or "persistence" without naming a store, and whenever a spec's flow does
   load→mutate→save (an in-place edit) that should become an appended record. This
-  skill emits `spec/data.json` and then makes **minimal, data-driven nudges to the
+  skill emits `spec/misc/data.json` and then makes **minimal, data-driven nudges to the
   EXISTING `.rune` specs** so they best exploit that design — surface an append-only
   trail as a readable `(s)` field, add a projection-maintenance step to a write
   flow, retag a restructured boundary verb — keeping the spec `rune check`-clean.
@@ -35,7 +36,7 @@ argument-hint: "[module or feature whose data structure to design]"
 The **data-design layer** of rune. Every other rune skill treats persistence as an
 opaque `[SRV] db:` boundary — `db:task.save(...)`, `db:order.load(...)` — and never
 asks *what* sits behind it. This skill answers that question. It reads the module's
-specs and its UI prototype, then produces a single design artifact, **`spec/data.json`**,
+specs and its UI prototype, then produces a single design artifact, **`spec/misc/data.json`**,
 that decides for every entity:
 
 1. **Which store** — Firestore or Deno KV — based on the *performance profile of the
@@ -44,7 +45,7 @@ that decides for every entity:
 3. **How to make it immutable** — restructure any "load → change → save" mutation into
    an append of a *new* object, so history is never overwritten.
 
-The primary deliverable is `spec/data.json`: a faithful, performance-justified,
+The primary deliverable is `spec/misc/data.json`: a faithful, performance-justified,
 immutable-by-construction map of the module's data. But the design only pays off if the
 spec actually *uses* it, so this skill closes with a fourth step:
 
@@ -59,7 +60,7 @@ spec actually *uses* it, so this skill closes with a fourth step:
 ## This skill vs its siblings
 
 - **`rune:data` (here)** — *what* the data is and *where/how* it's stored: Firestore vs
-  Deno KV per operation, keys, indexes, immutability restructuring. Emits `spec/data.json`,
+  Deno KV per operation, keys, indexes, immutability restructuring. Emits `spec/misc/data.json`,
   then makes **minimal, data-driven nudges to an existing spec** so the flows exploit that
   design (a readable trail field, a projection-maintenance step, a retagged verb).
 - **`rune:spec`** — *authors* the `.rune` DSL from intent: new `[NON]` entities, `[DTO]`s,
@@ -75,7 +76,7 @@ spec actually *uses* it, so this skill closes with a fourth step:
   wiring, the `src/core/data/<svc>` client). This skill decides Firestore-vs-KV at the
   design level; framework is how a chosen client connects.
 - **`rune:cake`** — exercises the built module against real data end-to-end. If a walk is
-  slow or a write clobbers history, that's a signal to revisit `spec/data.json` here.
+  slow or a write clobbers history, that's a signal to revisit `spec/misc/data.json` here.
 
 ## What you consume
 
@@ -83,7 +84,7 @@ Read all three inputs before deciding anything — the spec tells you the *entit
 their writes*, the prototype tells you the *reads and their performance demands*, and the
 two together tell you where mutation hides.
 
-1. **The `.rune` specs** (`spec/*.rune` and any `src/<module>/*.rune`). Pull out:
+1. **The `.rune` specs** (`spec/runes/*.rune` and any `src/<module>/*.rune`). Pull out:
    - **`[NON]` nouns / `[DTO]`s** — the entities you must store and their field shape.
    - **Boundary save/load steps** — `db:order.save(OrderDto)`, `db:task.load(id)`. Each
      `.save` is a **write**; each `.load` is a **read**. The verb pair per noun is your
@@ -93,10 +94,12 @@ two together tell you where mutation hides.
      (see below). A flow that only ever `.save`s new ids is already append-friendly.
    - **`(s)` array fields and nested DTOs** — these are your natural append targets
      (`reviews(s)`, `events(s)`).
-2. **The HTML prototype** in `spec/` (the `sprig:prototype` output, e.g.
-   `spec/<module>.html`). This is the **read-pattern oracle** — the spec rarely tells you
-   how data is *queried*, but the UI shows it directly. For each screen/region, classify
-   what it demands of the store (see *Reading the prototype* below).
+2. **The sprig UI prototype + design system** under `spec/ui/**` (the `sprig:prototype` /
+   `sprig:design` output — the page/component tree and design tokens, e.g.
+   `spec/ui/index.html`, `spec/ui/pages/…`). This is the **read-pattern oracle** — the spec
+   rarely tells you how data is *queried*, but the UI shows it directly. Walk the whole
+   `spec/ui/` tree; for each screen/region, classify what it demands of the store (see
+   *Reading the prototype* below).
 3. **Existing `src/` adapters**, if any — to stay consistent with shapes already chosen
    and not contradict a store decision already in flight.
 
@@ -242,20 +245,21 @@ derived counter/cache — atomic in-place update is correct), and **`overwrite-j
 "whenever humanly possible," but call a derived aggregate what it is rather than
 event-sourcing it.
 
-## The output — `spec/data.json`
+## The output — `spec/misc/data.json`
 
-The design itself is one file: **`spec/data.json`** (sibling to the specs and the
-prototype) — the source of truth. `scripts/render_review.ts` then derives a human-facing
-**`spec/data.review.html`** from it (see *Scripts*). Use this shape for `data.json`; keep
-`rationale` fields short and concrete — they are the justification a reviewer reads (and
-what the visualizer surfaces under each store choice).
+The design itself is one file: **`spec/misc/data.json`** (in `spec/misc/`, beside the
+`spec/runes/` specs and the `spec/ui/` prototype) — the source of truth.
+`scripts/render_review.ts` then derives a human-facing **`spec/misc/data.review.html`**
+from it (see *Scripts*). Use this shape for `data.json`; keep `rationale` fields short and
+concrete — they are the justification a reviewer reads (and what the visualizer surfaces
+under each store choice).
 
 ```jsonc
 {
   "module": "audits",
   "generatedFrom": {
-    "specs": ["spec/audits.rune"],
-    "prototype": "spec/audits.html"
+    "specs": ["spec/runes/audits.rune"],
+    "prototype": "spec/ui"
   },
   "entities": [
     {
@@ -396,25 +400,25 @@ them. Run them with `deno run -A`; they need no deps.
 | ------ | ---- | ---------------------------- |
 | `scripts/scan_spec.ts` | **before** you design | Parses the `.rune` spec(s) → JSON inventory of entities, DTOs, every persistence read/write, and **every `load→…→save` mutation candidate**. So you never miss an entity or an in-place edit. |
 | `scripts/validate_data.ts` | **after** you write `data.json` | Gates it against the schema + spec coverage: valid stores/shapes/strategies, every spec `[NON]` present, an `aggregate` that smuggled in a ledger, an `overwrite-justified` with no `why`. Exit 1 = fix it. |
-| `scripts/render_review.ts` | **last** | Consumes `data.json` → a self-contained `spec/data.review.html`: the data structure, each store choice and *why*, the append-vs-edit diagram, and a **notes box per entity for a second pass**. This is the human-facing deliverable. |
+| `scripts/render_review.ts` | **last** | Consumes `data.json` → a self-contained `spec/misc/data.review.html`: the data structure, each store choice and *why*, the append-vs-edit diagram, and a **notes box per entity for a second pass**. This is the human-facing deliverable. |
 
 The scripts handle *plumbing and verification*; you handle *the design in the middle*.
 
 ## The procedure
 
 > **Terminal gate — show the review, ALWAYS, no matter how you entered.** However this skill
-> runs — a fresh design, a re-run where `spec/data.json` and `spec/data.review.html` already
-> exist, or just a spec-reconcile pass — you FINISH by re-running `render_review.ts` and
-> `open`ing `spec/data.review.html` for the user. An existing review file on disk is **not**
+> runs — a fresh design, a re-run where `spec/misc/data.json` and `spec/misc/data.review.html`
+> already exist, or just a spec-reconcile pass — you FINISH by re-running `render_review.ts` and
+> `open`ing `spec/misc/data.review.html` for the user. An existing review file on disk is **not**
 > the same as having shown it: if you did not run `open` this session, you have not shown it.
 > Never substitute a prose summary in chat for the visualizer — the summary supplements it,
 > never replaces it. Do not skip this because the design "was already done"; that is the exact
 > failure this gate exists to stop. Steps 8 and 10 below enforce it.
 
-1. **Scan the spec (script).** `deno run -A scripts/scan_spec.ts spec/` → the entity/
+1. **Scan the spec (script).** `deno run -A scripts/scan_spec.ts spec/runes/` → the entity/
    read/write inventory and the `mutationCandidates`. Read it: this is your checklist of
-   entities to place and edits to make immutable. (In the repo, the spec dir is wherever the
-   module's `.rune` files live.)
+   entities to place and edits to make immutable. (The script recurses, so a bare `spec/`
+   also works; in the repo, the spec dir is wherever the module's `.rune` files live.)
 2. **Inventory reads from the prototype** — walk each screen, classify every read as
    query / subscription / point-get / atomic, with a hotness guess. Tie each to a region
    name you can cite in `source`. (The prototype is the read-pattern oracle; the script
@@ -429,12 +433,12 @@ The scripts handle *plumbing and verification*; you handle *the design in the mi
    no ledger unless the history is itself a feature.
 5. **Add keys & indexes** — KV key structure for point/atomic ops; Firestore composite
    indexes for each query's filter+sort.
-6. **Write `spec/data.json`.**
-7. **Validate (script).** `deno run -A scripts/validate_data.ts spec/data.json spec/` —
+6. **Write `spec/misc/data.json`.**
+7. **Validate (script).** `deno run -A scripts/validate_data.ts spec/misc/data.json spec/runes/` —
    must exit 0. Fix every `✗` (and consider the `⚠`s) before continuing; the gate is how you
    know the design conforms, instead of hoping it does.
 8. **Render AND open the review — every run, no exceptions (script).**
-   `deno run -A scripts/render_review.ts spec/data.json` then `open spec/data.review.html`.
+   `deno run -A scripts/render_review.ts spec/misc/data.json` then `open spec/misc/data.review.html`.
    ALWAYS re-render and `open` it, even when `data.json`/`data.review.html` already exist from
    a prior run — a file sitting on disk is NOT the same as having put it in front of the user
    this session. That visualizer — not the raw JSON, and **never** a prose summary you type in
@@ -448,7 +452,7 @@ The scripts handle *plumbing and verification*; you handle *the design in the mi
    **nothing**. Run `rune check` on every touched file (never `rune fmt`) until clean, then
    re-run `scan_spec.ts` to confirm the inventory still matches `data.json`.
 10. **Hand off.** First confirm you actually ran step 8 *this session* — rendered the review
-   and `open`ed `spec/data.review.html`. If you somehow reached here without it (e.g. the
+   and `open`ed `spec/misc/data.review.html`. If you somehow reached here without it (e.g. the
    design already existed and you jumped straight to reconcile), STOP and do step 8 now before
    writing anything else: the chat handoff supplements the visualizer, it never replaces it.
    Then summarize the spec diff and *why the data design forced each edit*, and stop. Do not

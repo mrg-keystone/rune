@@ -499,7 +499,7 @@ Deno.test({
   },
 });
 
-// ── module setup + persisted variables + the fixtures/cake.json artifact ─────
+// ── module setup + persisted variables + the spec/misc/cake.json artifact ─────
 
 Deno.test({
   name:
@@ -537,7 +537,7 @@ Deno.test({
       await page.locator("#banner.ok").waitFor({ timeout: 5000 });
       const saveBanner = await page.locator("#banner").textContent();
       assert(
-        saveBanner?.includes("Saved fixtures/cake.json"),
+        saveBanner?.includes("Saved spec/misc/cake.json"),
         `expected a save banner, got: ${saveBanner}`,
       );
 

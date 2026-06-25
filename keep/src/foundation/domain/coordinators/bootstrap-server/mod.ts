@@ -653,7 +653,7 @@ export class BootstrapServer {
           } catch {
             body = {}; // empty/invalid body ⇒ exercise everything with defaults
           }
-          // scenario: "<name>" replays a saved fixtures/scenarios file headlessly: its flow plus
+          // scenario: "<name>" replays a saved spec/misc/scenarios file headlessly: its flow plus
           // each step's LITERAL body fields as byEndpoint overrides. Fields holding {{refs}} are
           // dropped — the runner fills those through its own bind machinery, which the refs mirror.
           let scenarioFlow: string | undefined;
@@ -837,7 +837,7 @@ export class BootstrapServer {
           }
         }) as RouteHandler,
       );
-      // The cake's persistent config artifact (fixtures/cake.json): per-module setup steps and
+      // The cake's persistent config artifact (spec/misc/cake.json): per-module setup steps and
       // the variables a user marked "persist". GET restores it on cake load; POST merges a page's
       // slice and writes it back. Localhost-only (same posture as /_run, /_heal) — the
       // artifact carries variable values and writes the dev machine's disk.
@@ -885,13 +885,13 @@ export class BootstrapServer {
             const msg = e instanceof Error ? e.message : String(e);
             // Most likely cause: the app was started without --allow-write.
             return c.json(
-              { error: `Could not write fixtures/cake.json — ${msg}` },
+              { error: `Could not write spec/misc/cake.json — ${msg}` },
               500,
             );
           }
         }) as RouteHandler,
       );
-      // Project heal rules (fixtures/heal-rules.json): the declarative per-project tier of the
+      // Project heal rules (spec/misc/heal-rules.json): the declarative per-project tier of the
       // cake's heal panel — error slug → suggestions. keep executes them; the project (usually
       // rune, from spec fault slugs) authors them. Missing file ⇒ empty rule set, generic tier only.
       adapter.registerRoute(
@@ -910,7 +910,7 @@ export class BootstrapServer {
           return c.json(await readHealRules());
         }) as RouteHandler,
       );
-      // Scenarios (fixtures/scenarios/<name>.json): named, committable snapshots of a module's
+      // Scenarios (spec/misc/scenarios/<name>.json): named, committable snapshots of a module's
       // walk (flow + per-step bodies/params). GET lists them all; POST saves one (same name
       // overwrites). The cake offers load/run; /docs/_run accepts { scenario } for CI replay.
       adapter.registerRoute(

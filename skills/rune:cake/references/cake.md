@@ -2,7 +2,7 @@
 
 The full reference for the interactive cake at `/docs/<module>`: how the walk
 resolves and coerces values, the expectations contract, durable module setup,
-the `fixtures/cake.json` and scenario artifacts, response-diff, and the flow
+the `spec/misc/cake.json` and scenario artifacts, response-diff, and the flow
 selector. The cake, the system map, and `exerciseEndpoints` are three views of
 the same `x-keep-process` metadata that `@Endpoint` stamps into each module's
 OpenAPI doc. (The `@Endpoint`/`@EndpointController` option tables and the
@@ -84,7 +84,7 @@ Each step's **Expect** block pins an exact HTTP status and body checks:
   a wrong body goes **red** (`expect ✗`). Each check's verdict shows with the
   actual value, and run-all stops naming the failed expectation.
 - Expectations persist with the session and ride **Save fixtures** into
-  `fixtures/cake.json` — the committable contract-test layer.
+  `spec/misc/cake.json` — the committable contract-test layer.
 
 ## Response diff
 
@@ -93,7 +93,7 @@ Re-running a step shows changed/added/removed paths vs the previous response
 walk is green but a downstream consumer suddenly breaks — diff tells you which
 field of the producer's response moved.
 
-## Module setup + the `fixtures/cake.json` artifact
+## Module setup + the `spec/misc/cake.json` artifact
 
 The cake's working session lives in `localStorage` (per page path) — ephemeral
 and browser-local. Two surfaces make the deliberate configuration **durable**:
@@ -117,18 +117,19 @@ and browser-local. Two surfaces make the deliberate configuration **durable**:
 - **persist** — each environment variable in the Variables card has a
   **`persist`** checkbox. Ticked variables are written to the artifact.
 
-**Save fixtures** writes `fixtures/cake.json`: this module's setup steps, its
+**Save fixtures** writes `spec/misc/cake.json`: this module's setup steps, its
 pinned **expectations**, plus every persisted variable. It's plain, prettified
 JSON meant to be committed, so a process's required setup and contract travel
 with the repo. On load the cake fetches it and applies it as the baseline —
 restoring setup + expectations + persisted variables even in a fresh browser with
 empty `localStorage` (the saved config wins for the keys it carries). The door is
 `GET`/`POST /docs/_fixtures`, **localhost-only** (same posture as `/docs/_run` and
-`/_mint`); the file defaults to `<cwd>/fixtures/cake.json` and `KEEP_FIXTURES_DIR`
+`/_mint`); the file defaults to `<cwd>/spec/misc/cake.json` when the project has a
+`spec/` dir (else the legacy `<cwd>/fixtures/cake.json`), and `KEEP_FIXTURES_DIR`
 overrides the directory. The server needs `--allow-write`; without it, **Save
 fixtures** reports a 500 with the reason.
 
-## Scenarios — `fixtures/scenarios/<name>.json`
+## Scenarios — `spec/misc/scenarios/<name>.json`
 
 The Scenarios rail card freezes the whole walk (active flow, every step's body
 text + params with refs intact, skips) under a name — one committable file per
@@ -147,7 +148,7 @@ map's **Run all** and a headless agent/CI ask a *running* server "does the whole
 composed process work right now?" without importing the app. The two uses that matter
 for an e2e/fix-cake session:
 
-- **`scenario: "<name>"`** replays a saved `fixtures/scenarios/` file (above); unknown
+- **`scenario: "<name>"`** replays a saved `spec/misc/scenarios/` file (above); unknown
   name → `404`. This is how a committed scenario becomes a one-call regression check.
 - **`dryRun: true`** → `{ order, cycles, unresolvedInputs }` with nothing executed — a
   cheap pre-flight that names dependency cycles and unsatisfied `$inputs` *before* you

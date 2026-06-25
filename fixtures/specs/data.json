@@ -3,7 +3,7 @@
   "generatedFrom": {
     "specs": ["specs/todos.rune", "specs/src/core/core.rune"],
     "prototype": null,
-    "note": "No HTML prototype in spec/ — access patterns below are INFERRED from the obvious todos UI (a list screen of todos, a lists sidebar, toggle/archive by id). Replace source='inferred' with real prototype regions once a spec/todos.html exists; the store calls may shift."
+    "note": "No UI prototype under spec/ui/ — access patterns below are INFERRED from the obvious todos UI (a list screen of todos, a lists sidebar, toggle/archive by id). Replace source='inferred' with real prototype regions once a spec/ui/ prototype exists; the store calls may shift."
   },
   "entities": [
     {
@@ -99,7 +99,7 @@
   "notes": [
     "todo.add and list.create are fresh-id saves — already append-friendly; todo.add seeds the immutable states[] with the first (kind=added) entry.",
     "todo.complete and todo.discard are the in-place edits the scan flagged — restructured from load->mutate->save into appended state entries, so a todo's history (added -> completed -> archived) is never overwritten.",
-    "ASSUMPTION: store calls for the two 'inferred' read patterns should be re-checked against a real spec/todos.html prototype; the spec alone does not reveal how todos are queried.",
+    "ASSUMPTION: store calls for the two 'inferred' read patterns should be re-checked against a real spec/ui/ prototype; the spec alone does not reveal how todos are queried.",
     "listId / ownerId / createdAt are implied by the read patterns but absent from TodoDto/ListDto — add them via rune:spec before these queries/indexes can be built."
   ]
 }
