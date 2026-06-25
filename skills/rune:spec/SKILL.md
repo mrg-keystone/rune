@@ -28,6 +28,16 @@ backend from it. **The spec is the source of truth — you regenerate from it, y
 don't hand-edit the generated structure.** This skill is everything about authoring
 that spec and driving it to a clean state; it stops the moment the spec is good.
 
+> **This skill is self-contained — do not go spelunking.** Everything you need to
+> author a correct spec is in this skill's **`references/`** folder: the full language
+> reference (`spec.md`), the enforced rules (`constraints.md`), modeling patterns
+> (`cookbook.md`), and two `rune check`-clean examples (`example-tasks.rune`,
+> `example-core.rune`). You do **not** need to locate the rune toolchain source, read
+> its `lang/docs/`, hunt through `examples/`, or inspect the `rune` binary. The only
+> command you run is **`rune check <file>`** (and `rune fmt`); if `rune` isn't on PATH,
+> the project isn't your concern — author the spec from the references and validate
+> with `rune check` when it's available.
+
 ## This skill vs its siblings
 
 - **`rune:spec` (here)** — author/edit the `.rune` DSL: tags, granularity, `[SRV]`,
@@ -90,10 +100,10 @@ finalized spec to the **`rune:build`** skill. You never run `rune sync` or fill 
 ## Writing a `.rune` — the shape
 
 A spec is a flat, indentation-significant file. Tags are bracketed 3-letter codes. The
-canonical reference is **`lang/docs/spec.md`**; the enforced rules are in
-**`lang/docs/constraints.md`**; modeling patterns (echo-fields, teardown flows,
-`$input` vs capture-bind, dependsOn-as-sequencing) are in **`lang/docs/cookbook.md`**.
-The essentials:
+canonical reference is **`references/spec.md`** (bundled with this skill); the enforced
+rules are in **`references/constraints.md`**; modeling patterns (echo-fields, teardown
+flows, `$input` vs capture-bind, dependsOn-as-sequencing) are in
+**`references/cookbook.md`**. The essentials:
 
 ```
 [MOD] tasks                                  # names the module (optional; else filename)
@@ -117,7 +127,7 @@ The essentials:
 ```
 
 `[RET]` (return a value created earlier in the flow) exists too — see
-`lang/docs/spec.md`. `[PLY]`/`[CSE]` (polymorphism) is covered under **Granularity**.
+`references/spec.md`. `[PLY]`/`[CSE]` (polymorphism) is covered under **Granularity**.
 
 ## Services (boundary steps) — `[SRV]` + `@docs`
 
@@ -343,7 +353,7 @@ model your DTOs tightly: every constraint you put in a `[TYP]` becomes a runtime
 ## The rules that bite (from constraints.md)
 
 These cause the "won't parse / won't lint (spec error)" surprises. When in doubt, read
-**`lang/docs/constraints.md`** (the full table) — don't guess.
+**`references/constraints.md`** (the full table) — don't guess.
 
 - **DTOs must end in `Dto`**; a `[REQ]`'s input and output must both be DTOs (or an
   inline `{}` input). Output is always a DTO.
@@ -420,14 +430,21 @@ fmt` and finalize.
 
 ## Worked examples
 
-`examples/todos/` has three real specs and their generated trees:
+Two real specs are bundled with this skill — the canonical **core + module pair**. Copy
+them as your starting point:
 
-- `src/tasks/tasks.rune` — pure logic + a `db:` service boundary, two `[REQ]`s
-- `src/lists/lists.rune` — same shape; shows a `(s)` array DTO field (`taskId(s)` →
-  `taskIds: string[]`)
-- `src/notify/notify.rune` — `[PLY]` polymorphism (`channel` → email/push) + an `ex:`
-  service boundary
+- **`references/example-core.rune`** — the shared-services `core.rune`: `[SRV]`
+  declarations with `@docs`, the single place services are declared. Passes `rune check`
+  clean on its own.
+- **`references/example-tasks.rune`** — a module spec: a `db:` service boundary, a
+  `[NEW]` constructor, two `[REQ]`s. The shape you author most. It **consumes** the `db`
+  service, so it only checks clean when a core that declares `db` is discoverable —
+  i.e. drop it in `spec/runes/tasks.rune` beside your project's `spec/runes/core.rune`
+  (which `example-core.rune` models). On its own it reports `undeclared service "db"` —
+  that's expected, not a bug in the example.
 
-Copy one of these as a starting point — all three pass `rune check` clean (and
-`rune sync`/`deno check`/`rune lint` once you hand them to **`rune:build`**).
-`examples/todos/README.md` walks through the layout and the edit loop.
+Once clean, hand them to **`rune:build`** (`rune sync`/`deno check`/`rune lint`). For a
+fuller multi-module project (lists, notify with `[PLY]`, the generated trees + a README
+walkthrough), see `examples/todos/` **if you are working inside the rune repo itself** —
+but you do not need it; the bundled references are sufficient to author a correct spec
+anywhere.

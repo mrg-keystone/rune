@@ -1,0 +1,13 @@
+[MOD] core
+
+// Shared services for the todos app. Declared ONCE here; every module resolves
+// its boundary services (db:..., ex:...) from this spec. Each [SRV] generates a
+// shared client under src/core/services/<name>/.
+
+[SRV] (SIDECAR)db: DB_URL
+    the project's primary datastore (sidecar)
+    @docs https://docs.example.com/datastore
+
+[SRV] (HTTP)ex: EX_BASE_URL
+    an external HTTP service
+    @docs https://example.com/api/docs
