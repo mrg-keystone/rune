@@ -55,7 +55,7 @@ Example — `[TYP:min=0,max=100,example=5] qty` written `qty(s)?`:
   })
   @IsOptional()
   @IsArray()
-  @IsNumber({ each: true })
+  @IsNumber({}, { each: true })
   @Min(0, { each: true })
   @Max(100, { each: true })
   qtys?: number[];

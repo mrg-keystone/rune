@@ -916,10 +916,12 @@ Deno.test("planManifest — [TYP] constraint modifiers become decorators; int re
   // int REPLACES IsNumber.
   assertStringIncludes(c, "  @IsInt()\n  qty!: number;");
   assertEquals(c.includes("@IsNumber()\n  qty"), false);
-  // min=0 each-form on an (s) array (0 must survive — falsy value).
+  // min=0 each-form on an (s) array (0 must survive — falsy value). IsNumber's
+  // `each` goes in the SECOND arg — `@IsNumber({}, { each: true })`, not
+  // `@IsNumber({ each: true })` (which is a TS2353; `each` ∉ IsNumberOptions).
   assertStringIncludes(
     c,
-    "  @IsArray()\n  @IsNumber({ each: true })\n  @Min(0, { each: true })\n  @Max(100, { each: true })\n  scores!: number[];",
+    "  @IsArray()\n  @IsNumber({}, { each: true })\n  @Min(0, { each: true })\n  @Max(100, { each: true })\n  scores!: number[];",
   );
   assertStringIncludes(c, "  @IsNumber()\n  @IsPositive()\n  price!: number;");
   // ext is placement-only; the uuid beside it still validates.
@@ -1020,6 +1022,84 @@ Deno.test("planManifest — coordinator weave: input/read/write/output asserts",
   // the raw `input.` reference and the old blind cast are gone.
   assertEquals(c.includes("input.id"), false);
   assertEquals(/ as TaskDto/.test(c), false);
+});
+
+Deno.test("planManifest — enum [TYP] becomes a quoted union + @IsIn, not bare identifiers", () => {
+  const rune = `[MOD] proxy
+
+[REQ] proxy.send(ReqDto): ResDto
+    noop::run(): void
+
+[DTO] ReqDto: method, verb(s)
+    a request
+[DTO] ResDto: status
+    a response
+
+[TYP:example=POST] method: GET | POST | PUT | PATCH | DELETE
+    the http method
+[TYP:example=GET] verb: GET | POST
+    a verb
+[TYP] status: number
+    a status`;
+  const plan = planManifest("specs/proxy.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  // Standalone [TYP] alias: members are QUOTED — bare `GET | POST` is a TS2304
+  // ("Cannot find name 'GET'"). The alias documents its field-level enforcement.
+  const alias = plan.toCreate.find((f) => f.path === "src/proxy/dto/method.ts")!.content;
+  assertStringIncludes(alias, 'export type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";');
+  assertStringIncludes(
+    alias,
+    '// enforced on DTO fields: @IsIn(["GET", "POST", "PUT", "PATCH", "DELETE"])',
+  );
+  // DTO scalar field: quoted union type + @IsIn validator + @ApiProperty enum,
+  // and crucially NOT the old bare-identifier union nor a bare @Allow().
+  const dto = plan.toCreate.find((f) => f.path === "src/proxy/dto/req.ts")!.content;
+  assertStringIncludes(dto, '  method!: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";');
+  assertStringIncludes(dto, '  @IsIn(["GET", "POST", "PUT", "PATCH", "DELETE"])');
+  assertStringIncludes(dto, 'enum: ["GET", "POST", "PUT", "PATCH", "DELETE"]');
+  assertEquals(dto.includes("method!: GET |"), false);
+  assertEquals(dto.includes("@Allow()\n  method"), false);
+  // (s) array enum: the element union is parenthesized before `[]`, and @IsIn
+  // takes the each-form. `"GET" | "POST"[]` (unparenthesized) is the wrong type.
+  assertStringIncludes(dto, '  verbs!: ("GET" | "POST")[];');
+  assertStringIncludes(dto, '  @IsIn(["GET", "POST"], { each: true })');
+  // IsIn is imported (it replaced @Allow for these fields).
+  assertStringIncludes(dto, 'import { IsArray, IsIn } from "class-validator";');
+});
+
+Deno.test("planManifest — coordinator hoists a value-producer step feeding a read", () => {
+  const rune = `[MOD] control
+
+[REQ] settings.apply(ApplyDto): ResultDto
+    settingsKey::current(): settingsKey
+    db:settings.load(settingsKey): SettingsDto
+
+[DTO] ApplyDto: mode
+    the request — note: no settingsKey field, it is produced mid-flow
+[DTO] ResultDto: ok
+    the result
+[DTO] SettingsDto: value
+    loaded settings
+
+[TYP] mode: string
+    a mode
+[TYP] settingsKey: string
+    the settings key
+[TYP] ok: boolean
+    ok
+[TYP] value: string
+    a value`;
+  const plan = planManifest("specs/control.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const c = plan.toCreate.find((f) => f.path.endsWith("settings-apply/mod.ts"))!.content;
+  // settingsKey is produced by a value-producer step, not a field of ApplyDto, so
+  // it is hoisted as a real local and the read consumes that local…
+  assertStringIncludes(c, "  const settingsKey = SettingsKey.current();");
+  assertStringIncludes(c, "await settingsData.load(settingsKey)");
+  // …and is NEVER read off the input DTO (the `input.settingsKey` TS2339 bug).
+  assertEquals(c.includes(".settingsKey"), false);
+  // the producer is emitted before the read that consumes it.
+  assert(c.indexOf("const settingsKey =") < c.indexOf("settingsData.load"));
 });
 
 Deno.test("planManifest — coordinator weave: no reads / no writes omit their sections", () => {

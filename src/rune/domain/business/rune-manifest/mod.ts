@@ -720,6 +720,39 @@ function jsdocSafe(description: string): string {
   return description.replaceAll("*/", "*​/");
 }
 
+// TS primitives / keywords that may legitimately appear in a `[TYP]` union — a
+// union containing any of these is a REAL type union (e.g. `string | number`),
+// NOT a string-literal enum, so its members are left unquoted (enumMembers).
+const TS_TYPE_TOKENS = new Set([
+  "string", "number", "boolean", "bigint", "symbol", "object",
+  "null", "undefined", "void", "unknown", "any", "never",
+  "true", "false", "Uint8Array", "Date",
+]);
+
+// A bare-word union like `GET | POST | DELETE` (or `draft | sent | declinedBot`)
+// is a STRING-LITERAL ENUM: each member is a value, not a TS type reference, so
+// it must be quoted — emitted bare it compiles to `Cannot find name 'GET'`
+// (TS2304). Returns the members when `typeName` is such an enum, else null: a
+// real type union (`string | number`, `FooDto | BarDto`), an already-quoted
+// union, or any non-union passes through verbatim.
+function enumMembers(typeName: string): string[] | null {
+  if (!typeName.includes("|")) return null;
+  const parts = typeName.split("|").map((p) => p.trim());
+  if (parts.length < 2) return null;
+  for (const p of parts) {
+    if (!/^[A-Za-z_$][\w$]*$/.test(p)) return null; // quoted / numeric / generic
+    if (TS_TYPE_TOKENS.has(p)) return null; // a real primitive union
+    if (/Dto$/.test(p)) return null; // a union of DTO references
+  }
+  return parts;
+}
+
+// The members of an enum [TYP] as a TS array literal: `["GET", "POST", …]` —
+// shared by the field type, the @IsIn validator, and the @ApiProperty enum hint.
+function enumList(members: string[]): string {
+  return `[${members.map((m) => JSON.stringify(m)).join(", ")}]`;
+}
+
 // Map a rune [TYP] primitive to a TS type + the class-validator decorator that
 // validates it. Unknown/unmapped types keep their TS spelling with no decorator.
 function tsFor(typeName: string | undefined): { ts: string; dec: string | null } {
@@ -734,10 +767,16 @@ function tsFor(typeName: string | undefined): { ts: string; dec: string | null }
       // No [TYP] matched the field name — emit `unknown` with no validator.
       // renderDto flags these with a `// TODO: tighten` marker so the gap stays visible.
       return { ts: "unknown", dec: null };
-    default:
-      // A non-primitive type name (e.g. a nested [DTO] referenced directly, or a
-      // generic) passes through verbatim with no decorator.
+    default: {
+      // A bare-word union is a string-literal enum — quote the members so it
+      // type-checks (`"GET" | "POST"`); renderDto/renderTyp validate it with
+      // @IsIn. Anything else (a nested [DTO], a generic) passes through verbatim.
+      const members = enumMembers(typeName);
+      if (members) {
+        return { ts: members.map((m) => JSON.stringify(m)).join(" | "), dec: null };
+      }
       return { ts: typeName, dec: null };
+    }
   }
 }
 
@@ -845,7 +884,11 @@ function renderDto(
 
     const typ = types.typMap.get(base);
     const { ts: baseTs, dec } = tsFor(typ?.typeName);
-    const ts = array ? `${baseTs}[]` : baseTs;
+    // A union element (`"a" | "b"`, `x | y`) must be parenthesized before `[]`,
+    // else `"a" | "b"[]` parses as `"a" | ("b"[])`. Non-unions keep bare `T[]`.
+    const ts = array
+      ? (baseTs.includes("|") ? `(${baseTs})[]` : `${baseTs}[]`)
+      : baseTs;
     // A field whose base resolves to no [TYP] lands as `unknown` with no
     // validator — @Allow() keeps it on the instance (assert validates with
     // whitelist: true, which strips undecorated properties), and the marker
@@ -924,13 +967,36 @@ function renderDto(
       else if (id === "int") pushHint(`type: "integer"`);
       else if (id === "nonempty" && !array) api.push("minLength: 1");
     }
+    // A bare-word union [TYP] (`GET | POST | …`) is a string-literal enum: the
+    // field is typed as the quoted union (tsFor) and validated with @IsIn rather
+    // than left to @Allow(). `(s)` arrays validate per element; `(s?)` skips the
+    // element check (like the modifier constraints) but still documents the enum.
+    const enumVals = typ ? enumMembers(typ.typeName) : null;
+    if (enumVals) {
+      const list = enumList(enumVals);
+      if (!lenientArray) {
+        validators.add("IsIn");
+        constraints.push(array ? `@IsIn(${list}, { each: true })` : `@IsIn(${list})`);
+      }
+      pushHint(`enum: ${list}`);
+    }
     if (typ?.typeName === "Uint8Array") api.push(`type: "string"`, `format: "binary"`);
     if (itemHint.length > 0) api.push(`items: { ${itemHint.join(", ")} }`);
     // `(s?)` arrays keep only @IsArray() (emitted above) — the element type check is dropped so
     // dirty inbound data (e.g. a null in pathway_tags) is tolerated instead of hard-422ing.
     if (baseDec && !lenientArray) {
       validators.add(baseDec);
-      decorators.push(array ? `@${baseDec}({ each: true })` : `@${baseDec}()`);
+      if (!array) {
+        decorators.push(`@${baseDec}()`);
+      } else if (baseDec === "IsNumber") {
+        // IsNumber(options?, validationOptions?) — `each` is a validation option,
+        // so it belongs in the SECOND arg. `@IsNumber({ each: true })` puts it in
+        // IsNumberOptions (TS2353). IsString/IsBoolean take only validationOptions,
+        // so their single-arg each-form is already correct.
+        decorators.push(`@IsNumber({}, { each: true })`);
+      } else {
+        decorators.push(`@${baseDec}({ each: true })`);
+      }
     }
     decorators.push(...constraints);
     // A [TYP] resolving to a non-primitive (union, generic, Uint8Array) is
@@ -1058,6 +1124,12 @@ function renderTyp(
   }
   if (enforced.length > 0) {
     lines.push(`// enforced on DTO fields: ${enforced.join(", ")}`);
+  }
+  // A bare-word union [TYP] is a string-literal enum (tsFor quotes the members);
+  // DTO fields of this type are validated with @IsIn rather than left unchecked.
+  const enumVals = enumMembers(typ.typeName);
+  if (enumVals) {
+    lines.push(`// enforced on DTO fields: @IsIn(${enumList(enumVals)})`);
   }
   if (typ.isExternal) {
     lines.push(
@@ -1330,19 +1402,52 @@ function renderCoordinator(
   const outputSeam = seamFor(req.output, typMap);
   // Validated input replaces `input` everywhere downstream.
   const inputRef = inputSeam.kind === "opaque" ? "input" : "validInput";
+  // The generated field names of the request input DTO — a scalar step param is
+  // sourced from `inputRef.<p>` ONLY when it names one of these.
+  const inputDto = types.dtoByName.get(req.input);
+  const inputFields = new Set(inputDto ? dtoFieldNames(inputDto) : []);
+  // Pure value-producer steps keyed by the scalar value they output (DTO outputs
+  // go through the post-core read path instead). A boundary param that is neither
+  // a request-input field nor a DTO is one of these produced mid-flow values —
+  // `settingsKey` from a `settingsKey::current()` step, say.
+  const producers = new Map<string, StepNode>();
+  for (const s of req.steps) {
+    if (s.kind === "step" && s.output && s.output !== "void" && !/Dto$/.test(s.output)) {
+      if (!producers.has(s.output)) producers.set(s.output, s);
+    }
+  }
+  // Which produced values the SHELL boundaries actually consume — transitively,
+  // since one producer may consume another's output. These are hoisted as real
+  // local bindings before the reads so a boundary references the binding instead
+  // of a bogus `input.<name>` (the value isn't an input field — TS2339).
+  const hoisted = new Set<string>();
+  const queue: string[] = [];
+  const consider = (p: string) => {
+    if (!/Dto$/.test(p) && !inputFields.has(p) && producers.has(p) && !hoisted.has(p)) {
+      hoisted.add(p);
+      queue.push(p);
+    }
+  };
+  for (const s of [...inputReads, ...sends, ...coreReads]) s.params.forEach(consider);
+  while (queue.length) producers.get(queue.shift()!)!.params.forEach(consider);
   // A whole-DTO param is the coordinator's own input DTO — pass the validated input that's
   // already in scope (`validInput`, or `input` when there's no seam), not `undefined as never`.
+  // A scalar param resolves to its hoisted producer local when produced mid-flow,
+  // else to the validated input field (the residual `input.<p>` covers an unbound
+  // param — a spec error left visible, unchanged from before).
+  const scalarRef = (p: string): string =>
+    !inputFields.has(p) && hoisted.has(p) ? p : `${inputRef}.${p}`;
   const stepArgs = (params: string[]): string =>
     params
-      .map((p) => /Dto$/.test(p) ? inputRef : `${inputRef}.${p}`)
+      .map((p) => /Dto$/.test(p) ? inputRef : scalarRef(p))
       .join(", ");
   // Args for a post-core read: a core-built DTO comes from `out.<field>`
-  // (asserted at the seam), the request input DTO stays `inputRef`, TYP params
-  // are input fields.
+  // (asserted at the seam), the request input DTO stays `inputRef`, scalar params
+  // are input fields or hoisted producer locals.
   const coreReadArgs = (r: { noun: string; verb: string; params: string[] }): string =>
     r.params
       .map((p) => {
-        if (!/Dto$/.test(p)) return `${inputRef}.${p}`;
+        if (!/Dto$/.test(p)) return scalarRef(p);
         if (p === req.input) return inputRef;
         return `assert(${p}, out.${camel(p)}, "${r.noun}.${r.verb} ${camel(p)}")`;
       })
@@ -1427,6 +1532,23 @@ function renderCoordinator(
   }
   for (const n of boundaryNouns) {
     L.push(`  const ${camel(n)}Data = new ${toPascal(n)}Data();`);
+  }
+  // value producers — pure steps whose scalar output a boundary below consumes.
+  // Emitted from the first-wins `producers` map (so a value with two producers
+  // binds once) in spec order — a producer feeding another is declared first —
+  // making each a real local the reads/sends reference instead of a missing
+  // input field. Static steps call the class; instance steps `new` it.
+  if (hoisted.size) {
+    L.push("");
+    L.push("  // value producers — pure steps whose output the boundaries below consume");
+    for (const [name, s] of producers) {
+      if (!hoisted.has(name)) continue;
+      const cls = toPascal(s.noun);
+      const call = s.isStatic
+        ? `${cls}.${s.verb}(${stepArgs(s.params)})`
+        : `new ${cls}().${s.verb}(${stepArgs(s.params)})`;
+      L.push(`  const ${name} = ${call};`);
+    }
   }
   if (readVars.length) {
     L.push("");

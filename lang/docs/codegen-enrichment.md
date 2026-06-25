@@ -433,7 +433,7 @@ Mapping into the merged object:
   })
   @IsOptional()
   @IsArray()
-  @IsNumber({ each: true })
+  @IsNumber({}, { each: true })
   @Min(0, { each: true })
   @Max(100, { each: true })
   qtys?: number[];
