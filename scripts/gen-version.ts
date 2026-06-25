@@ -20,6 +20,12 @@
 const OUT = "src/core/dto/version.gen.ts";
 
 function version(): string {
+  // CI stamps the exact release version it is about to cut (the `release-rune`
+  // workflow's `version` job), so a `vX.Y.Z` release and the binary's `rune -v`
+  // never disagree. The leading `v` is optional. Locally this is unset and we
+  // fall back to keep/deno.json (the canonical semver the JSR auto-bump moves).
+  const override = Deno.env.get("RUNE_VERSION_OVERRIDE");
+  if (override && override.trim()) return override.trim().replace(/^v/, "");
   try {
     const { version } = JSON.parse(Deno.readTextFileSync("keep/deno.json"));
     if (typeof version === "string" && version) return version;
