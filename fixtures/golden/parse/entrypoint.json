@@ -68,7 +68,9 @@
       "input": "NewOrderDto",
       "output": "OrderDto",
       "modifier": null,
-      "line": 2
+      "line": 2,
+      "method": null,
+      "pathTemplate": null
     },
     {
       "surface": "http",
@@ -76,7 +78,9 @@
       "input": "PayDto",
       "output": "ReceiptDto",
       "modifier": null,
-      "line": 3
+      "line": 3,
+      "method": null,
+      "pathTemplate": null
     }
   ],
   "dtos": [

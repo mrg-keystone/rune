@@ -389,13 +389,15 @@ The LSP enforces these rules:
 messages):
 
 - Unknown modifier:
-  `[TYP] unknown modifier "<m>" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>)`
+  `[TYP] unknown modifier "<m>" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>, from=<path|path*|query|header>)`
 - Constraint on the wrong base primitive:
   `[TYP] modifier "<m>" requires a <string|number> type, but "<name>" is <declaredType>`
 - Missing or non-numeric value on `min`/`max`:
   `[TYP] modifier "<m>" requires a numeric value (e.g. min=0)`
   — and a value on a modifier that takes none:
   `[TYP] modifier "<m>" does not take a value`
+- A `from=` source outside the closed set:
+  `[TYP] modifier "from" must be one of path, path*, query, header (got "<v>")`
 
 `[REQ]` takes **no** modifier: any `[REQ:x]` is an error
 (`[REQ] does not take a modifier`; `[REQ:core]` keeps its specific message —

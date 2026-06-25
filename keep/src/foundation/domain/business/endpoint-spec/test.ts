@@ -13,7 +13,7 @@ const doc: OpenApiDocument = {
         parameters: [
           { name: "orderId", in: "path", required: true },
           { name: "dryRun", in: "query" },
-          { name: "x-trace", in: "header" }, // headers are not editable params
+          { name: "x-trace", in: "header" }, // a header-sourced field — now an editable param
         ],
         requestBody: {
           content: {
@@ -110,11 +110,12 @@ Deno.test("endpointsFromDoc - arrays report type array with [] example", () => {
   assertEquals(tags.example, []);
 });
 
-Deno.test("endpointsFromDoc - extracts path/query params, ignores headers", () => {
+Deno.test("endpointsFromDoc - extracts path/query/header params", () => {
   const [ep] = endpointsFromDoc(doc);
   assertEquals(ep.params, [
     { name: "orderId", in: "path", required: true },
     { name: "dryRun", in: "query", required: false },
+    { name: "x-trace", in: "header", required: false },
   ]);
 });
 

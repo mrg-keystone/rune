@@ -133,6 +133,7 @@ type Transport = (
   method: string,
   path: string,
   body: unknown,
+  headers?: Record<string, string>,
 ) => Promise<CallResult>;
 
 /**
@@ -170,7 +171,9 @@ function buildValues(
   overrides: SeedOverrides,
 ): Record<string, unknown> {
   const values: Record<string, unknown> = {};
-  for (const field of ep.inputFields) {
+  // Body fields AND path/query/header params can all be seeded by name.
+  const seedFields = [...ep.inputFields, ...ep.params.map((p) => p.name)];
+  for (const field of seedFields) {
     if (overrides.seeds && field in overrides.seeds) {
       values[field] = overrides.seeds[field];
     }
@@ -230,6 +233,15 @@ function buildValues(
     }
     values[f.name] = f.example;
   }
+  // Path/query/header params carry no body, so prefill them from the field's example (a path param
+  // especially has nowhere else to come from in an unseeded walk).
+  for (const p of ep.params) {
+    if (p.name in values) continue;
+    if (p.example === undefined || p.example === null || p.example === "") {
+      continue;
+    }
+    values[p.name] = p.example;
+  }
   Object.assign(values, overrides.byEndpoint?.[ep.bareId] ?? {});
   // Coerce assembled values to their declared schema type (mirrors the cake client): a clean
   // string form for an integer/number/boolean/object field is converted, so a headless caller can
@@ -254,13 +266,53 @@ function buildValues(
   return values;
 }
 
-/** Substitute `{name}` path params from the assembled values. */
+/** Substitute `{name}` path params from the assembled values. Encode PER SEGMENT so a catch-all
+ * (`path*`) remainder keeps its `/` separators — `v1/users/42` must not become `v1%2Fusers%2F42`,
+ * which would collapse the remainder into one segment. A single-segment param with no `/` encodes
+ * exactly as before. */
 function resolvePath(path: string, values: Record<string, unknown>): string {
   return path.replace(
     /\{([^}]+)\}/g,
     (_m, name) =>
-      name in values ? encodeURIComponent(String(values[name])) : `{${name}}`,
+      name in values
+        ? String(values[name]).split("/").map(encodeURIComponent).join("/")
+        : `{${name}}`,
   );
+}
+
+/**
+ * Split an endpoint's assembled values by field source: path params substituted into the URL,
+ * query params appended to the query string, header params returned separately, and everything
+ * else (body-sourced) kept as the JSON body. Endpoints with no field sources behave exactly as
+ * before — `ep.params` is empty, so the body is the full value map and the path is untouched.
+ */
+function buildRequest(
+  ep: RunEndpoint,
+  values: Record<string, unknown>,
+): { path: string; body: Record<string, unknown>; headers: Record<string, string> } {
+  let path = resolvePath(ep.path, values);
+  const query: string[] = [];
+  const headers: Record<string, string> = {};
+  const paramNames = new Set<string>();
+  for (const prm of ep.params) {
+    paramNames.add(prm.name);
+    const v = values[prm.name];
+    if (v === undefined || v === null || v === "") continue;
+    if (prm.in === "query") {
+      query.push(
+        `${encodeURIComponent(prm.name)}=${encodeURIComponent(String(v))}`,
+      );
+    } else if (prm.in === "header") {
+      headers[prm.name] = String(v);
+    }
+    // path / path* are already substituted by resolvePath's `{name}` replacement.
+  }
+  if (query.length) path += (path.includes("?") ? "&" : "?") + query.join("&");
+  const body: Record<string, unknown> = {};
+  for (const k of Object.keys(values)) {
+    if (!paramNames.has(k)) body[k] = values[k];
+  }
+  return { path, body, headers };
 }
 
 async function buildTransport(
@@ -288,14 +340,15 @@ async function buildTransport(
       baseURL: opts.baseUrl,
       extraHTTPHeaders: headers,
     });
-    const transport: Transport = async (method, path, body) => {
+    const transport: Transport = async (method, path, body, extra) => {
       try {
         const res = await ctx.fetch(path, {
           method,
           data: method === "GET" ? undefined : (body ?? {}),
-          headers: method === "GET"
-            ? undefined
-            : { "content-type": "application/json" },
+          headers: {
+            ...(method === "GET" ? {} : { "content-type": "application/json" }),
+            ...(extra ?? {}), // header-sourced fields
+          },
         });
         const text = await res.text();
         let parsed: unknown;
@@ -316,9 +369,10 @@ async function buildTransport(
     return { transport, dispose: () => ctx.dispose() };
   }
 
-  const transport: Transport = async (method, path, body) => {
+  const transport: Transport = async (method, path, body, extra) => {
     try {
-      const init: RequestInit = { method, headers: { ...headers } };
+      // header-sourced fields first; auth headers stay authoritative.
+      const init: RequestInit = { method, headers: { ...(extra ?? {}), ...headers } };
       if (method !== "GET") {
         (init.headers as Record<string, string>)["content-type"] =
           "application/json";
@@ -550,13 +604,13 @@ export async function exerciseEndpoints(
       for (const id of pending) {
         const ep = byId.get(id)!;
         const values = buildValues(ep, store, overrides);
-        const path = resolvePath(ep.path, values);
+        const { path, body, headers } = buildRequest(ep, values);
         const result = results.get(id)!;
         const attempt = async () => {
           result.attempts++;
           const t0 = performance.now();
           const call = await limiter.run(() =>
-            transport(ep.method, path, values)
+            transport(ep.method, path, body, headers)
           );
           result.ms = Math.round(performance.now() - t0);
           return call;

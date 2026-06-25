@@ -32,7 +32,10 @@ import {
   renderParams,
   toPascal,
 } from "@rune/domain/business/rune-sig/mod.ts";
-import { TYP_MODIFIERS } from "@rune/domain/business/rune-modifiers/mod.ts";
+import {
+  type FieldSource,
+  TYP_MODIFIERS,
+} from "@rune/domain/business/rune-modifiers/mod.ts";
 import type { Artifact } from "@rune/domain/business/artifact/mod.ts";
 
 export interface FilePlan {
@@ -1803,6 +1806,76 @@ function computeEntProcess(
   return out;
 }
 
+// Field-source binding (OpenAPI's parameter model): a `[TYP:from=path|path*|query|header]`
+// modifier on an input-DTO field declares where that field is populated from at the HTTP
+// boundary. Body is the default (no `from=`), so untouched DTOs route exactly as before.
+// Returns the sourced fields in DECLARATION order — the order path segments append to the route.
+function inputFieldSources(
+  inputDtoName: string,
+  types: TypeContext,
+): Array<{ field: string; source: FieldSource }> {
+  const dto = types.dtoByName.get(inputDtoName);
+  if (!dto) return [];
+  const out: Array<{ field: string; source: FieldSource }> = [];
+  for (const raw of dto.properties) {
+    // Mirror renderDto's property parsing so the field name matches the emitted DTO property.
+    const array = /\(s\??\)/.test(raw);
+    const base = raw.replace(/\(s\??\)/g, "").replace(/\?/g, "").trim();
+    const name = array ? `${base}s` : base;
+    const mod = types.typMap.get(base)?.modifiers.find((m) => m.startsWith("from="));
+    if (!mod) continue;
+    out.push({ field: name, source: mod.slice("from=".length) as FieldSource });
+  }
+  return out;
+}
+
+// The HTTP sub-path for an [ENT] under its controller surface. The base is the kebab action;
+// each path-sourced field appends a `:field` segment in declaration order, and a `path*`
+// (catch-all remainder) appends a trailing `:field{.+}` — Hono's slash-capturing named param. It
+// always trails (a catch-all must be last) regardless of where the path* field sits in the DTO.
+// keep's doc builder rewrites `{.+}` to the paren form for swagger (path-to-regexp can't parse the
+// brace form) while Hono serves the brace form, so the route is both routable and documentable.
+function entRoutePath(
+  action: string,
+  sources: Array<{ field: string; source: FieldSource }>,
+): string {
+  const segs = [applyCase(action, "kebab")];
+  let catchAll: string | null = null;
+  for (const { field, source } of sources) {
+    if (source === "path") segs.push(`:${field}`);
+    else if (source === "path*") catchAll = field;
+  }
+  if (catchAll) segs.push(`:${catchAll}{.+}`);
+  return segs.join("/");
+}
+
+// Translate an explicit `[ENT]` path template to the served (Hono) sub-path. `{name}` → `:name`,
+// `{name*}` (catch-all) → `:name{.+}`; literal segments pass through; a leading `/` is dropped
+// (the segment mounts under the controller surface). `/proxy/{target}/{path*}` → `proxy/:target/:path{.+}`.
+function translateTemplate(tpl: string): string {
+  return tpl
+    .replace(/^\//, "")
+    .split("/")
+    .filter((seg) => seg !== "")
+    .map((seg) => {
+      const m = seg.match(/^\{(\w+)(\*?)\}$/);
+      if (!m) return seg;
+      return m[2] ? `:${m[1]}{.+}` : `:${m[1]}`;
+    })
+    .join("/");
+}
+
+// The path/path* sources a `{name}` / `{name*}` template declares (so a field needn't repeat
+// `[TYP:from=path]` when the template already names it).
+function templateSources(tpl: string): Record<string, FieldSource> {
+  const out: Record<string, FieldSource> = {};
+  for (const seg of tpl.split("/")) {
+    const m = seg.match(/^\{(\w+)(\*?)\}$/);
+    if (m) out[m[1]] = m[2] ? "path*" : "path";
+  }
+  return out;
+}
+
 // One keep controller per surface: one `@Endpoint` method per [ENT], delegating to
 // the coordinator matched by (input, output) DTO pair. The decorator carries the
 // computed order/dependsOn/bind so keep serves it, documents it, and the emulator +
@@ -1870,8 +1943,22 @@ function renderEntrypointController(
     // An empty input (`({})`) has no request body — omit `input:` (emitting `input: {}` trips
     // keep's Type constraint, TS2740) and generate a no-param handler below.
     const noInput = ent.input === "{}";
+    // Field-source binding: path/query/header-sourced input fields route into the URL/headers
+    // instead of the JSON body. `sources` (declaration order) drives the route segments, keep's
+    // generic binder, the swagger params, and the cake's per-field rendering.
+    const fieldSources = noInput ? [] : inputFieldSources(ent.input, types);
+    const sources: Record<string, FieldSource> = {};
+    for (const fs of fieldSources) sources[fs.field] = fs.source;
+    // An explicit `@ METHOD /template` defines the route + verb and contributes its `{name}` /
+    // `{name*}` path sources; otherwise the route is auto-derived from the from= path fields.
+    const routePath = ent.pathTemplate
+      ? translateTemplate(ent.pathTemplate)
+      : entRoutePath(ent.action, fieldSources);
+    if (ent.pathTemplate) Object.assign(sources, templateSources(ent.pathTemplate));
+    const method = ent.method && ent.method !== "post" ? ent.method : null;
     const opts = [
-      `path: ${JSON.stringify(applyCase(ent.action, "kebab"))}`,
+      `path: ${JSON.stringify(routePath)}`,
+      ...(method ? [`method: ${JSON.stringify(method)}`] : []),
       ...(noInput ? [] : [`input: ${ent.input}`]),
       `output: ${ent.output}`,
       `order: ${p.order}`,
@@ -1884,6 +1971,7 @@ function renderEntrypointController(
       );
     }
     if (p.optional) opts.push("optional: true");
+    if (Object.keys(sources).length) opts.push(`sources: ${JSON.stringify(sources)}`);
     // E38: a JSDoc block (delegate target, @param/@returns from DTO prose,
     // @throws from the coordinator's faults) plus `//` lines explaining the
     // derived process metadata. The @Endpoint decorator itself stays one line.

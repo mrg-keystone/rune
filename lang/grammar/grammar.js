@@ -39,7 +39,7 @@ module.exports = grammar({
     // ---- generated keyword rules --------------------------------------
     // [REQ] Requirement (indent 0)
     req_tag: ($) => "[REQ]",
-    req_line: ($) => seq($.req_tag, field("noun", $.identifier), optional(seq(choice(".", "::"), field("verb", $.method_name))), $.parameters, ":", $.return_type),
+    req_line: ($) => seq($.req_tag, field("noun", $.identifier), optional(seq(choice(".", "::"), field("verb", $.method_name))), optional($.http_route), $.parameters, ":", $.return_type),
 
     // [MOD] Module (indent 0)
     mod_tag: ($) => "[MOD]",
@@ -91,10 +91,16 @@ module.exports = grammar({
         field("noun", $.identifier),
         choice(".", "::"),
         field("verb", $.method_name),
+        optional($.http_route),
         $.parameters
       ),
 
     method_name: ($) => /[a-zA-Z][a-zA-Z0-9_-]*/,
+
+    // [ENT] field-source binding: an optional "@ METHOD /path/{seg}/{seg-star}" clause between the
+    // verb and the parameters. One anchored token (@ + space + verb + space + slash-led path), so
+    // it never collides with @docs (no space after the @) or // line comments.
+    http_route: ($) => token(seq("@", /\s+/, /[A-Za-z]+/, /\s+/, "/", /[^\s()]*/)),
 
     parameters: ($) => seq("(", optional($._param_list), ")"),
 

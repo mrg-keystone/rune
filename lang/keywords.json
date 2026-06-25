@@ -836,6 +836,18 @@
       "param": "text",
       "syntax": "[TYP:example=orders]",
       "description": "A real sample value for the field, emitted as @ApiProperty({ example }) — keep's runner and cake fill required, unbound input fields from it so headless walks don't 422. The value runs to the next comma/], so it cannot contain a comma. Composes: [TYP:ext,example=orders]."
+    },
+    {
+      "id": "from",
+      "token": ":from",
+      "label": "From",
+      "appliesTo": [
+        "typ"
+      ],
+      "kind": "constraint",
+      "param": "text",
+      "syntax": "[TYP:from=path]",
+      "description": "Field-source binding (OpenAPI's parameter model): where this field is populated from at the HTTP boundary — path | path* | query | header. Body is the default, so a field with no from= routes exactly as before. `path*` is the catch-all path remainder. The codegen appends a route segment for path fields and binds every sourced field into the DTO server-side (path/query in the URL, headers as request headers). Composes: [TYP:from=query,example=widgets]."
     }
   ],
   "bindings": {

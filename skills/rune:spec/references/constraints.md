@@ -170,15 +170,56 @@ the `[SRV]` block; `SIDECAR` is the sidecar transport; `DB_URL` is its env var; 
 | Each name must be unique | ERROR |
 | All defined types must be used | WARNING |
 | Bracket modifiers are comma-separated: `[TYP:ext,uuid]` | - |
-| Unknown modifier (allowed: `ext`, `core`, `uuid`, `email`, `url`, `nonempty`, `int`, `min=<n>`, `max=<n>`, `positive`) | ERROR |
+| Unknown modifier (allowed: `ext`, `core`, `uuid`, `email`, `url`, `nonempty`, `int`, `min=<n>`, `max=<n>`, `positive`, `example=<value>`, `from=<path\|path*\|query\|header>`) | ERROR |
 | `uuid` / `email` / `url` / `nonempty` require a `string` type | ERROR |
 | `int` / `min=N` / `max=N` / `positive` require a `number` type | ERROR |
 | `min` / `max` require a numeric value (e.g. `min=0`) | ERROR |
+| `from` value outside `path` / `path*` / `query` / `header` | ERROR |
 | Value on a modifier that takes none | ERROR |
 
 Constraint modifiers become class-validator decorators on generated DTO
 fields (`(s)` array properties use the `{ each: true }` forms) — the full
 decorator table is in `spec.md` under **Constraint Modifiers**.
+
+### Field-source binding (`from=`)
+
+`[TYP:from=path|path*|query|header]` declares **where an input field is
+populated from** at the HTTP boundary, adopting OpenAPI's parameter model.
+**Body is the default** — a field with no `from=` is read from the JSON body
+exactly as before, so existing specs are unchanged.
+
+| `from=` | Source | Route effect |
+|---------|--------|--------------|
+| `path` | a named URL path segment | appends `/:field` to the endpoint route |
+| `path*` | the catch-all path remainder (may span `/`) | appends a trailing slash-capturing segment |
+| `query` | a query-string value | — (read from `?field=…`) |
+| `header` | a request header | — (read from the headers) |
+
+The route is **derived automatically** from the action plus the path fields in
+declaration order — no path template is written in the spec. Every layer reads
+the same per-field source: the framework binds each field from its source and
+merges them into one validated input DTO (so the coordinator signature is
+unchanged); the docs render path/query/header params (out of the request body);
+the cake renders each field at its source. Example:
+
+```
+[ENT] http.proxy(ProxyReqDto): ProxyResDto
+
+[DTO] ProxyReqDto: target, rest, q, payload
+    a request proxied to an upstream service
+
+[TYP:from=path] target: string
+    the upstream host segment
+[TYP:from=path*] rest: string
+    the remaining upstream path
+[TYP:from=query] q: string
+    a forwarded query parameter
+[TYP] payload: string
+    the forwarded request body
+```
+
+→ `POST /http/proxy/:target/:rest{.+}` with `q` as a query param and `payload`
+in the body. `from=` composes with the other modifiers (`[TYP:from=query,example=widgets]`).
 
 Built-in primitives: `string`, `number`, `boolean`, `void`, `Uint8Array`, `Class`, `Primitive`
 

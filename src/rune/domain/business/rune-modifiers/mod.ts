@@ -13,6 +13,9 @@ export interface TypModifierSpec {
   /** Whether the modifier takes a free-text value (example=orders). The value
    * runs to the next comma/`]`, so it cannot itself contain a comma. */
   takesText: boolean;
+  /** When set, a `takesText` value is constrained to this closed set (e.g.
+   * `from` ∈ path|path*|query|header). null = any non-empty text. */
+  values: readonly string[] | null;
   /** class-validator import name, or null when nothing is emitted. */
   decorator: string | null;
   /** Decorator call for a scalar field, e.g. "@IsUUID()" / "@Min(0)". */
@@ -29,9 +32,17 @@ function entry(
   call: (value: string | null) => string,
   eachCall: (value: string | null) => string,
   takesText = false,
+  values: readonly string[] | null = null,
 ): [string, TypModifierSpec] {
-  return [id, { id, base, takesValue, takesText, decorator, call, eachCall }];
+  return [id, { id, base, takesValue, takesText, values, decorator, call, eachCall }];
 }
+
+/** The closed set of input sources a `from=` modifier may name. `path*` is the
+ * catch-all remainder (everything after the named path segments). Body is the
+ * default — a field with no `from=` is body-sourced, so untouched specs are
+ * byte-for-byte unchanged. */
+export const FIELD_SOURCES = ["path", "path*", "query", "header"] as const;
+export type FieldSource = (typeof FIELD_SOURCES)[number];
 
 export const TYP_MODIFIERS: ReadonlyMap<string, TypModifierSpec> = new Map([
   entry("ext", null, false, null, () => "", () => ""),
@@ -105,10 +116,16 @@ export const TYP_MODIFIERS: ReadonlyMap<string, TypModifierSpec> = new Map([
   // inputs from it instead of 422ing in any headless walk. No base
   // requirement (the literal is typed by the declared primitive at codegen).
   entry("example", null, false, null, () => "", () => "", true),
+  // from=<source> — where the field is populated from at the HTTP boundary
+  // (OpenAPI's parameter model: path/query/header; body is the default ⇒ omit).
+  // `path*` is the catch-all remainder. No decorator (binding is the framework's
+  // job, not class-validation) and no base requirement; the value is a closed
+  // set. The codegen reads it to route the segment + bind the DTO field.
+  entry("from", null, false, null, () => "", () => "", true, FIELD_SOURCES),
 ]);
 
 const ALLOWED =
-  "(allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>)";
+  "(allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>, from=<path|path*|query|header>)";
 
 const NUMERIC = /^-?\d+(\.\d+)?$/;
 
@@ -151,6 +168,15 @@ export function parseTypModifiers(raw: string | null): {
       if (value === null || value === "") {
         errors.push(
           `[TYP] modifier "${id}" requires a value (e.g. example=orders)`,
+        );
+        continue;
+      }
+      // A closed-set value modifier (`from`) rejects anything outside its set.
+      if (spec.values && !spec.values.includes(value)) {
+        errors.push(
+          `[TYP] modifier "${id}" must be one of ${
+            spec.values.join(", ")
+          } (got "${value}")`,
         );
         continue;
       }

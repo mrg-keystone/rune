@@ -579,9 +579,11 @@ export const emulatorClientJs: string = String.raw`
     var p = ep.path;
     var query = [];
     ep.params.forEach(function (prm) {
+      if (prm.in === "header") return; // header-sourced fields ride in request headers, not the URL
       var resolved = resolveString(paramVal(ep, prm.name, overrideParams), missing);
       if (prm.in === "path") {
-        var enc = encodeURIComponent(String(resolved));
+        // Encode per segment so a catch-all (path*) remainder keeps its "/" separators.
+        var enc = String(resolved).split("/").map(encodeURIComponent).join("/");
         p = p.split("{" + prm.name + "}").join(enc);
         // Colon-style needs a word boundary so :id never eats into :idType.
         var colonRe = new RegExp(":" + prm.name.replace(/[^\w]/g, "\\$&") + "(?!\\w)", "g");
@@ -593,6 +595,18 @@ export const emulatorClientJs: string = String.raw`
     });
     return appRoot + p + (query.length ? "?" + query.join("&") : "");
   }
+  // Header-sourced fields ([TYP:from=header]) → a { name: value } map for the request headers.
+  function headersFor(ep, missing, overrideParams) {
+    var out = {};
+    ep.params.forEach(function (prm) {
+      if (prm.in !== "header") return;
+      var resolved = resolveString(paramVal(ep, prm.name, overrideParams), missing);
+      if (resolved !== "" && resolved !== null && resolved !== undefined) {
+        out[prm.name] = String(resolved);
+      }
+    });
+    return out;
+  }
 
   function shq(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
   function curlFor(ep) {
@@ -600,6 +614,8 @@ export const emulatorClientJs: string = String.raw`
     var lines = ["curl -X " + ep.method + " " + shq(urlFor(ep, missing))];
     var t = token();
     if (t) lines.push("-H " + shq("authorization: Bearer " + t));
+    var hdrs = headersFor(ep, missing);
+    Object.keys(hdrs).forEach(function (k) { lines.push("-H " + shq(k + ": " + hdrs[k])); });
     if (hasBody(ep)) {
       lines.push("-H " + shq("content-type: application/json"));
       var r = resolveBody(ep);
@@ -2377,6 +2393,7 @@ export const emulatorClientJs: string = String.raw`
       init.body = r.raw ? r.rawText : JSON.stringify(r.value);
     }
     var url = urlFor(ep, missing, override && override.params);
+    var headerParams = headersFor(ep, missing, override && override.params);
     if (missing.length) {
       var who = missing.map(function (m) { return "{{" + m + "}}"; }).join(", ");
       // record the failure shape so the heal rules can diagnose it
@@ -2386,6 +2403,8 @@ export const emulatorClientJs: string = String.raw`
       updateAll();
       return blocked(who + " cannot be resolved yet — run the step that produces it, or set it as a variable");
     }
+    // Header-sourced fields first, so the auth token (and content-type) stay authoritative.
+    Object.assign(init.headers, headerParams);
     var t = token();
     if (t) init.headers["authorization"] = "Bearer " + t;
 

@@ -1,6 +1,6 @@
 import { SpecBuilder, SwaggerModule } from "#danet/swagger";
 import "#reflect-metadata";
-import { Type } from "@types";
+import type { Type } from "@types";
 import { DanetApplication, Module } from "#danet/core";
 import { getSwaggerDescription } from "@foundation/domain/business/swagger-description/mod.ts";
 import {
@@ -9,6 +9,38 @@ import {
 } from "@foundation/domain/business/endpoint-decorator/mod.ts";
 
 const HTTP_METHODS = ["get", "post", "put", "patch", "delete"] as const;
+
+// danet stores each handler's route under this Reflect key on the method function.
+const ROUTE_METADATA_KEY = "endpoint";
+
+/**
+ * Hono routes a catch-all path field as `:field{.+}` (slash-capturing), but @danet/swagger parses
+ * routes with path-to-regexp@6, which THROWS on the brace form (and on a bare `*`). Rewrite each
+ * handler's stored route to the equivalent paren form `:field(.*)` for the duration of doc
+ * generation — both yield the same `{field}` OpenAPI path param — then restore via the returned
+ * thunks so the SERVED Hono route keeps its slash-capturing brace form. A no-op for ordinary
+ * routes (no braces), so non-catch-all endpoints are untouched.
+ */
+function swaggerSafeRoutes(mod: Type): Array<() => void> {
+  const meta = Reflect.getMetadata("module", mod) ?? {};
+  const controllers: Type[] = meta.controllers ?? [];
+  const restores: Array<() => void> = [];
+  for (const controller of controllers) {
+    const proto = controller.prototype;
+    for (const name of Object.getOwnPropertyNames(proto)) {
+      if (name === "constructor") continue;
+      const fn = (proto as Record<string, unknown>)[name];
+      const route = Reflect.getMetadata(ROUTE_METADATA_KEY, fn as object);
+      if (typeof route !== "string" || !route.includes("{")) continue;
+      const safe = route.replace(/\{[^}]*\}/g, "(.*)");
+      Reflect.defineMetadata(ROUTE_METADATA_KEY, safe, fn as object);
+      restores.push(() =>
+        Reflect.defineMetadata(ROUTE_METADATA_KEY, route, fn as object)
+      );
+    }
+  }
+  return restores;
+}
 
 // Refcount for the console.log silence in setupFacade. Composed apps init several throwaway
 // facades CONCURRENTLY (Promise.all over modules); only the 0→1 transition saves the real
@@ -120,10 +152,14 @@ export class DanetDocumentBuilder {
   async createDocument(spec: Spec): Promise<{ doc: Document; path: string }> {
     const swaggerModuleHost = await this.setupFacade(spec.module);
     const rawPath = `/${Spec.getCleanName(spec.module.name).toLowerCase()}`;
-    const doc = await SwaggerModule.createDocument(
-      swaggerModuleHost,
-      spec.value,
-    );
+    // Make brace catch-all routes parseable by @danet/swagger's path-to-regexp, then restore.
+    const restoreRoutes = swaggerSafeRoutes(spec.module);
+    let doc: Document;
+    try {
+      doc = await SwaggerModule.createDocument(swaggerModuleHost, spec.value);
+    } finally {
+      for (const restore of restoreRoutes) restore();
+    }
     attachProcessMetadata(
       doc as unknown as { paths?: Record<string, Record<string, unknown>> },
       spec.module,

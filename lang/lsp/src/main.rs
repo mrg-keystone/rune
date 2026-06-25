@@ -334,7 +334,7 @@ impl Backend {
                     consecutive_empty = 0;
                 }
 
-                LineKind::Ent { input, output, indent, .. } => {
+                LineKind::Ent { input, output, indent, method, .. } => {
                     if *indent != 0 {
                         diagnostics.push(diag_err(line_num, "[ENT] must start at column 0".to_string()));
                     }
@@ -343,6 +343,18 @@ impl Backend {
                     }
                     if !output.ends_with("Dto") {
                         diagnostics.push(diag_err(line_num, format!("[ENT] output must be a DTO, got '{}'", output)));
+                    }
+                    // An explicit `@ METHOD` must name a real HTTP verb (mirrors the TS engine).
+                    if let Some(m) = method {
+                        if !matches!(m.as_str(), "get" | "post" | "put" | "patch" | "delete") {
+                            diagnostics.push(diag_err(
+                                line_num,
+                                format!(
+                                    "[ENT] HTTP method must be one of GET, POST, PUT, PATCH, DELETE (got \"{}\")",
+                                    m.to_uppercase()
+                                ),
+                            ));
+                        }
                     }
                     in_req = false;
                     in_ent = true;
@@ -771,21 +783,26 @@ fn validate_typ_modifiers(raw: &str, name: &str, declared_type: &str) -> Vec<Str
             Some((i, v)) => (i, Some(v)),
             None => (item, None),
         };
-        // Required base type per modifier; None = ext/core/example (no base requirement).
+        // Required base type per modifier; None = ext/core/example/from (no base requirement).
         let base: Option<&str> = match id {
-            "ext" | "core" | "example" => None,
+            "ext" | "core" | "example" | "from" => None,
             "uuid" | "email" | "url" | "nonempty" => Some("string"),
             "int" | "min" | "max" | "positive" => Some("number"),
             _ => {
                 errors.push(format!(
-                    "[TYP] unknown modifier \"{}\" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>)",
+                    "[TYP] unknown modifier \"{}\" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>, from=<path|path*|query|header>)",
                     id
                 ));
                 continue;
             }
         };
         let takes_value = id == "min" || id == "max";
-        let takes_text = id == "example";
+        let takes_text = id == "example" || id == "from";
+        // Closed-set value modifiers (`from` ∈ path|path*|query|header); None = any non-empty text.
+        let allowed_values: Option<&[&str]> = match id {
+            "from" => Some(&["path", "path*", "query", "header"]),
+            _ => None,
+        };
         if takes_value {
             let numeric = value.map(is_plain_decimal).unwrap_or(false);
             if !numeric {
@@ -803,6 +820,19 @@ fn validate_typ_modifiers(raw: &str, name: &str, declared_type: &str) -> Vec<Str
                     id
                 ));
                 continue;
+            }
+            // A closed-set value modifier rejects anything outside its set (byte-exact w/ engine).
+            if let Some(set) = allowed_values {
+                let v = value.unwrap_or("");
+                if !set.contains(&v) {
+                    errors.push(format!(
+                        "[TYP] modifier \"{}\" must be one of {} (got \"{}\")",
+                        id,
+                        set.join(", "),
+                        v
+                    ));
+                    continue;
+                }
             }
         } else if value.is_some() {
             errors.push(format!("[TYP] modifier \"{}\" does not take a value", id));
@@ -1693,13 +1723,36 @@ mod tests {
         assert!(validate_typ_modifiers("positive", "amount", "number").is_empty());
         assert!(validate_typ_modifiers("example=orders", "tableName", "string").is_empty());
         assert!(validate_typ_modifiers("ext,example=42", "qty", "number").is_empty());
+        // from= accepts the closed source set on any base type, and composes.
+        for src in ["path", "path*", "query", "header"] {
+            assert!(
+                validate_typ_modifiers(&format!("from={src}"), "target", "string").is_empty(),
+                "from={src} should be accepted"
+            );
+        }
+        assert!(validate_typ_modifiers("from=query,example=widgets", "q", "string").is_empty());
+    }
+
+    #[test]
+    fn typ_modifier_from_bad_source() {
+        // Out-of-set value — byte-exact with the TS engine.
+        assert_eq!(
+            validate_typ_modifiers("from=body", "target", "string"),
+            vec!["[TYP] modifier \"from\" must be one of path, path*, query, header (got \"body\")"
+                .to_string()]
+        );
+        // Bare `from` (no value) is the generic free-text error, not the enum error.
+        assert_eq!(
+            validate_typ_modifiers("from", "target", "string"),
+            vec!["[TYP] modifier \"from\" requires a value (e.g. example=orders)".to_string()]
+        );
     }
 
     #[test]
     fn typ_modifier_unknown() {
         assert_eq!(
             validate_typ_modifiers("bogus", "id", "string"),
-            vec!["[TYP] unknown modifier \"bogus\" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>)".to_string()]
+            vec!["[TYP] unknown modifier \"bogus\" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>, from=<path|path*|query|header>)".to_string()]
         );
     }
 
@@ -1768,7 +1821,30 @@ mod tests {
         assert!(validate_typ_modifiers("min=1.25", "qty", "number").is_empty());
         assert_eq!(
             validate_typ_modifiers("min = 5", "qty", "number"),
-            vec!["[TYP] unknown modifier \"min \" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>)".to_string()]
+            vec!["[TYP] unknown modifier \"min \" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>, from=<path|path*|query|header>)".to_string()]
+        );
+    }
+
+    // --- [ENT] @ METHOD /template (field-source binding, Feature B) -------
+
+    const ENT_TPL_SPEC: &str = "[MOD] m\n[ENT] http.proxy @ POST /proxy/{target}/{path*}(InDto): OutDto\n[REQ] proxy.run(InDto): OutDto\n    noop::run(): void\n[DTO] InDto: target\n    a\n[DTO] OutDto: status\n    b\n[TYP] target: string\n    c\n[TYP] status: string\n    d";
+
+    #[test]
+    fn ent_route_template_method_validated_and_verb_clean() {
+        // A valid `@ POST` template produces NO method diagnostic, and the verb parses clean
+        // (the `@ …` clause is stripped, so it doesn't leak into the verb / spurious errors).
+        let good = Backend::compute_diagnostics(ENT_TPL_SPEC, &std::collections::HashSet::new());
+        assert!(
+            !good.iter().any(|d| d.message.contains("HTTP method")),
+            "valid @ POST template must not flag the method: {good:?}"
+        );
+        // A bad method is flagged byte-exactly (mirrors the TS engine).
+        let bad_spec = ENT_TPL_SPEC.replace("@ POST", "@ FETCH");
+        let bad = Backend::compute_diagnostics(&bad_spec, &std::collections::HashSet::new());
+        assert!(
+            bad.iter().any(|d| d.message
+                == "[ENT] HTTP method must be one of GET, POST, PUT, PATCH, DELETE (got \"FETCH\")"),
+            "bad method must be flagged: {bad:?}"
         );
     }
 

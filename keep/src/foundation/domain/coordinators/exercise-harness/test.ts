@@ -1,6 +1,7 @@
 import "#reflect-metadata";
 import { assert, assertEquals } from "#assert";
 import { ApiProperty } from "#danet/swagger/decorators";
+import { IsString } from "class-validator";
 import {
   Endpoint,
   EndpointController,
@@ -174,6 +175,80 @@ Deno.test("exerciseEndpoints - chains across modules in a composed app", async (
     assertEquals(report.failed.map((r) => r.id), []);
     // users.create runs before orders.place, and its id feeds the cross-module bind.
     assert(report.order.indexOf("create") < report.order.indexOf("place"));
+  } finally {
+    await server.stop();
+  }
+});
+
+// ── field-source binding (path / path* / query / header) ───────────────────
+
+// rune always emits a class-validator decorator per [TYP] field (here @IsString from `: string`).
+class ProxyReqDto {
+  @ApiProperty()
+  @IsString()
+  target!: string; // from=path
+  @ApiProperty()
+  @IsString()
+  rest!: string; // from=path* (catch-all remainder)
+  @ApiProperty()
+  @IsString()
+  q!: string; // from=query
+  @ApiProperty()
+  @IsString()
+  auth!: string; // from=header
+  @ApiProperty()
+  @IsString()
+  payload!: string; // body
+}
+class ProxyEchoDto {
+  @ApiProperty()
+  @IsString()
+  echo!: string;
+}
+
+@EndpointController("gw")
+class GatewayController {
+  // Mirrors what `rune manifest` emits for an [ENT] whose input DTO has [TYP:from=...] fields.
+  @Endpoint({
+    path: "proxy/:target/:rest{.+}",
+    input: ProxyReqDto,
+    output: ProxyEchoDto,
+    order: 1,
+    sources: { target: "path", rest: "path*", q: "query", auth: "header" },
+  })
+  proxy(body: ProxyReqDto): ProxyEchoDto {
+    // Echo every field so a green walk PROVES each arrived from its declared source.
+    return {
+      echo: [body.target, body.rest, body.q, body.auth, body.payload].join("|"),
+    };
+  }
+}
+
+const GatewayModule = endpointModule("Gateway", [GatewayController]);
+
+Deno.test("exerciseEndpoints - binds path/path*/query/header from sources, body for the rest", async () => {
+  const server = await bootstrapServer("gw-app", GatewayModule);
+  try {
+    const report = await exerciseEndpoints({
+      api: server,
+      overrides: {
+        seeds: {
+          target: "api.example.com",
+          rest: "v1/users/42", // a slash-spanning catch-all remainder
+          q: "widgets",
+          auth: "Bearer t0ken",
+          payload: "hello",
+        },
+      },
+    });
+    assertEquals(report.failed.map((r) => r.id), []);
+    assertEquals(report.passed.map((r) => r.id), ["proxy"]);
+    // The echo proves each field was bound from its source (incl. the slash-spanning catch-all).
+    const row = report.passed.find((r) => r.id === "proxy")!;
+    assertEquals(
+      (row.body as { echo: string }).echo,
+      "api.example.com|v1/users/42|widgets|Bearer t0ken|hello",
+    );
   } finally {
     await server.stop();
   }

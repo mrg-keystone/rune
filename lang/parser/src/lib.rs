@@ -47,6 +47,8 @@ pub enum LineKind {
         input: String,
         output: String,
         indent: usize,
+        /// Explicit HTTP verb (lowercased) from an `@ METHOD /…` clause, if any.
+        method: Option<String>,
     },
     Step {
         noun: String,
@@ -294,7 +296,7 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
             in_dto_block = false;
             in_typ_block = false;
             in_non_block = false;
-            if let Some((noun, verb, input, output, is_camel_case)) = parse_req_signature(rest) {
+            if let Some((noun, verb, input, output, is_camel_case, _method)) = parse_req_signature(rest) {
                 results.push(ParsedLine { line_num, kind: LineKind::Req { noun, verb, input, output, indent: actual_indent, is_camel_case, modifier } });
             } else {
                 results.push(ParsedLine { line_num, kind: LineKind::Unknown("[REQ] missing signature".to_string()) });
@@ -313,8 +315,8 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
             in_dto_block = false;
             in_typ_block = false;
             in_non_block = false;
-            if let Some((noun, verb, input, output, _cc)) = parse_req_signature(rest) {
-                results.push(ParsedLine { line_num, kind: LineKind::Ent { noun, verb, input, output, indent: actual_indent } });
+            if let Some((noun, verb, input, output, _cc, method)) = parse_req_signature(rest) {
+                results.push(ParsedLine { line_num, kind: LineKind::Ent { noun, verb, input, output, indent: actual_indent, method } });
             } else {
                 results.push(ParsedLine { line_num, kind: LineKind::Unknown("[ENT] missing signature".to_string()) });
             }
@@ -717,7 +719,9 @@ fn parse_signature(s: &str) -> Option<(String, String, Vec<String>, String, bool
     Some((noun, verb, params, output, is_static))
 }
 
-fn parse_req_signature(s: &str) -> Option<(String, String, String, String, bool)> {
+fn parse_req_signature(
+    s: &str,
+) -> Option<(String, String, String, String, bool, Option<String>)> {
     let s = s.trim();
     let paren_open = s.find('(')?;
     let paren_close = s.find(')')?;
@@ -730,8 +734,17 @@ fn parse_req_signature(s: &str) -> Option<(String, String, String, String, bool)
     let input = s[paren_open + 1..paren_close].trim().to_string();
     let output = s[colon_pos + 1..].trim().to_string();
 
-    // Find separator: either :: (static) or . (instance)
-    let name_part = &s[..paren_open];
+    // An optional `@ METHOD <template>` clause ([ENT] only) sits before `(`. Strip it for the
+    // noun/verb split (the verb is left of `@`) and capture the method (lowercased) for validation.
+    let raw_name = &s[..paren_open];
+    let (name_part, method): (&str, Option<String>) = match raw_name.find('@') {
+        Some(at) => {
+            let clause = raw_name[at + 1..].trim();
+            let m = clause.split_whitespace().next().map(|w| w.to_lowercase());
+            (&raw_name[..at], m)
+        }
+        None => (raw_name, None),
+    };
     let (noun, verb, is_camel_case) = if let Some(pos) = name_part.find("::") {
         let noun = name_part[..pos].trim().to_string();
         let verb = name_part[pos + 2..].trim().to_string();
@@ -762,7 +775,7 @@ fn parse_req_signature(s: &str) -> Option<(String, String, String, String, bool)
         return None;
     }
 
-    Some((noun, verb, input, output, is_camel_case))
+    Some((noun, verb, input, output, is_camel_case, method))
 }
 
 fn parse_partial_signature(s: &str) -> Option<(String, String, Vec<String>, String, bool)> {

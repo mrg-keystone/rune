@@ -17,6 +17,7 @@ import "#reflect-metadata";
 import {
   Body,
   Controller,
+  createParamDecorator,
   Delete,
   Get,
   Module,
@@ -26,6 +27,12 @@ import {
 } from "#danet/core";
 import { BodyType, Description, ReturnedType } from "#danet/swagger/decorators";
 import { SwaggerDescription } from "@foundation/domain/business/swagger-description/mod.ts";
+import {
+  assembleSourcedInput,
+  coerceToType,
+  type FieldSource,
+} from "@foundation/domain/business/input-binder/mod.ts";
+import { assert } from "../../../../assert/mod.ts";
 import type { Type } from "@types";
 
 /** Where the per-endpoint process metadata is stored, keyed on (controller prototype, method). */
@@ -83,6 +90,14 @@ export interface EndpointOptions {
   stub?: boolean;
   /** Human description → OpenAPI operation description. */
   description?: string;
+  /**
+   * Per-field input source (OpenAPI's parameter model). A field named here is bound from the URL
+   * path / query string / request header instead of the JSON body, then merged back into the
+   * input DTO server-side (so the handler still receives one validated DTO). Omitted ⇒ body — the
+   * default, so endpoints without it route exactly as before. The route's `:field` / `:field{.+}`
+   * segments are provided by `path`; this map tells the binder where to read each field.
+   */
+  sources?: Record<string, FieldSource>;
 }
 
 /** Normalized process metadata attached to each `@Endpoint` handler. */
@@ -96,6 +111,9 @@ export interface ProcessMetadata {
   stub: boolean;
   method: EndpointMethod;
   path: string;
+  /** Per-field input source. Present only when at least one field is non-body, so endpoints
+   * without field-source binding keep their existing x-keep-process shape. */
+  sources?: Record<string, FieldSource>;
 }
 
 const MAPPING: Record<EndpointMethod, (endpoint?: string) => MethodDecorator> =
@@ -116,14 +134,52 @@ export function Endpoint(opts: EndpointOptions = {}): MethodDecorator {
   return (target, propertyKey, descriptor) => {
     const method = opts.method ?? "post";
     const path = opts.path ?? "";
+    const sources = opts.sources ?? {};
+    const hasSources = Object.keys(sources).length > 0;
 
     // 1) danet route metadata — makes the handler routable AND gives Swagger its path + method.
     MAPPING[method](path)(target, propertyKey, descriptor);
 
-    // 2) request body — inject the parsed body at runtime and declare its type for Swagger.
+    // 2) request input — inject it at runtime and declare its body schema for Swagger.
     if (opts.input) {
-      Body()(target, propertyKey as string, 0);
-      BodyType(opts.input as unknown as Parameters<typeof BodyType>[0])(
+      const InputDto = opts.input;
+      if (hasSources) {
+        // Field-source binding: assemble the body with the path/query/header-sourced fields into
+        // the full input DTO ourselves, then validate via rune `assert` (a failure surfaces as the
+        // same RuneAssertError → HTTP 422 every other validated seam uses). danet's `@Body()` is
+        // NOT wired — it would 400 on a field that lives in the URL/header, not the JSON body.
+        const bindSourcedInput = createParamDecorator(async (context) => {
+          let body: Record<string, unknown> = {};
+          try {
+            const json = await context.req.json();
+            if (json && typeof json === "object" && !Array.isArray(json)) {
+              body = json as Record<string, unknown>;
+            }
+          } catch {
+            // No body or not JSON (e.g. a GET): the sourced fields supply everything.
+          }
+          const read = {
+            param: (n: string) => context.req.param(n),
+            query: (n: string) => context.req.query(n),
+            header: (n: string) => context.req.header(n),
+          };
+          const proto = (InputDto as unknown as { prototype: object }).prototype;
+          const merged = assembleSourcedInput(
+            body,
+            sources,
+            read,
+            (field, raw) =>
+              coerceToType(raw, Reflect.getMetadata("design:type", proto, field)),
+          );
+          return assert(InputDto as unknown as { new (): object }, merged);
+        });
+        bindSourcedInput()(target, propertyKey as string, 0);
+      } else {
+        Body()(target, propertyKey as string, 0);
+      }
+      // BodyType declares the requestBody schema for Swagger. For source-bound endpoints the doc
+      // builder strips the path/query/header fields from that schema (they become parameters).
+      BodyType(InputDto as unknown as Parameters<typeof BodyType>[0])(
         target,
         propertyKey,
         descriptor,
@@ -155,6 +211,8 @@ export function Endpoint(opts: EndpointOptions = {}): MethodDecorator {
       stub: opts.stub ?? false,
       method,
       path,
+      // Carry field sources only when present, so non-bound endpoints keep their exact metadata.
+      ...(hasSources ? { sources } : {}),
     };
     Reflect.defineMetadata(PROCESS_METADATA_KEY, meta, target, propertyKey);
   };

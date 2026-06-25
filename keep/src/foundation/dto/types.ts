@@ -33,15 +33,35 @@ export interface ProcessExtension {
   stub?: boolean;
   method: string;
   path: string;
+  /** Per-field input source (OpenAPI's parameter model): a field bound from the URL path / query
+   * string / request header instead of the JSON body. Absent ⇒ every field is body-sourced. */
+  sources?: Record<string, "path" | "path*" | "query" | "header">;
+}
+
+/** A JSON-schema-ish node as it appears in an operation's requestBody / parameter schema. */
+export interface OpenApiSchema {
+  $ref?: string;
+  type?: string;
+  properties?: Record<string, unknown>;
+  required?: string[];
 }
 
 /** Minimal structural view of the parts of an OpenAPI operation the emulator/runner read. */
 export interface OpenApiOperation {
   operationId?: string;
   description?: string;
-  requestBody?: { content?: Record<string, { schema?: { $ref?: string } }> };
+  requestBody?: { content?: Record<string, { schema?: OpenApiSchema }> };
   responses?: Record<string, unknown>;
-  parameters?: Array<{ name: string; in: string; required?: boolean }>;
+  parameters?: Array<
+    {
+      name: string;
+      in: string;
+      required?: boolean;
+      schema?: { type?: string };
+      description?: string;
+      example?: unknown;
+    }
+  >;
   "x-keep-process"?: ProcessExtension;
   [key: string]: unknown;
 }

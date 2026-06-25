@@ -1,0 +1,119 @@
+{
+  "module": "gateway",
+  "moduleDescription": null,
+  "reqs": [
+    {
+      "noun": "proxy",
+      "verb": "run",
+      "input": "ProxyReqDto",
+      "output": "ProxyResDto",
+      "steps": [
+        {
+          "kind": "step",
+          "noun": "noop",
+          "verb": "run",
+          "params": [],
+          "output": "void",
+          "isStatic": true,
+          "faults": [],
+          "line": 5
+        }
+      ],
+      "line": 4
+    }
+  ],
+  "ents": [
+    {
+      "surface": "http",
+      "action": "proxy",
+      "input": "ProxyReqDto",
+      "output": "ProxyResDto",
+      "modifier": null,
+      "line": 2,
+      "method": null,
+      "pathTemplate": null
+    }
+  ],
+  "dtos": [
+    {
+      "name": "ProxyReqDto",
+      "properties": [
+        "target",
+        "rest",
+        "q",
+        "payload"
+      ],
+      "description": "a request proxied to an upstream service",
+      "isCore": false,
+      "isOpen": false,
+      "line": 7
+    },
+    {
+      "name": "ProxyResDto",
+      "properties": [
+        "status"
+      ],
+      "description": "the upstream response",
+      "isCore": false,
+      "isOpen": false,
+      "line": 9
+    }
+  ],
+  "typs": [
+    {
+      "name": "target",
+      "typeName": "string",
+      "description": "the upstream host segment, taken from the URL path",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [
+        "from=path"
+      ],
+      "line": 12
+    },
+    {
+      "name": "rest",
+      "typeName": "string",
+      "description": "the remaining upstream path (catch-all)",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [
+        "from=path*"
+      ],
+      "line": 14
+    },
+    {
+      "name": "q",
+      "typeName": "string",
+      "description": "a forwarded query parameter",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [
+        "from=query",
+        "example=widgets"
+      ],
+      "line": 16
+    },
+    {
+      "name": "payload",
+      "typeName": "string",
+      "description": "the forwarded request body",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 18
+    },
+    {
+      "name": "status",
+      "typeName": "number",
+      "description": "the upstream status code",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 20
+    }
+  ],
+  "nons": [],
+  "srvs": [],
+  "errors": []
+}

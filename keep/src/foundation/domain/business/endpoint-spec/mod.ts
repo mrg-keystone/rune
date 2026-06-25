@@ -15,11 +15,14 @@ export interface SpecField {
   example: unknown;
 }
 
-/** One path or query parameter declared on the operation. */
+/** One path / query / header parameter declared on the operation. */
 export interface SpecParam {
   name: string;
   in: string;
   required: boolean;
+  /** Example value carried from the field's `[TYP:example=...]`, so headless walks and the cake
+   * can prefill it (path/query/header values come from no body). Absent when the field has none. */
+  example?: unknown;
 }
 
 export interface SpecEndpoint {
@@ -129,12 +132,14 @@ export function exampleFromSchema(
   }
 }
 
-function fieldsFromRef(
+/** Top-level fields of a schema node — a `$ref` to a component OR an inline object. (Field-source
+ * binding replaces a requestBody `$ref` with an inline object of just the body fields, so we must
+ * read both forms.) */
+function fieldsFromSchema(
   doc: OpenApiDocument,
-  ref: string | undefined,
+  node: SchemaNode | undefined,
 ): SpecField[] {
-  if (!ref) return [];
-  const schema = resolveRef(doc, { $ref: ref });
+  const schema = node?.$ref ? resolveRef(doc, node) : node;
   if (!schema?.properties) return [];
   const required = new Set(schema.required ?? []);
   return Object.entries(schema.properties).map(([name, prop]) => {
@@ -148,10 +153,27 @@ function fieldsFromRef(
   });
 }
 
+function fieldsFromRef(
+  doc: OpenApiDocument,
+  ref: string | undefined,
+): SpecField[] {
+  return ref ? fieldsFromSchema(doc, { $ref: ref }) : [];
+}
+
 function paramsFromOp(op: OpenApiOperation): SpecParam[] {
+  // path/query/header are all editable request inputs once an endpoint declares field sources
+  // (a rune `[TYP:from=...]` field). Other `in` values (cookie, …) aren't part of rune's model.
   return (op.parameters ?? [])
-    .filter((p) => p.in === "path" || p.in === "query")
-    .map((p) => ({ name: p.name, in: p.in, required: p.required ?? false }));
+    .filter((p) => p.in === "path" || p.in === "query" || p.in === "header")
+    .map((p) => {
+      const example = p.example ?? (p.schema as { example?: unknown } | undefined)?.example;
+      return {
+        name: p.name,
+        in: p.in,
+        required: p.required ?? false,
+        ...(example !== undefined ? { example } : {}),
+      };
+    });
 }
 
 /** Extract endpoints from one module document, in declaration order (callers re-order via processOrder). */
@@ -162,12 +184,11 @@ export function endpointsFromDoc(doc: OpenApiDocument): SpecEndpoint[] {
       const op = item[method];
       if (!op?.operationId) continue;
       const process = op["x-keep-process"];
-      const reqRef = op.requestBody?.content?.["application/json"]?.schema
-        ?.$ref;
+      const reqSchema = op.requestBody?.content?.["application/json"]?.schema;
       const resRef = (op.responses?.["200"] as
         | { content?: Record<string, { schema?: { $ref?: string } }> }
         | undefined)?.content?.["application/json"]?.schema?.$ref;
-      const inputSchema = fieldsFromRef(doc, reqRef);
+      const inputSchema = fieldsFromSchema(doc, reqSchema as SchemaNode | undefined);
       endpoints.push({
         id: op.operationId,
         method: method.toUpperCase(),

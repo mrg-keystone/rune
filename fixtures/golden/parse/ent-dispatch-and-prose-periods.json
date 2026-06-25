@@ -40,6 +40,8 @@
       "output": "AckDto",
       "modifier": null,
       "line": 7,
+      "method": null,
+      "pathTemplate": null,
       "delegate": {
         "noun": "fragment",
         "verb": "ingest"

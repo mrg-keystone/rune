@@ -1,7 +1,7 @@
 import "#reflect-metadata";
 import { getMetadataStorage } from "class-validator";
 import type { Server } from "@foundation/domain/business/server/mod.ts";
-import type { Type } from "@types";
+import type { OpenApiDocument, OpenApiSchema, Type } from "@types";
 import { Crawler } from "@foundation/domain/business/crawler/mod.ts";
 import { DanetDocumentBuilder } from "@foundation/domain/business/document-builder/mod.ts";
 import { IndexPageBuilder } from "@foundation/domain/business/index-page-builder/mod.ts";
@@ -54,6 +54,79 @@ export function honorOptionalProps(
   }
 }
 
+/**
+ * Apply field-source binding to a served doc. For each operation that declares input sources
+ * (`x-keep-process.sources`), move the path/query/header-sourced fields OUT of the requestBody and
+ * into typed parameters, so the OpenAPI doc reflects how each field is actually sent — path params
+ * are already emitted by @danet/swagger from the `:field` route segment, so this fills in query +
+ * header params (deduped) and trims the requestBody. The shared component schema is left intact;
+ * the requestBody's `$ref` is replaced with an inline object of just the body fields, so a DTO
+ * reused elsewhere keeps its full shape. A no-op for ordinary (all-body) endpoints.
+ */
+export function applyFieldSources(doc: OpenApiDocument): void {
+  const schemas = (doc.components?.schemas ?? {}) as Record<string, OpenApiSchema>;
+  const methods = ["get", "post", "put", "patch", "delete"] as const;
+  for (const pathItem of Object.values(doc.paths ?? {})) {
+    for (const method of methods) {
+      const op = pathItem[method];
+      const sources = op?.["x-keep-process"]?.sources;
+      if (!op || !sources || Object.keys(sources).length === 0) continue;
+
+      const reqSchema = op.requestBody?.content?.["application/json"]?.schema;
+      const comp = reqSchema?.$ref
+        ? schemas[reqSchema.$ref.split("/").pop() ?? ""]
+        : reqSchema;
+      const props = (comp?.properties ?? {}) as Record<
+        string,
+        { type?: string; description?: string; example?: unknown }
+      >;
+      const required = comp?.required ?? [];
+
+      // Parameters: path params are already present (danet derives them from the route); add the
+      // query + header params, and dedupe by (in, name) so we never double an auto-emitted one.
+      // Carry each field's example across so headless walks + the cake can prefill the param.
+      op.parameters = op.parameters ?? [];
+      const byKey = new Map(op.parameters.map((p) => [`${p.in}:${p.name}`, p]));
+      for (const [field, source] of Object.entries(sources)) {
+        const loc = source === "path*" ? "path" : source; // path*/path → path
+        const example = props[field]?.example;
+        const existing = byKey.get(`${loc}:${field}`);
+        if (existing) {
+          // danet auto-emitted this path param — enrich it with the field's example.
+          if (example !== undefined && existing.example === undefined) {
+            existing.example = example;
+          }
+          continue;
+        }
+        op.parameters.push({
+          name: field,
+          in: loc,
+          required: loc === "path" ? true : required.includes(field),
+          schema: { type: props[field]?.type ?? "string" },
+          description: props[field]?.description ?? "",
+          ...(example !== undefined ? { example } : {}),
+        });
+      }
+
+      // requestBody: keep only the body-sourced fields (inline, so the shared component is intact).
+      if (!op.requestBody) continue;
+      const bodyFields = Object.keys(props).filter((k) => !(k in sources));
+      if (bodyFields.length === 0) {
+        delete op.requestBody;
+        continue;
+      }
+      const inlineProps: Record<string, unknown> = {};
+      for (const k of bodyFields) inlineProps[k] = props[k];
+      const inlineRequired = required.filter((k) => !(k in sources));
+      op.requestBody.content!["application/json"].schema = {
+        type: "object",
+        properties: inlineProps,
+        ...(inlineRequired.length ? { required: inlineRequired } : {}),
+      };
+    }
+  }
+}
+
 export class SwaggerBuilder {
   private crawler: Crawler;
   private documentBuilder: DanetDocumentBuilder;
@@ -90,6 +163,9 @@ export class SwaggerBuilder {
     // optionalPropsByClassName above. (Entries are {doc, path} wrappers.)
     const optionals = optionalPropsByClassName();
     swaggerDocs.forEach((entry) => honorOptionalProps(entry.doc, optionals));
+    // Field-source binding: move path/query/header-sourced fields out of the body into params so
+    // the served doc matches how each field is sent (and the cake renders them at the right place).
+    swaggerDocs.forEach((entry) => applyFieldSources(entry.doc as unknown as OpenApiDocument));
     // Index from the CRAWLED modules, not server.moduleNames — the server only
     // registers the root module, so an imported module would get a /docs/<name>
     // page but no card on the index.

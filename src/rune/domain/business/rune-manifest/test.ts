@@ -1067,6 +1067,136 @@ Deno.test("planManifest — enum [TYP] becomes a quoted union + @IsIn, not bare 
   assertStringIncludes(dto, 'import { IsArray, IsIn } from "class-validator";');
 });
 
+Deno.test("planManifest — [TYP:from=...] derives the route + emits @Endpoint sources", () => {
+  const rune = `[MOD] gateway
+
+[ENT] http.proxy(ProxyReqDto): ProxyResDto
+
+[REQ] proxy.run(ProxyReqDto): ProxyResDto
+    noop::run(): void
+
+[DTO] ProxyReqDto: target, rest, q, payload
+    a proxied request
+[DTO] ProxyResDto: status
+    a proxied response
+
+[TYP:from=path] target: string
+    the upstream target
+[TYP:from=path*] rest: string
+    the remaining path
+[TYP:from=query] q: string
+    a search query
+[TYP] payload: string
+    the forwarded body
+[TYP] status: number
+    the upstream status`;
+  const plan = planManifest("specs/gateway.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const ctrl =
+    plan.toCreate.find((f) => f.path === "src/gateway/entrypoints/http/mod.ts")!.content;
+  // Route is auto-derived: kebab action + a `:field` per path field (declaration order) + a
+  // trailing `*` for the path* catch-all. Query fields stay out of the path. sources map carries
+  // every non-body field for keep's binder, the swagger params, and the cake.
+  assertStringIncludes(
+    ctrl,
+    '@Endpoint({ path: "proxy/:target/:rest{.+}", input: ProxyReqDto, output: ProxyResDto, order: 1, sources: {"target":"path","rest":"path*","q":"query"} })',
+  );
+  // The handler signature is unchanged — the binder reassembles the full DTO server-side.
+  assertStringIncludes(ctrl, "proxy(body: ProxyReqDto): Promise<ProxyResDto>");
+  // Every field (path/query/body) stays on the validated input DTO; from= rides in the provenance.
+  const dto = plan.toCreate.find((f) => f.content.includes("export class ProxyReqDto"))!.content;
+  for (const f of ["target", "rest", "q", "payload"]) {
+    assertStringIncludes(dto, `${f}!:`);
+  }
+  assertStringIncludes(dto, "// rune declares: [TYP:from=path] target: string");
+});
+
+Deno.test("planManifest — explicit [ENT] @ METHOD /template drives route + method + sources", () => {
+  const rune = `[MOD] gateway
+
+[ENT] http.proxy @ GET /proxy/{target}/{path*}(ProxyReqDto): ProxyResDto
+
+[REQ] proxy.run(ProxyReqDto): ProxyResDto
+    noop::run(): void
+
+[DTO] ProxyReqDto: target, path, q
+    a proxied request
+[DTO] ProxyResDto: status
+    the upstream response
+
+[TYP] target: string
+    the upstream host
+[TYP] path: string
+    the remaining path
+[TYP:from=query] q: string
+    a forwarded query parameter
+[TYP] status: number
+    the upstream status`;
+  const plan = planManifest("specs/gw.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const ctrl =
+    plan.toCreate.find((f) => f.path === "src/gateway/entrypoints/http/mod.ts")!.content;
+  // {name} → :name, {name*} → :name{.+}; the explicit GET is emitted; template path segments and
+  // the from=query field merge into one sources map.
+  assertStringIncludes(
+    ctrl,
+    '@Endpoint({ path: "proxy/:target/:path{.+}", method: "get", input: ProxyReqDto, output: ProxyResDto, order: 1, sources: {"q":"query","target":"path","path":"path*"} })',
+  );
+});
+
+Deno.test("planManifest — a bad [ENT] @ METHOD is an error", () => {
+  const rune = `[MOD] m
+
+[ENT] http.go @ FETCH /go(InDto): OutDto
+
+[REQ] go.run(InDto): OutDto
+    noop::run(): void
+
+[DTO] InDto: a
+    in
+[DTO] OutDto: b
+    out
+
+[TYP] a: string
+    x
+[TYP] b: string
+    y`;
+  const plan = planManifest("specs/m.rune", rune, new Set());
+  assertEquals(
+    plan.errors.some((e) =>
+      e.includes(
+        '[ENT] HTTP method must be one of GET, POST, PUT, PATCH, DELETE (got "FETCH")',
+      )
+    ),
+    true,
+  );
+});
+
+Deno.test("planManifest — a DTO with no from= emits no sources key (backward-compatible)", () => {
+  const rune = `[MOD] plain
+
+[ENT] http.make(MakeDto): DoneDto
+
+[REQ] make.run(MakeDto): DoneDto
+    noop::run(): void
+
+[DTO] MakeDto: name
+    an input
+[DTO] DoneDto: ok
+    an output
+
+[TYP] name: string
+    a name
+[TYP] ok: boolean
+    a flag`;
+  const plan = planManifest("specs/plain.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const ctrl =
+    plan.toCreate.find((f) => f.path === "src/plain/entrypoints/http/mod.ts")!.content;
+  assertStringIncludes(ctrl, '@Endpoint({ path: "make", input: MakeDto, output: DoneDto, order: 1 })');
+  assertEquals(ctrl.includes("sources:"), false);
+});
+
 Deno.test("planManifest — coordinator hoists a value-producer step feeding a read", () => {
   const rune = `[MOD] control
 

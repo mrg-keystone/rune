@@ -54,6 +54,16 @@ export interface EntNode {
   modifier: string | null;
   line: number;
   /**
+   * Explicit HTTP verb from an `[ENT] … @ POST /…` clause (lowercased). Null ⇒ POST (the default).
+   */
+  method?: string | null;
+  /**
+   * Explicit route template from `@ METHOD <template>` with `{name}` / `{name*}` segments
+   * (e.g. `/proxy/{target}/{path*}`). Null ⇒ the route is auto-derived from the action + the
+   * field sources. A `{name}` segment binds that field from the path, `{name*}` is the catch-all.
+   */
+  pathTemplate?: string | null;
+  /**
    * The [REQ] this ent dispatches to, captured from an indented `[REQ]` line in the ent body
    * (`[ENT] http.x(A): B` then `    [REQ] noun.verb(A): B`). When set, codegen delegates to exactly
    * this coordinator instead of guessing by the (input, output) signature.
@@ -365,6 +375,14 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
       if (!sig) {
         ast.errors.push({ line: i, message: "[ENT] missing or malformed signature" });
       } else {
+        // An explicit `@ METHOD` must name a real HTTP verb.
+        if (sig.method && !ENT_METHODS.has(sig.method)) {
+          ast.errors.push({
+            line: i,
+            message:
+              `[ENT] HTTP method must be one of GET, POST, PUT, PATCH, DELETE (got "${sig.method.toUpperCase()}")`,
+          });
+        }
         const entNode: EntNode = {
           surface: sig.noun,
           action: sig.verb,
@@ -372,6 +390,8 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
           output: sig.output,
           modifier: entTag.modifier,
           line: i,
+          method: sig.method ?? null,
+          pathTemplate: sig.pathTemplate ?? null,
         };
         ast.ents.push(entNode);
         currentEnt = entNode; // an indented [REQ] on the next line becomes its delegate
@@ -854,7 +874,14 @@ interface ReqSig {
   verb: string;
   input: string;
   output: string;
+  /** Explicit HTTP verb (lowercased) from an `[ENT] … @ POST /…` clause. */
+  method?: string;
+  /** Explicit route template from `@ METHOD <template>` (e.g. `/proxy/{target}/{path*}`). */
+  pathTemplate?: string;
 }
+
+/** HTTP verbs accepted in an `[ENT] … @ METHOD /…` clause (lowercased). */
+const ENT_METHODS = new Set(["get", "post", "put", "patch", "delete"]);
 
 function parseReqSignature(s: string): ReqSig | null {
   const trimmed = s.trim();
@@ -869,7 +896,25 @@ function parseReqSignature(s: string): ReqSig | null {
   const output = afterParen.slice(colonIdx + 1).trim();
   const input = trimmed.slice(parenOpen + 1, parenClose).trim();
 
-  const namePart = trimmed.slice(0, parenOpen);
+  // An optional `@ METHOD <template>` clause (`[ENT]` only) sits between the name and `(`:
+  //   http.proxy @ POST /proxy/{target}/{path*}(Dto): Dto
+  // Everything left of `@` is the noun.verb; `METHOD <template>` declares the route explicitly.
+  let namePart = trimmed.slice(0, parenOpen);
+  let method: string | undefined;
+  let pathTemplate: string | undefined;
+  const atIdx = namePart.indexOf("@");
+  if (atIdx !== -1) {
+    const clause = namePart.slice(atIdx + 1).trim();
+    namePart = namePart.slice(0, atIdx);
+    const sp = clause.search(/\s/);
+    if (sp === -1) {
+      method = clause.toLowerCase();
+      pathTemplate = "";
+    } else {
+      method = clause.slice(0, sp).trim().toLowerCase();
+      pathTemplate = clause.slice(sp + 1).trim();
+    }
+  }
   let noun: string;
   let verb: string;
 
@@ -900,7 +945,7 @@ function parseReqSignature(s: string): ReqSig | null {
   }
 
   if (noun === "" || verb === "") return null;
-  return { noun, verb, input, output };
+  return { noun, verb, input, output, method, pathTemplate };
 }
 
 function isFaultName(s: string): boolean {
