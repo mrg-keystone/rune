@@ -1,8 +1,9 @@
 #!/usr/bin/env sh
 # Install the rune CLI (rune + rune-lsp + rune-syntax) from GitHub Releases,
-# plus the rune Claude Code skills (rune:spec, rune:build, rune:framework,
-# rune:cake, rune:docs) into user scope (~/.claude/skills/). Between them the
-# skills cover both layers — spec authoring and the generated runtime.
+# plus the rune Claude Code skills (rune:scope, rune:spec, rune:data, rune:build,
+# rune:cake, rune:framework, rune:docs) into user scope (~/.claude/skills/). Between
+# them the skills cover the whole arc — product scoping, spec authoring, data
+# design, and the generated runtime.
 #
 # Installs CLEANLY: it first UNINSTALLS any existing rune (every known location),
 # then installs one fresh copy — so you never accumulate stale/duplicate binaries.
@@ -67,9 +68,9 @@ install_skills() {
     return 0
   fi
   mkdir -p "$SKILLS_DIR"
-  # Cutover: the monolith `rune` skill was split into rune:spec/build/framework/
-  # cake/docs. Remove a stale colon-less `rune` so it can't linger as a sixth
-  # skill whose triggers collide with the five (harmless if it was never there).
+  # Cutover: the monolith `rune` skill was split into the namespaced rune:* skills.
+  # Remove a stale colon-less `rune` so it can't linger as an extra skill whose
+  # triggers collide with them (harmless if it was never there).
   [ -d "$SKILLS_DIR/rune" ] && rm -rf "$SKILLS_DIR/rune"
   for d in "$1"/*/; do
     [ -d "$d" ] || continue
@@ -176,8 +177,9 @@ if [ "$os" = "Darwin" ]; then
 fi
 
 # The skills ship as a skill/ dir inside the release tarball, version-matched to
-# the binaries — that dir CONTAINS all five skill folders (rune:spec, rune:build,
-# rune:framework, rune:cake, rune:docs), so install_skills replaces each in turn.
+# the binaries — that dir CONTAINS every rune:* skill folder (rune:scope, rune:spec,
+# rune:data, rune:build, rune:cake, rune:framework, rune:docs), so install_skills
+# replaces each in turn.
 # Fallback for releases that predate the dir: fetch skills/MANIFEST.txt from the
 # repo at $RUNE_REF and curl each listed repo-relative path into a staging tree
 # mirroring skills/, then install every folder under it.

@@ -65,12 +65,7 @@ export type {
 export { createTokenAuthMiddleware } from "@foundation/domain/business/token-auth/mod.ts";
 export type { TokenAuthConfig } from "@foundation/domain/business/token-auth/mod.ts";
 export { isLocalRequest } from "@foundation/domain/business/localhost/mod.ts";
-export { embed, withBasePath } from "@foundation/domain/business/mount/mod.ts";
-export type {
-  EmbedContext,
-  EmbeddableBackend,
-  KeepState,
-} from "@foundation/domain/business/mount/mod.ts";
+export { withBasePath } from "@foundation/domain/business/mount/mod.ts";
 export type { FetchHandler } from "@types";
 export {
   isPublicContext,
@@ -129,12 +124,18 @@ export {
   EndpointController,
   endpointModule,
   getProcessMetadata,
+  getWsProcessMetadata,
   PROCESS_METADATA_KEY,
+  WS_PROCESS_METADATA_KEY,
+  WsEndpoint,
+  WsEndpointController,
 } from "@foundation/domain/business/endpoint-decorator/mod.ts";
 export type {
   EndpointMethod,
   EndpointOptions,
   ProcessMetadata,
+  WsEndpointOptions,
+  WsProcessMetadata,
 } from "@foundation/domain/business/endpoint-decorator/mod.ts";
 export { endpointsFromDoc } from "@foundation/domain/business/endpoint-spec/mod.ts";
 export type {

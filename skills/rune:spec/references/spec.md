@@ -521,6 +521,38 @@ names the **flow** an endpoint belongs to, expressing a branch:
 - `[ENT:optional]` (reserved) — the step is attempted but not required: its failure
   doesn't stop the cake's run-all or fail the harness report.
 
+### WebSocket entrypoints (`[ENT:ws]`)
+
+`[ENT:ws]` declares a **WebSocket** entrypoint instead of an HTTP route. It is a *socket
+header* that names the surface and the handshake path once; the indented lines below it are
+its **topics** — one message handler each:
+
+```
+[ENT:ws] chat @ /rooms/{room}
+    join(JoinDto): JoinedDto      # topic "join"
+    send(ChatDto): EchoDto        # topic "send"
+    leave(LeaveDto): void         # topic "leave" — no reply
+```
+
+- Format: `[ENT:ws] <surface> @ /path`, then indented `verb(InputDto): OutputDto` topics.
+- The client connects once to the handshake path; each message it sends is a JSON envelope
+  `{ "topic": "<verb>", "data": <InputDto> }`. The matching topic handler validates `data`
+  against its input DTO and may **return a reply DTO**, sent back **to that sender**. A
+  `void` topic sends no reply.
+- The verb is the message **topic**; the surface groups the topics into one socket. Each
+  topic still dispatches to the `[REQ]` it matches by `(input, output)` signature, exactly
+  like an HTTP `[ENT]`.
+- **Handshake bindings are connection-scoped.** A `{name}` path segment (or a
+  `[TYP:from=query]` field — e.g. an auth token, since a WS handshake can't set an
+  `Authorization` header) is read **once at connect**, not per message: the per-message
+  context carries only the topic and its `data`. Capture what a handler needs at connect.
+- A WS entrypoint carries no HTTP verb, so it never appears in the OpenAPI document or the
+  cake/headless endpoint walk. Maps to `src/<module>/entrypoints/<surface>/mod.ts` (a
+  `@WsEndpointController` with one `@WsEndpoint` per topic). A surface is either HTTP or WS,
+  never both.
+- Out of scope today: server-initiated **broadcast** to other clients (a handler replies
+  only to the sender) and binary / streaming frames.
+
 ### External inputs
 
 `[TYP:ext]` marks a value as produced **outside this module** (another module's

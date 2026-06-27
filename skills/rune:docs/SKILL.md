@@ -71,7 +71,9 @@ defer the full trust posture (in-process bypass is NOT honored on docs, the
 ## How the schema gets built
 
 Everything in the swagger doc derives from the `@Endpoint`'s `input`/`output`
-DTO classes plus the metadata `x-keep-process` that `@Endpoint` stamps. The
+DTO classes plus the metadata `x-keep-process` that `@Endpoint` stamps. (A
+`[ENT:ws]` socket's `@WsEndpoint` carries no HTTP verb, so it never appears in the
+doc — see `references/swagger.md`.) The
 DTO classes carry the schema because their fields are decorated — and **both**
 `@danet/swagger`'s `@ApiProperty()` and class-validator decorators
 (`@IsString()` etc.) emit the `design:type` reflection the schema builder

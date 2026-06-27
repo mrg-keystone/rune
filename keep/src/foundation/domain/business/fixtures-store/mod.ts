@@ -166,12 +166,16 @@ export function mergeFixtures(
 }
 
 /**
- * The directory holding `cake.json` (and `scenarios/`, `heal-rules.json`). When the project
- * has a `spec/` dir, this is the canonical `<cwd>/spec/misc` — beside `spec/runes/` (the
- * authored specs) and `spec/ui/` (the UI prototype). Projects without a `spec/` dir (older keep
- * apps, standalone usage) fall back to the legacy `<cwd>/fixtures`, so the default stays
- * non-breaking. `KEEP_FIXTURES_DIR` overrides everything (used by tests to redirect writes to a
- * temp dir, and by consumers who keep fixtures elsewhere).
+ * The directory holding `cake.json` (and `scenarios/`, `heal-rules.json`). `spec/` is the shared
+ * product contract and lives at the **git root** (a sibling of `.git`), so in a monorepo a backend
+ * launched from a package SUBDIR still reads/writes the ONE `<gitRoot>/spec/misc` — beside
+ * `spec/runes/` (the authored specs) and `spec/ui/` (the UI prototype). We find it by walking up
+ * to the nearest `.git`; when that root has a `spec/`, it wins. Otherwise we fall back to the
+ * cwd-local `<cwd>/spec/misc` (a standalone project run from its own root resolves here
+ * identically — there, the git root IS the cwd), then to the legacy `<cwd>/fixtures` for projects
+ * with no `spec/` at all, so the default stays non-breaking. `KEEP_FIXTURES_DIR` overrides
+ * everything (used by tests to redirect writes to a temp dir, and by consumers who keep fixtures
+ * elsewhere).
  */
 export function fixturesDir(): string {
   const override = (() => {
@@ -187,6 +191,40 @@ export function fixturesDir(): string {
     cwd = Deno.cwd();
   } catch {
     return "fixtures"; // no cwd/perms — best-effort relative legacy path
+  }
+  return resolveFixturesDir(cwd);
+}
+
+/** Walk up from `start` (absolute) to the nearest ancestor that contains a `.git` entry — a
+ * directory in a normal clone OR a file in a `git worktree` checkout — and return it, or
+ * `undefined` if none exists before the filesystem root. In a monorepo this is the shared root
+ * the frontend and backend agree on. Synchronous + subprocess-free (no `git` needed). */
+function nearestGitRoot(start: string): string | undefined {
+  let dir = start;
+  while (true) {
+    try {
+      Deno.lstatSync(`${dir}/.git`); // dir OR file — existence is enough
+      return dir;
+    } catch {
+      // not here — climb
+    }
+    const i = dir.lastIndexOf("/");
+    if (i <= 0) return undefined; // reached the filesystem root
+    dir = dir.slice(0, i);
+  }
+}
+
+/** Pure resolution of the fixtures dir from a working directory (no env / no `Deno.cwd()` read),
+ * so the monorepo / standalone / legacy branches are unit-testable. Prefers the shared
+ * `<gitRoot>/spec/misc`, else the cwd's own `spec/misc`, else the legacy `<cwd>/fixtures`. */
+export function resolveFixturesDir(cwd: string): string {
+  const gitRoot = nearestGitRoot(cwd);
+  if (gitRoot !== undefined) {
+    try {
+      if (Deno.statSync(`${gitRoot}/spec`).isDirectory) return `${gitRoot}/spec/misc`;
+    } catch {
+      // the git root has no spec/ — a non-rune monorepo, or specs kept per-package; fall through
+    }
   }
   try {
     if (Deno.statSync(`${cwd}/spec`).isDirectory) return `${cwd}/spec/misc`;

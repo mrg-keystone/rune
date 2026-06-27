@@ -410,6 +410,79 @@ Deno.test("parse — [ENT] entrypoint", () => {
   assertEquals(ast.ents[0].output, "IdDto");
 });
 
+Deno.test("parse — [ENT:ws] socket header + topics become kind:ws ents", () => {
+  const ast = parse(
+    `[ENT:ws] chat @ /rooms/{room}
+    join(JoinDto): JoinedDto
+    send(ChatDto): EchoDto
+    leave(LeaveDto): void`,
+  );
+  assertEquals(ast.errors, []);
+  assertEquals(ast.ents.length, 3);
+  for (const e of ast.ents) {
+    assertEquals(e.kind, "ws");
+    assertEquals(e.surface, "chat");
+    assertEquals(e.pathTemplate, "/rooms/{room}");
+    assertEquals(e.method, null);
+    assertEquals(e.modifier, null);
+  }
+  assertEquals(ast.ents.map((e) => e.action), ["join", "send", "leave"]);
+  assertEquals(ast.ents[0].input, "JoinDto");
+  assertEquals(ast.ents[0].output, "JoinedDto");
+  assertEquals(ast.ents[2].output, "void"); // a topic may mint no reply
+});
+
+Deno.test("parse — [ENT:ws] topic with an empty payload", () => {
+  const ast = parse(`[ENT:ws] ping @ /ping\n    beat(): PongDto`);
+  assertEquals(ast.errors, []);
+  assertEquals(ast.ents.length, 1);
+  assertEquals(ast.ents[0].kind, "ws");
+  assertEquals(ast.ents[0].action, "beat");
+  assertEquals(ast.ents[0].input, "");
+  assertEquals(ast.ents[0].output, "PongDto");
+});
+
+Deno.test("parse — [ENT:ws] socket closes on dedent; an http [ENT] after it still parses", () => {
+  const ast = parse(
+    `[ENT:ws] chat @ /rooms/{room}
+    send(ChatDto): EchoDto
+[ENT] http.health(VoidDto): OkDto`,
+  );
+  assertEquals(ast.errors, []);
+  assertEquals(ast.ents.length, 2);
+  assertEquals(ast.ents[0].kind, "ws");
+  assertEquals(ast.ents[1].kind, undefined); // http is the default (no kind set)
+  assertEquals(ast.ents[1].surface, "http");
+  assertEquals(ast.ents[1].action, "health");
+});
+
+Deno.test("parse — [ENT:ws] header without a path keeps the surface, null path", () => {
+  const ast = parse(`[ENT:ws] notify\n    push(MsgDto): AckDto`);
+  assertEquals(ast.errors, []);
+  assertEquals(ast.ents.length, 1);
+  assertEquals(ast.ents[0].surface, "notify");
+  assertEquals(ast.ents[0].pathTemplate, null);
+});
+
+Deno.test("parse — [ENT:ws] with no topics is an error (dedent and EOF)", () => {
+  const dedent = parse(`[ENT:ws] chat @ /rooms/{room}\n[DTO] X: a\n[TYP] a: string`);
+  assertEquals(dedent.errors.some((e) => e.message.includes("has no topics")), true);
+
+  const eof = parse(`[ENT:ws] chat @ /rooms/{room}`);
+  assertEquals(eof.errors.some((e) => e.message.includes("has no topics")), true);
+});
+
+Deno.test("parse — [ENT:ws] malformed topic is an error", () => {
+  const ast = parse(`[ENT:ws] chat @ /rooms/{room}\n    not a topic`);
+  assertEquals(ast.errors.some((e) => e.message.includes("malformed topic")), true);
+});
+
+Deno.test("parse — [ENT:ws] header carrying a full signature is rejected", () => {
+  const ast = parse(`[ENT:ws] chat.send(ChatDto): EchoDto`);
+  assertEquals(ast.errors.some((e) => e.message.includes("[ENT:ws] malformed")), true);
+  assertEquals(ast.ents.length, 0);
+});
+
 Deno.test("parse — comments stripped, pure-comment lines ignored", () => {
   const ast = parse(
     `// header comment

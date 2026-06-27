@@ -26,7 +26,7 @@ from "write it" to "watch it run green."
   `@mrg-keystone/rune` is a stable identifier, not a separate product.
 
 Everything else is shared across both layers and lives in exactly one place:
-`skills/` (the five rune skills — `rune:spec`/`build`/`framework`/`cake`/`docs`), `examples/` (spec→code
+`skills/` (the seven rune skills — `rune:scope`/`spec`/`data`/`build`/`cake`/`framework`/`docs`), `examples/` (spec→code
 demos and runnable backends), `e2e/` (the spec→runtime acceptance suite), `docs/`,
 `todos/`.
 
@@ -36,8 +36,8 @@ acceptances (`e2e/cake`, `e2e/checkout`), and the `examples/in-process-client` d
 — so they resolve the runtime from the **in-tree source** (`keep/`) and you can test
 rune against an unreleased runtime. Generated *user* projects still pin
 `jsr:@mrg-keystone/rune@^1` (they live outside this repo) — that is intentional and
-unchanged. (`rune-studio/` and `examples/fresh-project/` are standalone Vite/Fresh
-apps with their own lockfiles, run via their own `deno task dev`.)
+unchanged. (`rune-studio/` is a standalone Vite app with its own lockfile, run via
+its own `deno task dev`.)
 
 ## Install
 
@@ -195,7 +195,7 @@ deno task test:e2e                # the spec→runtime integration acceptance (e
 CI is path-filtered by layer:
 
 - `release-rune` rebuilds rune's rolling `latest` release — the three binaries
-  plus the five Claude skills (`skills/rune:*`, bundled as
+  plus the seven Claude skills (`skills/rune:*`, bundled as
   a `skill/` dir inside each tarball) — on any push **except** ones touching only
   runtime-owned or non-binary facets (`keep/`, `e2e/`, `examples/`, `docs/`,
   `todos/`).

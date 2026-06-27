@@ -4,12 +4,21 @@ description: >-
   Design the persistence layer for a rune module: read the `.rune` specs in
   `spec/runes/`+`src/` and the sprig UI prototype + design system in `spec/ui/`,
   then emit a
-  `spec/misc/data.json` that assigns every entity to **Firestore or Deno KV by
-  per-operation performance** and restructures the model to be **immutable —
-  new objects, never edits**. Use whenever you need to decide *how data is
-  stored*, *which store an entity belongs in*, or *how to make a flow append-only
-  instead of mutating*: "design the data structure / data model", "Firebase or
-  Deno KV for this?", "pick the datastore", "where should this entity live", "the
+  `spec/misc/data.json` that assigns every entity to a store — **SQLite when the
+  app runs local-only, otherwise Firestore or Deno KV by per-operation
+  performance, and S3 for large files / binary blobs** — restructures the
+  model to be **immutable —
+  new objects, never edits**, and sets a conscious **retention** per entity (a
+  **TTL** for ephemeral data, or **no TTL — permanent** for domain records). Use
+  whenever you need to decide *how data is
+  stored*, *which store an entity belongs in*, *how to make a flow append-only
+  instead of mutating*, or *how long the data should live*: "design the data
+  structure / data model", "Firebase or
+  Deno KV for this?", "is this local-only — can we just use SQLite?", "use sqlite
+  for this", "where do big files / uploads / images go?", "store this blob in S3",
+  "stub the large data with an s3 link", "how long should we keep this?", "does
+  this need a TTL or should it persist forever?", "set an expiry / TTL on this",
+  "pick the datastore", "where should this entity live", "the
   audit edits the record — make it immutable", "model this append-only", "optimize
   read/write performance for this view", "generate the data.json", "what indexes /
   keys do we need". Trigger even when the user says "data layer", "storage design",
@@ -39,17 +48,24 @@ asks *what* sits behind it. This skill answers that question. It reads the modul
 specs and its UI prototype, then produces a single design artifact, **`spec/misc/data.json`**,
 that decides for every entity:
 
-1. **Which store** — Firestore or Deno KV — based on the *performance profile of the
-   actual operations* the app runs against it.
+1. **Which store** — for a **local-only** app, **SQLite** (one embedded file that serves
+   every operation); otherwise **Firestore or Deno KV**, based on the *performance profile
+   of the actual operations* the app runs against it. Any payload that's a **large file or
+   binary blob** (an upload, image, video, PDF, export) goes to **S3** instead — its bytes
+   in a bucket, a small reference in the record store.
 2. **How to key/index it** so those operations are fast.
 3. **How to make it immutable** — restructure any "load → change → save" mutation into
    an append of a *new* object, so history is never overwritten.
+4. **How long to keep it** — a conscious **retention** call per entity: a **TTL** for
+   ephemeral data (sessions, caches, idempotency keys, signed-URL stubs, temp exports), or
+   **no TTL — permanent** for domain records and history. Large data is often *stubbed* by
+   an S3 link rather than stored inline; the object and the link each get a lifetime.
 
 The primary deliverable is `spec/misc/data.json`: a faithful, performance-justified,
 immutable-by-construction map of the module's data. But the design only pays off if the
-spec actually *uses* it, so this skill closes with a fourth step:
+spec actually *uses* it, so this skill closes with a fifth step:
 
-4. **Nudge the runes to fit the design** — make the *smallest* edits to the existing
+5. **Nudge the runes to fit the design** — make the *smallest* edits to the existing
    `.rune` specs that let the flows exploit the structure you just chose: surface an
    append-only trail as a readable `(s)` field, add the step that keeps a projection
    fresh, retag a verb whose meaning changed. **Create the data structure first, then
@@ -59,8 +75,9 @@ spec actually *uses* it, so this skill closes with a fourth step:
 
 ## This skill vs its siblings
 
-- **`rune:data` (here)** — *what* the data is and *where/how* it's stored: Firestore vs
-  Deno KV per operation, keys, indexes, immutability restructuring. Emits `spec/misc/data.json`,
+- **`rune:data` (here)** — *what* the data is and *where/how* it's stored: SQLite for a
+  local-only app, else Firestore vs Deno KV per operation, S3 for large files/blobs, plus
+  keys, indexes, immutability restructuring. Emits `spec/misc/data.json`,
   then makes **minimal, data-driven nudges to an existing spec** so the flows exploit that
   design (a readable trail field, a projection-maintenance step, a retagged verb).
 - **`rune:spec`** — *authors* the `.rune` DSL from intent: new `[NON]` entities, `[DTO]`s,
@@ -73,8 +90,9 @@ spec actually *uses* it, so this skill closes with a fourth step:
   that actually call the store. This skill tells build's adapters *which* store and
   *which* shape; it doesn't write them.
 - **`rune:framework`** — the runtime data **clients** behind a `[SRV]` (transport, env
-  wiring, the `src/core/data/<svc>` client). This skill decides Firestore-vs-KV at the
-  design level; framework is how a chosen client connects.
+  wiring, the `src/core/data/<svc>` client, including a local SQLite client). This skill
+  decides SQLite-vs-Firestore-vs-KV at the design level; framework is how a chosen client
+  connects.
 - **`rune:cake`** — exercises the built module against real data end-to-end. If a walk is
   slow or a write clobbers history, that's a signal to revisit `spec/misc/data.json` here.
 
@@ -104,6 +122,62 @@ two together tell you where mutation hides.
    and not contradict a store decision already in flight.
 
 ## The store decision — optimize each operation, not each entity
+
+### First: is the app local-only?
+
+Before splitting operations across cloud stores, ask one gating question: **does this app
+run on a single machine, with no cloud backend, no cross-device sync, and no client-direct
+reads?** A CLI, a desktop/Electron tool, a local dev/utility server, a single-box service
+with no multi-tenant fan-out — these are *local-only*.
+
+If yes, **use SQLite** — one embedded, single-file relational database — as the store for
+**every** entity, and you're essentially done with the placement question. The
+Firestore-vs-Deno-KV split below exists to trade a cloud *query* engine against a cloud
+*key-value* engine; that trade is moot when there is no cloud. A local SQLite file is
+*both* at once: from one engine on local disk, with real transactions, it serves the
+query-shaped operations (lists, filters, sorts, joins, aggregates, search — Firestore's
+job) **and** the keyed point lookups and atomic counters (Deno KV's job). So a local-only
+design is usually the simplest of all: every entity → `store: "sqlite"`, keyed by a
+primary-key column, queried with indexed SQL, **no projections needed** (one engine already
+does both). Say so in the entity's `rationale` ("app is local-only — single SQLite file
+serves list + by-id from one engine"), and skip straight to the immutability work.
+
+Only when the app is **networked** — a hosted backend, multiple clients/devices, reads that
+hit the store directly from the browser — do you reach for the per-operation Firestore/KV
+split that follows.
+
+### Large files & binary blobs → S3 (object storage)
+
+Orthogonal to the record-store choice is a second question, asked per field: **is this
+payload a large file or a binary blob** — an upload, an image, audio/video, a PDF, a
+generated export, an attachment? None of the record stores is built for bytes: a Firestore
+document caps at ~1 MiB, a Deno KV value at 64 KiB, and binary media doesn't query or index
+anyway. Past those limits, or for anything you'd stream rather than read as a field, the
+file belongs in **S3** (Amazon S3 / any S3-compatible object store).
+
+The pattern is always the same: **the bytes go to S3; a *reference* to them lives in the
+record store** next to whatever owns the file. The reference is a small JSON object —
+`{ key, url, contentType, size, checksum }` — that *is* queryable/keyable in Firestore, KV,
+or SQLite, while the object itself sits in a bucket. Never inline a blob into a record.
+
+Two shapes, by whether the file *is* the entity or just hangs off one:
+
+- **Blob-primary entity** → `store: "s3"`: the entity essentially *is* the file — an
+  `attachment`, an `upload`, a `videoAsset`. The object lives in S3 under a key; its
+  queryable metadata (owner, filename, createdAt, contentType, size) rides in a companion
+  record (a Firestore/KV/SQLite row, often expressed as a `projection`) so you can still
+  list it and look it up without touching S3.
+- **Blob field on a structured entity** → the record stays in `firestore`/`denokv`/`sqlite`
+  and declares its file fields under `blobs[]` (a `product` whose `image` is an S3 object, a
+  `message` with `attachments`). The record is the queryable thing; only the bytes are
+  offloaded.
+
+S3 pairs with **any** record store and **any** deployment. A **local-only** app can keep big
+files on the local filesystem instead — but reach for S3 when it needs durable, remote, or
+shared object storage even from one machine. The access shape for a blob is `blob` (an
+object `PUT`/`GET`), not a `query` or a `point-get`.
+
+### When the app is networked — optimize each operation
 
 The question is never "is `order` a Firestore thing or a KV thing" in the abstract. It's
 **"what operations run against `order`, and which store makes *those* operations fast?"**
@@ -159,10 +233,17 @@ the store choice — the store is a conclusion *from* the patterns, never a prio
 | A counter, like count, inventory number ticking    | atomic          | Deno KV |
 | A form that submits then shows the new item         | write + read-back | match the read-back |
 | Search across a collection                         | query/index     | Firestore |
+| An upload / image / video / file download / attachment | blob          | S3 (+ ref in record store) |
 
 Note **frequency and latency demands** too — a view on the landing screen that every user
 hits is hotter than an admin report. Hot + point-lookup is the strongest KV signal; hot +
 query is the strongest Firestore signal.
+
+The `Leans` column describes a **networked** app. In a **local-only** app every one of
+these rows is served by the single SQLite file — the column collapses to SQLite, and you
+skip the projection step entirely (one engine already does both the query and the
+point-get). Still record the `accessPatterns` (they document what the store must do and
+which indexes it needs), just with `store: "sqlite"`.
 
 ## Immutability — append new objects, never edit existing ones
 
@@ -211,6 +292,16 @@ Two storage realizations, both append-only — pick by the read patterns above:
 - **Child collection / keyed siblings** — Firestore subcollection or KV keys
   `audit:<id>:review:<seq>` — best when children are many, queried independently, or
   appended concurrently (KV `atomic()` on a monotonic seq guarantees no lost append).
+- **Child table (SQLite, local-only)** — a `<parent>_<child>` table with a foreign key to
+  the parent and a monotonic `seq`, appended with `INSERT` and **never** `UPDATE`; the
+  parent row's `id` stays stable. Current state on read is `ORDER BY seq DESC LIMIT 1` (or a
+  fold over the rows). This is the local form of the child-collection realization above —
+  same append-only discipline, one SQLite file.
+- **New S3 object per version (object storage, for files)** — a file "change" uploads a
+  *new* object under a content-addressed (`<hash>`) or versioned (`<id>/v<seq>`) key and
+  repoints the reference; the prior object's bytes are **never** overwritten in place.
+  Fresh-key-per-upload is `already-immutable`; an accreting version trail in the reference is
+  `append-child`. Do **not** `PUT` over a live key for a domain file.
 
 ### Immutability protects domain records — not aggregates
 
@@ -229,8 +320,9 @@ is to be read fast.
 The test: **does anyone need the per-change history of this value as a feature?** If yes,
 the *events* are the domain records (store them append-only) and the counter is a fast
 projection over them. If no — it's a stock count, a session, a cache — then it's a pure
-aggregate: store it in Deno KV, update it with `atomic()`, and mark it `aggregate`. Do not
-wrap it in a ledger by default.
+aggregate: store it in Deno KV, update it with `atomic()`, and mark it `aggregate` (in a
+local-only app the same aggregate is a SQLite column updated inside a transaction, or a
+`SELECT` aggregate computed over the rows). Do not wrap it in a ledger by default.
 
 - ✓ A product's `stock` count → KV `atomic()` counter, `strategy: "aggregate"`. No ledger
   unless the business actually wants an auditable stock-movement history.
@@ -244,6 +336,73 @@ derived counter/cache — atomic in-place update is correct), and **`overwrite-j
 (a one-off forced overwrite — explain why). Prefer append-only for real domain records
 "whenever humanly possible," but call a derived aggregate what it is rather than
 event-sourcing it.
+
+## Retention — how long to keep it (a TTL, or none)
+
+Immutability decides *whether* you overwrite; **retention** decides *when, if ever, you
+delete*. Every entity gets a **conscious** retention call — not a silent default. The two
+honest outcomes are "**keep it forever**" and "**expire it after _N_**"; the failure mode is
+leaving it unstated, so data either piles up forever when it shouldn't or vanishes when it
+mustn't. Record it as a `retention` object on every entity (and on projections and blobs
+that have their own lifetime).
+
+Ask one question per entity: **how long is this data actually needed?** Three answers:
+
+1. **Forever → `policy: "permanent"`, no TTL.** Domain records and history — an order, an
+   audit trail, a posted message, a ledger, anything a user or auditor expects to still be
+   there next year. **Never put a TTL on a history-bearing record.** Set `permanent`
+   *explicitly* (with a one-line `why`) so the absence of a TTL is a decision, not an
+   oversight. Most `append-child` and `already-immutable` records are `permanent`.
+2. **A bounded window → `policy: "ttl"` with the shortest correct `ttl`.** Ephemeral or
+   rebuildable data: sessions, auth/OTP codes, idempotency keys, rate-limit windows, caches
+   and **projections** (rebuildable from the source of truth), signed-URL stubs, scratch and
+   temp-export artifacts. These are usually the `aggregate`/cache-flavored values. Pick the
+   tightest lifetime that still works (a session `24h`, an OTP `10m`, an idempotency key
+   `48h`) and let the store expire it.
+3. **A business-retention window, then purge → `policy: "purge-after"` with a `ttl`.** Data
+   you must keep for a while then delete: logs (`30d`), soft-delete tombstones, GDPR
+   "erase after _N_ days", uploads awaiting confirmation. Use the store's native TTL if it
+   has one, else a scheduled sweep.
+
+**Enforce it with the store's own mechanism** (`retention.mechanism`):
+
+- **Deno KV** → native per-key `expireIn` (set at write). Ideal for sessions, idempotency,
+  caches, signed-link stubs. `mechanism: "kv-expireIn"`.
+- **Firestore** → a **TTL policy** on a timestamp field auto-deletes the doc; name the field
+  (e.g. `expiresAt`). `mechanism: "firestore-ttl-field"`.
+- **S3** → bucket **Lifecycle** rules expire objects by age/prefix.
+  `mechanism: "s3-lifecycle"`. (See the stub note below for the *link's* separate expiry.)
+- **SQLite** → no native TTL: add an `expires_at` column and sweep (delete-on-read or a
+  scheduled job). `mechanism: "sqlite-expires-col"`.
+- **Permanent** data needs no mechanism — `mechanism: "none"`.
+
+### Stubbing large data with an S3 link — two lifetimes
+
+When data is large, you often **stub it with an S3 link** instead of storing it inline (the
+blob pattern above). That stub has **two independent lifetimes**, and the design must state
+both:
+
+- **The object** (the bytes in the bucket) — lifetime via `s3-lifecycle`. A permanent
+  attachment is `permanent`; a generated export the user downloads once is `ttl: "7d"`.
+- **The link** (a pre-signed URL) — a *short-lived access grant*, minutes to hours, with its
+  own `signed-url-expiry`. **Do not persist a long-lived signed URL in a record**: store the
+  S3 *key* (permanent reference) and mint a fresh short-TTL URL on read. If the reference's
+  `url` is a signed link, its `retention` is the URL expiry, not the object's.
+
+So a blob in `blobs[]` (or a blob-primary `s3` entity) can carry its own `retention` — the
+object's lifecycle — while the *reference* stored in the record notes the signed-URL expiry.
+A permanent file with on-demand short-lived links is the common, correct shape.
+
+### Retention vs immutability — they compose, they don't fight
+
+Append-only history is normally `permanent`: you never overwrite *and* never expire it. But
+the two are independent — an **append-only audit log** can still be `purge-after: "365d"` if
+policy says logs roll off after a year (you append immutably, and old entries age out
+whole). The one hard rule: **a TTL on an `append-child` record is almost always a bug** — it
+silently deletes the history the immutability work just protected. The validator warns on
+exactly this (`append-child` + a `ttl`/`purge-after`); justify the roll-off in `why` or set
+`permanent`. An `already-immutable` artifact, by contrast, is often *meant* to expire — a
+one-off export or a stub — so a TTL there is fine and draws no warning.
 
 ## The output — `spec/misc/data.json`
 
@@ -302,12 +461,73 @@ under each store choice).
           "appendTriggers": ["audit", "appeal"] },
         "currentStateOnRead": "last element of reviews[]",
         "realization": "embedded array (small, read with parent)"
+      },
+      "retention": {
+        "policy": "permanent",
+        "mechanism": "none",
+        "why": "compliance record + appeal trail — must never expire or be deleted"
       }
     }
   ],
   "notes": [
     "Any entity whose only write is a fresh-id .save is already append-friendly."
   ]
+}
+```
+
+**Large files use S3 — store a reference, not the bytes.** A blob-primary entity sets
+`store: "s3"` (its queryable metadata rides in a `projection`); a structured entity that
+merely *owns* files lists them under `blobs[]`:
+
+```jsonc
+// blob-primary: the entity IS the file — bytes in S3, metadata mirrored to a record store
+{
+  "name": "attachment", "store": "s3",
+  "purpose": "An uploaded file attached to a message.",
+  "key": "attachments/{messageId}/{attachmentId}",
+  "document": { "key": "attachments/m_42/a_7", "url": "s3://bucket/attachments/m_42/a_7",
+    "contentType": "application/pdf", "size": 184320, "checksum": "sha256-…" },
+  "accessPatterns": [
+    { "operation": "download an attachment", "source": "prototype: MessageView",
+      "shape": "blob", "store": "s3", "hotness": "med" } ],
+  "projections": [
+    { "name": "attachment:meta", "store": "firestore", "key": "attachments/{attachmentId}",
+      "why": "list a message's files without touching S3" } ],
+  "immutability": { "strategy": "already-immutable",
+    "realization": "new S3 object per upload; key never overwritten" },
+  "retention": {
+    "policy": "permanent", "mechanism": "none",
+    "why": "attachment kept with its message forever; download links are minted fresh & short-lived (signed-url-expiry ~15m), never stored"
+  }
+}
+
+// blob field on a structured record: the record is queryable, only the bytes are offloaded
+{
+  "name": "product", "store": "firestore", "...": "...",
+  "blobs": [
+    { "field": "image", "store": "s3", "key": "products/{productId}/image",
+      "contentTypes": ["image/*"], "why": "product photo — too large/binary for the doc",
+      "retention": { "policy": "permanent", "mechanism": "none", "why": "lives as long as the product" } } ]
+}
+
+// ephemeral record with a TTL — let the store expire it, don't keep it forever
+{
+  "name": "session", "store": "denokv", "...": "...",
+  "key": "session:{sessionId}",
+  "immutability": { "strategy": "aggregate" },
+  "retention": {
+    "policy": "ttl", "ttl": "24h", "mechanism": "kv-expireIn",
+    "why": "auth session — short-lived, rebuildable by re-login; no reason to persist"
+  }
+}
+
+// a generated export the user downloads once, then it ages out
+{
+  "name": "export", "store": "s3", "...": "...",
+  "key": "exports/{userId}/{exportId}.csv",
+  "immutability": { "strategy": "already-immutable" },
+  "retention": { "policy": "ttl", "ttl": "7d", "mechanism": "s3-lifecycle",
+    "why": "one-off download artifact — regenerate on demand, don't accumulate" }
 }
 ```
 
@@ -325,15 +545,33 @@ under each store choice).
   `{ by, kind: "endpoint" | "screen", does }`. The `scan_spec.ts` output already maps which
   `[REQ]` reads/writes each noun — turn that into the endpoint rows, and add the prototype
   screens that read it. This is what connects the stored shape back to the app's behavior.
+- **`retention`** — *how long it lives*: `permanent` for a domain record, or a `ttl`/
+  `purge-after` with a duration for ephemeral data. Always present and always with a `why`,
+  so "kept forever" is a visible decision rather than a default nobody made.
 
-A design with only access-pattern metadata and no `document`/`purpose`/`usedBy` is
-unreviewable — don't ship one.
+A design with only access-pattern metadata and no `document`/`purpose`/`usedBy`/`retention`
+is unreviewable — don't ship one.
 
-Field guide: `store` ∈ `firestore` | `denokv`. `accessPatterns[].shape` ∈ `query` |
-`subscription` | `point-get` | `atomic` | `write`. `immutability.strategy` ∈
+Field guide: `store` ∈ `firestore` | `denokv` | `sqlite` | `s3` (use `sqlite` for a
+local-only app — one engine serves every operation, so its entities need no projections;
+use `s3` for large files / binary blobs — bytes in S3, a `{ key, url, contentType, size,
+checksum }` reference in a record store).
+`accessPatterns[].shape` ∈ `query` |
+`subscription` | `point-get` | `atomic` | `write` | `blob` (a `blob` is an object PUT/GET,
+not a query or keyed-record op). A structured entity that *owns* files declares them under
+`blobs[]` — each `{ field, store: "s3", key, contentTypes?, why }` — instead of inlining the
+bytes. `immutability.strategy` ∈
 `append-child` | `already-immutable` | `aggregate` | `overwrite-justified` — use
 `aggregate` for a derived counter/cache (atomic in-place update, no ledger); the last two
 require a `why`.
+Every entity carries a `retention` ∈ `{ policy, ttl?, mechanism, why }`: `policy` ∈
+`permanent` | `ttl` | `purge-after` (a `ttl` duration like `"24h"`/`"30d"` is **required**
+for `ttl`/`purge-after`, and must be **absent** for `permanent`); `mechanism` ∈
+`kv-expireIn` | `firestore-ttl-field` | `s3-lifecycle` | `signed-url-expiry` |
+`sqlite-expires-col` | `none` (use `none` only with `permanent`). Projections and `blobs[]`
+entries may carry their own `retention`. State `permanent` explicitly — an unstated
+lifetime is a warning, and a `ttl` over an `append-child`/`already-immutable` domain record
+is flagged as a likely history-deleting bug.
 Every entity from the spec must appear; every access pattern must trace to a spec step or a
 named prototype region in `source`.
 
@@ -399,7 +637,7 @@ them. Run them with `deno run -A`; they need no deps.
 | Script | When | What it does (deterministic) |
 | ------ | ---- | ---------------------------- |
 | `scripts/scan_spec.ts` | **before** you design | Parses the `.rune` spec(s) → JSON inventory of entities, DTOs, every persistence read/write, and **every `load→…→save` mutation candidate**. So you never miss an entity or an in-place edit. |
-| `scripts/validate_data.ts` | **after** you write `data.json` | Gates it against the schema + spec coverage: valid stores/shapes/strategies, every spec `[NON]` present, an `aggregate` that smuggled in a ledger, an `overwrite-justified` with no `why`. Exit 1 = fix it. |
+| `scripts/validate_data.ts` | **after** you write `data.json` | Gates it against the schema + spec coverage: valid stores/shapes/strategies/retention, every spec `[NON]` present, an `aggregate` that smuggled in a ledger, an `overwrite-justified` with no `why`, a `ttl` policy missing its duration, a `ttl` silently deleting append-only history. Exit 1 = fix it. |
 | `scripts/render_review.ts` | **last** | Consumes `data.json` → a self-contained `spec/misc/data.review.html`: the data structure, each store choice and *why*, the append-vs-edit diagram, and a **notes box per entity for a second pass**. This is the human-facing deliverable. |
 
 The scripts handle *plumbing and verification*; you handle *the design in the middle*.
@@ -423,14 +661,24 @@ The scripts handle *plumbing and verification*; you handle *the design in the mi
    query / subscription / point-get / atomic, with a hotness guess. Tie each to a region
    name you can cite in `source`. (The prototype is the read-pattern oracle; the script
    above only sees the spec's writes.)
-3. **Assign stores per operation, then per entity** — apply the rubric; where operations
-   on one entity disagree, pick the primary store for the hottest read and add a
-   `projection` for the other.
-4. **Classify each mutation candidate, restructure only the domain records** — for each
+3. **Assign stores.** First apply the **local-only gate**: if the app runs on a single
+   machine with no cloud/sync/client-direct reads, set **every** entity to `store: "sqlite"`
+   (no projections — one engine does both) and go to step 4. Otherwise assign stores **per
+   operation, then per entity** — apply the rubric; where operations on one entity disagree,
+   pick the primary store for the hottest read and add a `projection` for the other. Then
+   **flag any large-file/binary payload → S3**: make it a blob-primary entity (`store: "s3"`,
+   metadata in a `projection`) or, if a file just hangs off a record, add a `blobs[]` field —
+   bytes in S3, a `{ key, url, contentType, size, checksum }` reference in the record store.
+4. **Classify each entity's lifecycle — immutability *and* retention.** For each
    `load → mutate → save` the scan flagged, ask *history-bearing domain record or derived
    aggregate?* Records become append-only (collection, child shape, triggers, read-
    derivation, embedded vs child-collection). Aggregates stay `aggregate` — atomic in-place,
-   no ledger unless the history is itself a feature.
+   no ledger unless the history is itself a feature. **Then set each entity's `retention`**:
+   ask *how long is this data needed?* — `permanent` (no TTL) for domain records and history;
+   a `ttl` with the shortest correct duration for ephemeral/rebuildable data (sessions,
+   caches, projections, idempotency keys, signed-URL stubs, temp exports); `purge-after` for
+   a business-retention-then-delete window — each with the store's `mechanism` and a `why`.
+   Never put a `ttl` on a history-bearing record; never leave a lifetime unstated.
 5. **Add keys & indexes** — KV key structure for point/atomic ops; Firestore composite
    indexes for each query's filter+sort.
 6. **Write `spec/misc/data.json`.**
@@ -470,6 +718,18 @@ The scripts handle *plumbing and verification*; you handle *the design in the mi
   `state(s)` to the read DTO + a `TaskStateDto` child + the `done`/`at` `[TYP]`s, and retag
   `db:task.save` → `db:task.appendState`. Had the UI only shown a flat done/undone checkbox,
   the trail would stay storage-internal and the spec would need **no** edit.
+- The same `todos` module shipped as a **local-only** CLI/desktop tool (no cloud, single
+  machine) — the deployment gate fires first, so **every** entity goes to one SQLite file:
+  `task` keyed by an `id` column, listed with `SELECT … ORDER BY created_at`, its append-only
+  `states` as a `task_states(task_id, seq, done, at)` child table (`INSERT` only, current
+  `done` = newest `seq`). No Firestore, no KV, no projections — the one engine serves the
+  list, the by-id lookup, and any counter alike.
+- A `messages` module where each message can carry file `attachments` — the message text +
+  metadata stay in Firestore (`store: "firestore"`, you list a thread), but each attachment's
+  bytes go to **S3** under `attachments/{messageId}/{attachmentId}`. The message declares a
+  `blobs[]` field for `attachments`; the reference (`{ key, url, contentType, size }`) lives
+  in the Firestore doc so the thread renders without ever fetching from S3 until a user
+  downloads. A re-upload writes a new object key — the old bytes are never overwritten.
 
 For the spec constructs referenced here (`[NON]`, `[DTO]`, `[SRV]`, `(s)` arrays) see
 `rune:spec`. For how the chosen store becomes a real client, see `rune:framework`.

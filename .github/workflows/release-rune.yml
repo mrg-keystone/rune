@@ -18,8 +18,9 @@ name: release-rune
 # `paths-ignore` stops pushes that touch ONLY runtime-owned or non-binary facets
 # (the keep/ runtime source, the e2e/examples/docs/todos facets, incl. the
 # runtime's auto-bump commit) from rebuilding rune's 3 binary targets. The rune
-# binary's real inputs are src/, lang/ (incl. keywords.json), skills/ (the five
-# skills: rune:spec/build/framework/cake/docs), and scripts/ (the gen scripts) —
+# binary's real inputs are src/, lang/ (incl. keywords.json), skills/ (the seven
+# rune:* skills — scope/spec/data/build/cake/framework/docs), and scripts/ (the gen
+# scripts) —
 # none of which are ignored here. NOTE: GitHub does not apply
 # paths-ignore to TAG pushes, so `v*` snapshot releases still build. If a `v*`
 # tag is ever unexpectedly skipped, move the tag trigger into its own workflow.
@@ -125,7 +126,7 @@ jobs:
 
       - name: Package
         # The Claude Code skills ship INSIDE the tarball as a skill/ dir holding
-        # all five skill folders (rune:spec/build/framework/cake/docs), so a
+        # every rune:* skill folder (scope/spec/data/build/cake/framework/docs), so a
         # pinned install gets the skills matching its binaries (install.sh
         # extracts the skill/ dir and installs each folder). evals/ is dev-only
         # and not shipped.
@@ -166,7 +167,7 @@ jobs:
     with:
       artifact-pattern: release-*
       # rune's asset surface is a contract with install.sh + `rune update`: the
-      # skills ship as a skill/ dir INSIDE each tarball (all five skill folders),
+      # skills ship as a skill/ dir INSIDE each tarball (all rune:* skill folders),
       # not as separately packed assets — so pack-skills stays off.
       pack-skills: false
       extra-assets: |

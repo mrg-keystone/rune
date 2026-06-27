@@ -7,7 +7,7 @@ a shared module and import it everywhere:
 
 ```ts
 // backend.ts
-import { bootstrapServer } from "@mrg-keystone/keep";
+import { bootstrapServer } from "@mrg-keystone/rune";
 import { AppModule } from "./app.module.ts";
 export const api = await bootstrapServer("my-api", AppModule);
 ```
@@ -28,41 +28,48 @@ Deno.serve((req, info) => api.handler(req, info)); // or: await api.listen();
 the `/_mint` guard all rely on. Drop it and every request looks origin-less:
 localhost is no longer recognized and `/_mint` becomes unreachable.
 
-### Embedded under a Fresh 2 frontend
+### Hosted under a sprig UI
 
-One `embed` middleware exposes the token-gated backend at `/api/*` and puts
-the in-process client on `ctx.state.api` for every other request. Register it
-**before** `.fsRoutes()` (the Fresh `App` builder is order-sensitive):
+The frontend is **sprig**, and the composition lives in the sprig package
+`@sprig/keep`. `serveSprig({ keep, app, base })` returns a single `{ fetch }`
+default export — run it with `deno serve serve.ts` (**not** `Deno.serve()`):
 
 ```ts
-// main.ts
-import { App, staticFiles } from "fresh";
-import { embed } from "@mrg-keystone/keep";
+// serve.ts
+import { serveSprig } from "@sprig/keep";
+import app from "./app/src/main.ts";   // the sprig SSR app
 import { api } from "./backend.ts";
-export const app = new App<State>()
-  .use(staticFiles())
-  .use(embed(api, { at: "/api" }))
-  .fsRoutes();
-
-// utils.ts — typing for ctx.state.api
-import type { KeepState } from "@mrg-keystone/keep";
-export interface State extends KeepState {}
+export default serveSprig({ keep: api, app });
 ```
 
-`embed` rebases `/api/*` onto the root-registered routes and forwards Fresh's
-conn info automatically (loopback detection keeps working). Fresh server code
-calls the backend **in-process** — `await ctx.state.api.fetch("/users")` —
-no network hop, no token. Browser-side island calls to `/api` need a
-credential (see `references/auth.md`, "Browser access to your own API").
+`serveSprig` routes `/api/*` and `/docs*` to the keep's token-gated `handler`
+(forwarding conn info, so loopback detection keeps working) and everything else
+to the sprig SSR app — with the keep's in-process `backend.fetch` bound to
+sprig's `Backend` DI token. SSR pages read data through that in-process channel
+via `inject(Backend)` in a page's `resolve.ts` or a service — **no TCP, no
+token**. Browser islands can't make in-process calls, so they reach the backend
+over the token-gated `/api/*` channel (attach a credential — see
+`references/auth.md`, "Browser access to your own API").
 
 `bootstrapServer` is bundler-safe (lazy-loads the Swagger builder and its
-CJS `handlebars` dep) — importing from Fresh works in `deno task dev` and the
-production build (`deno task build` → `deno serve _fresh/server.js`). A
-complete runnable example: `examples/fresh-project` in the keep repo.
+CJS `handlebars` dep), so importing the backend into a bundled SSR frontend
+works in both dev and production builds.
 
-For mounting into anything other than Fresh, use the lower-level
-`withBasePath(prefix, handler)`: dispatches `prefix`-rooted requests with the
-prefix stripped, 404s the rest.
+`rune init` scaffolds this whole app: a `serve.ts` composition root, an `app/`
+sprig UI tree (`app/src/main.ts` + a starter page), the `bootstrap/` keep
+backend, and a `deno.json` wired with `@sprig/core` + `@mrg-keystone/rune` and a
+`deno serve serve.ts` start task.
+
+### Mounting under any host
+
+To mount the sprig UI inside an existing host (`Deno.serve`, Danet, Hono), use
+`sprigUi(config)` — a framework-agnostic middleware that returns
+`Response | null` (`null` = pass-through, so the host handles the route).
+
+For mounting the keep's `handler` under a prefix in any host, use the
+lower-level `withBasePath(prefix, handler)`: it dispatches `prefix`-rooted
+requests with the prefix stripped and 404s the rest. It's plain request
+routing — framework-agnostic, not tied to any UI.
 
 **Deno Deploy:** set `MANUAL_KEY` and/or `FIREBASE_PROJECT_ID` (plus
 `DD_API_KEY` / `POSTMARK_*`) in the project env. `/_mint` is unreachable in

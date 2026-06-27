@@ -232,6 +232,25 @@ sharing that signature are **ambiguous** (`rune check` errors) — name the targ
 An empty input (`[ENT] http.refresh({}): StatusDto`) generates a **no-argument**
 handler — the `@Endpoint` omits `input` and the method takes no body.
 
+`[ENT:ws]` declares a **WebSocket** socket instead of an HTTP route: a `[ENT:ws] <surface> @
+/path` header naming the handshake path once, then indented `verb(InDto): OutDto` **topics**
+(one message handler each, the verb being the topic):
+
+```
+[ENT:ws] chat @ /rooms/{room}
+    join(JoinDto): JoinedDto
+    send(ChatDto): EchoDto
+    leave(LeaveDto): void          # void ⇒ no reply
+```
+
+Each topic dispatches to its `[REQ]` by `(input, output)` like any `[ENT]`; a non-`void`
+return is sent back **to the sender**. The topic is the discriminant, so model one verb per
+inbound message type (no union DTO). Handshake bindings (`{room}`, a `[TYP:from=query]` auth
+token) are read **once at connect**, not per message. A surface is either HTTP or WS, never
+both; WS endpoints carry no HTTP verb (absent from Swagger). Broadcast to other clients isn't
+modeled. The generated `@WsEndpointController`/`@WsEndpoint` runtime is the **`rune:framework`**
+skill's domain.
+
 ## Declaring process order, dependencies, and binds
 
 Endpoints in a module run as a *process*. You express the ordering **in the spec** with

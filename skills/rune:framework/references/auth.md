@@ -41,7 +41,10 @@ The safe path is safe by construction:
 
 Send via `Authorization: Bearer <credential>` (preferred) or `?token=`
 (for plain links / first navigations / WebSocket upgrades; redacted from
-request logs — prefer the header where possible).
+request logs — prefer the header where possible). A `[ENT:ws]` socket can't set
+an `Authorization` header on the handshake, so its token rides `?token=` (bind it
+with `[TYP:from=query]`) and is read **once at connect** — the credential guard
+gates the handshake, and per-message frames inherit that decision.
 
 1. **Signed access token** (HS256, keyed by `MANUAL_KEY`) — for
    service-to-service callers.
@@ -76,7 +79,7 @@ A token with no `expiry` never expires and is only invalidated by rotating
 - **Programmatic**:
 
 ```ts
-import { signToken, TokenError, verifyToken } from "@mrg-keystone/keep";
+import { signToken, TokenError, verifyToken } from "@mrg-keystone/rune";
 const token = await signToken(
   { source: "ci", appName: "my-api", expiry: Math.floor(Date.now() / 1000) + 3600 },
   Deno.env.get("MANUAL_KEY")!,
@@ -135,7 +138,7 @@ gated. The pages use a query-param → `localStorage` flow:
 3. A 401 wipes the stored token and asks for a fresh `?token=…` link.
 
 Share a `…/docs?token=…` link once (the `/_mint` result page generates it).
-Works identically mounted under Fresh (`/api/docs/...`).
+Works identically when the keep is mounted under a sprig UI (`/api/docs/...`).
 
 ## Browser access to your own API (frontend token)
 
@@ -144,8 +147,9 @@ snippet from the README ("Browser access to your own API") into a client
 entry: it seeds from `?token=`, auto-attaches `Authorization` on same-origin
 `/api/*` requests, and clears the stored token on a 401. Use a **short-lived**
 token in links (URLs leak via history/Referer); never seed a never-expiring
-token this way. SSR should still use `ctx.state.api.fetch` (in-process — no
-token at all). A runnable version lives in `examples/fresh-project`.
+token this way. SSR should still read data through the in-process backend
+(`inject(Backend)` in a sprig page's `resolve.ts` or a service — no token at
+all); this browser flow is only for the calls an island makes over the network.
 
 ## Environment summary
 

@@ -8,10 +8,41 @@ import {
   readFixtures,
   readHealRules,
   readScenarios,
+  resolveFixturesDir,
   scenarioSlug,
   writeFixtures,
   writeScenario,
 } from "./mod.ts";
+
+Deno.test("resolveFixturesDir - monorepo: prefers the shared <gitRoot>/spec/misc from a package subdir", () => {
+  const root = Deno.realPathSync(Deno.makeTempDirSync());
+  try {
+    Deno.mkdirSync(`${root}/.git`); // the monorepo / git root
+    Deno.mkdirSync(`${root}/spec`); // the ONE shared contract folder (sibling of .git)
+    Deno.mkdirSync(`${root}/backend/src`, { recursive: true });
+    // Launched from the backend package subdir, the cake still resolves the shared spec/.
+    assertEquals(resolveFixturesDir(`${root}/backend`), `${root}/spec/misc`);
+    // From the git root itself — same answer (a flat single-package app lands here too).
+    assertEquals(resolveFixturesDir(root), `${root}/spec/misc`);
+  } finally {
+    Deno.removeSync(root, { recursive: true });
+  }
+});
+
+Deno.test("resolveFixturesDir - no shared spec/: cwd's own spec/, else the legacy fixtures/", () => {
+  const root = Deno.realPathSync(Deno.makeTempDirSync());
+  try {
+    Deno.mkdirSync(`${root}/.git`); // a git repo with NO top-level spec/
+    Deno.mkdirSync(`${root}/pkg/spec`, { recursive: true });
+    // The git root has no spec/, so a nested package keeps using its OWN spec/ (no false redirect).
+    assertEquals(resolveFixturesDir(`${root}/pkg`), `${root}/pkg/spec/misc`);
+    // No spec/ anywhere up the tree → the legacy <cwd>/fixtures default (non-breaking).
+    Deno.mkdirSync(`${root}/bare`, { recursive: true });
+    assertEquals(resolveFixturesDir(`${root}/bare`), `${root}/bare/fixtures`);
+  } finally {
+    Deno.removeSync(root, { recursive: true });
+  }
+});
 
 Deno.test("normalizeFixtures - coerces junk and partial shapes to the empty artifact's fields", () => {
   assertEquals(normalizeFixtures(null), emptyFixtures());

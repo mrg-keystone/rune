@@ -164,7 +164,18 @@
   {
     "type": "ent_line",
     "named": true,
-    "fields": {},
+    "fields": {
+      "ws_surface": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    },
     "children": {
       "multiple": true,
       "required": true,
@@ -179,6 +190,10 @@
         },
         {
           "type": "signature",
+          "named": true
+        },
+        {
+          "type": "ws_route",
           "named": true
         }
       ]
@@ -584,6 +599,10 @@
         {
           "type": "typ_line",
           "named": true
+        },
+        {
+          "type": "ws_topic_line",
+          "named": true
         }
       ]
     }
@@ -774,6 +793,36 @@
     }
   },
   {
+    "type": "ws_topic_line",
+    "named": true,
+    "fields": {
+      "verb": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "parameters",
+          "named": true
+        },
+        {
+          "type": "return_type",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "(",
     "named": false
   },
@@ -912,6 +961,10 @@
   },
   {
     "type": "typ_tag",
+    "named": true
+  },
+  {
+    "type": "ws_route",
     "named": true
   },
   {

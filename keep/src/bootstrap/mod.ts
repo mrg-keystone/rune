@@ -21,7 +21,6 @@ export {
   DanetHttpAdapter,
   DEFAULT_SKELETON_MAX_AGE_SECONDS,
   docsSeedScript,
-  embed,
   emulatorShellHtml,
   Endpoint,
   EndpointController,
@@ -31,6 +30,7 @@ export {
   FirebaseAuthError,
   getIdentity,
   getProcessMetadata,
+  getWsProcessMetadata,
   Grants,
   GRANTS_METADATA_KEY,
   grantsForApp,
@@ -75,6 +75,9 @@ export {
   validateCredential,
   verifyToken,
   withBasePath,
+  WS_PROCESS_METADATA_KEY,
+  WsEndpoint,
+  WsEndpointController,
 } from "@foundation/mod-root.ts";
 // Rune assert runtime (also exported as the "./assert" subpath): seam
 // validation for rune-generated code. bootstrapServer maps a thrown
@@ -85,8 +88,6 @@ export type {
   CredentialGuardConfig,
   DanetGuard,
   DocsJsonHandlerOptions,
-  EmbedContext,
-  EmbeddableBackend,
   EndpointMethod,
   EndpointOptions,
   EndpointResult,
@@ -104,7 +105,6 @@ export type {
   InfraJwk,
   InfraJwks,
   JwksVerifierOptions,
-  KeepState,
   Limiter,
   LogLevel,
   MapEdge,
@@ -135,6 +135,8 @@ export type {
   TokenAuthConfig,
   Trace,
   TraceSink,
+  WsEndpointOptions,
+  WsProcessMetadata,
 } from "@foundation/mod-root.ts";
 
 export function safeStart(cb: () => Promise<void>): Promise<void> | undefined {

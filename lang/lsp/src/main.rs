@@ -605,6 +605,23 @@ impl Backend {
                     consecutive_empty = 0;
                 }
 
+                // [ENT:ws] socket header — benign for the single-file LSP. The TS engine owns the
+                // deeper checks (empty socket, coordinator match); a malformed header already
+                // arrives here as LineKind::Unknown above.
+                LineKind::WsSocket { .. } => {
+                    in_req = false;
+                    in_ent = false;
+                    poly_stack.clear();
+                    last_was_req = false;
+                    consecutive_empty = 0;
+                }
+
+                // A `verb(In): Out` topic line under an [ENT:ws] socket — a malformed one arrives
+                // as LineKind::Unknown above, so a well-formed topic needs no further checks.
+                LineKind::WsTopic { .. } => {
+                    consecutive_empty = 0;
+                }
+
                 LineKind::Comment { .. } => {}
             }
         }

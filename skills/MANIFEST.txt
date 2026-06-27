@@ -16,6 +16,9 @@ skills/rune:framework/SKILL.md
 skills/rune:framework/references/auth.md
 skills/rune:framework/references/deployment.md
 skills/rune:framework/references/endpoints.md
+skills/rune:scope/SKILL.md
+skills/rune:scope/references/example-spec.md
+skills/rune:scope/references/example-user-stories.md
 skills/rune:spec/SKILL.md
 skills/rune:spec/references/spec.md
 skills/rune:spec/references/constraints.md

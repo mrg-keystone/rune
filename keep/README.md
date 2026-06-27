@@ -4,8 +4,8 @@ An opinionated Deno backend framework built on
 [`@danet/core`](https://jsr.io/@danet/core). It bundles server bootstrapping
 with automatic OpenAPI/Swagger docs, a unified auth/identity layer (signed
 tokens, Firebase, roles), an in-process API client with a private-key trust
-channel, request-scoped structured logging to Datadog, and first-class Fresh
-frontend embedding.
+channel, request-scoped structured logging to Datadog, and first-class sprig
+frontend hosting.
 
 > This package is the **runtime layer** of
 > [rune](https://github.com/mrg-keystone/rune) — rune-generated projects target it.
@@ -186,7 +186,7 @@ The same credential is also accepted as a **`?token=<credential>`** query param.
 That's for callers that can't set a header — a plain link, a first browser
 navigation, or a WebSocket upgrade. Prefer the header where you can: a token in
 a URL can leak via history and `Referer`, so the query value is **redacted from
-request logs**, and the Fresh frontend pattern below seeds it once from
+request logs**, and the sprig frontend pattern below seeds it once from
 `?token=` then sends it as a header thereafter.
 
 The credential may be **either** of two things — whichever validates first
@@ -198,7 +198,7 @@ authorizes the request:
 2. **A Firebase Auth ID token** — for browser/frontend callers. When
    `FIREBASE_PROJECT_ID` is set, the backend verifies the ID token against
    Google's public certs (RS256 + `aud`/`iss`/ `exp` checks). This is what lets
-   a Fresh frontend's island/`fetch` calls hit `/api` using the user's Firebase
+   a sprig frontend's island/`fetch` calls hit `/api` using the user's Firebase
    login, with no signed token.
 
 The resolved identity is attributed to every log emitted during the request (it
@@ -315,7 +315,7 @@ Eastern-time preview of the expiry, or tick **never expires**), and submit to
 receive a token (auto-copied to your clipboard). The result page also shows a
 ready-to-share **`…/docs?token=…` link** (with copy buttons) — derived from the
 page's own location, so it's correct whether the app runs standalone or mounted
-under Fresh at `/api`. The signing key is read from `MANUAL_KEY` on the server —
+under a sprig UI at `/api`. The signing key is read from `MANUAL_KEY` on the server —
 it is never entered into or returned by the form. If `MANUAL_KEY` is unset,
 minting fails closed.
 
@@ -337,7 +337,7 @@ The Swagger docs are gated, but a browser navigating to `/docs` can't send an
   `?token=…` link.
 
 So you share a `…/docs?token=…` link once; the token is reused from
-`localStorage` until it stops working. This also works mounted under Fresh — the
+`localStorage` until it stops working. This also works mounted under a sprig UI — the
 shell derives the spec URL from its own path, so `/api/docs/<module>` fetches
 `/api/docs/<module>/json`.
 
@@ -345,7 +345,7 @@ shell derives the spec URL from its own path, so `/api/docs/<module>` fetches
 
 The same query-param → `localStorage` flow works for your app's `/api`, so a
 browser/island can call the gated API without you wiring a token into every
-`fetch`. Drop this in a client entry (e.g. a Fresh `client.ts`) — it seeds the
+`fetch`. Drop this in a client entry (e.g. a sprig island or client bundle) — it seeds the
 token from `?token=`, attaches it to same-origin `/api/*` requests, and drops it
 when one comes back `401`:
 
@@ -382,9 +382,7 @@ globalThis.fetch = async (input, init) => {
 You hand someone a `…/probe?token=…` link once; the browser remembers it and
 authorizes every subsequent API call until it stops working. (Server-side
 rendering should still prefer `api.backend.fetch(...)` — in-process, no token.
-This is only for calls the browser itself makes over the network.) See the
-runnable [`examples/fresh-project`](../examples/fresh-project) for a working
-`client.ts` + `/probe` page.
+This is only for calls the browser itself makes over the network.)
 
 > **Use a short-lived token in the link.** A token in a URL can be
 > shoulder-surfed, kept in history, or forwarded in a `Referer`. Mint link
@@ -565,22 +563,15 @@ The `env` value rides on every entry as an `env:` Datadog tag (the reserved
 environment facet). The site is `us5.datadoghq.com`. `KEEP_DD_LOCAL` gates both
 logs and [traces](#shipping-to-an-apm-datadog-over-otlp) the same way.
 
-### `embed(api, { at })`
-
-One-call Fresh 2 integration: returns a middleware that exposes the token-gated
-backend under `at` (default `/api`) — with Fresh's conn info forwarded so
-loopback detection keeps working — and puts the in-process client on
-`ctx.state.api` for every other request. Extend your Fresh `State` with the
-exported `KeepState` to get `ctx.state.api` typed. See
-[Deployment](#deployment).
-
 ### `withBasePath(prefix, handler)`
 
-The low-level mount `embed` builds on. Wraps a root-based `handler` so it can be
-mounted under `prefix`: requests whose path is `prefix` or starts with
-`prefix + "/"` are dispatched with the prefix stripped (so the root-registered
-routes still match); anything else returns `404`. Reach for it directly when
-composing the handler into something other than Fresh.
+The low-level mount primitive — framework-agnostic. Wraps a root-based
+`handler` so it can be mounted under `prefix`: requests whose path is `prefix`
+or starts with `prefix + "/"` are dispatched with the prefix stripped (so the
+root-registered routes still match); anything else returns `404`. Reach for it
+directly when composing the handler into another host. (Hosting the backend
+under a sprig UI is done with `serveSprig`/`sprigUi` from the separate
+`@sprig/keep` package — see [Deployment](#deployment).)
 
 ### `createFirebaseVerifier({ projectId })`
 
@@ -1038,7 +1029,7 @@ Run all consumes); `dryRun: true` returns just
 ## Deployment
 
 The same bootstrapped backend runs in two shapes: **standalone** (a normal HTTP
-server) or **embedded** under a Fresh frontend, sharing the in-process client.
+server) or **hosted** under a sprig frontend, sharing the in-process client.
 Both are driven by two things `bootstrapServer` returns:
 
 - `handler` — the raw `(Request) => Response` dispatcher (the same pipeline
@@ -1081,85 +1072,76 @@ Deno.serve((req, info) => api.handler(req, info)); // or: await api.listen();
 Network clients must send a token (`Authorization: Bearer <token>`); see
 [Access tokens & authorization](#access-tokens--authorization).
 
-### Embedded under a Fresh 2 frontend
+### Hosted under a sprig frontend
 
-Fresh owns `/`; one `embed` middleware exposes the token-gated backend at
-`/api/*` and puts the in-process client on `ctx.state.api` for everything else.
-Register it **before** `.fsRoutes()` — the Fresh `App` builder is
-order-sensitive:
+The frontend is **sprig**, and the composition lives in the separate sprig
+package [`@sprig/keep`](https://jsr.io/@sprig/keep). `serveSprig({ keep, app,
+base })` returns a single `{ fetch }` default export — run it with `deno serve
+serve.ts` (**not** `Deno.serve()`):
 
 ```ts
-// main.ts  (Fresh 2 entry)
-import { App, staticFiles } from "fresh";
-import { embed } from "@mrg-keystone/rune";
+// serve.ts
+import { serveSprig } from "@sprig/keep";
+import app from "./app/src/main.ts"; // the sprig SSR app
 import { api } from "./backend.ts";
-import type { State } from "./utils.ts";
 
-export const app = new App<State>()
-  .use(staticFiles())
-  .use(embed(api, { at: "/api" })) // token-gated /api/* + in-process ctx.state.api
-  .fsRoutes();
+export default serveSprig({ keep: api, app });
 ```
+
+`serveSprig` routes `/api/*` and `/docs*` to the keep's token-gated `handler`
+(forwarding conn info, so loopback detection — localhost trust, `/_mint` — keeps
+working) and everything else to the sprig SSR app, with the keep's in-process
+`backend.fetch` bound to sprig's `Backend` DI token. SSR pages read data through
+that in-process channel, with no network hop and no token:
 
 ```ts
-// utils.ts — extend KeepState and ctx.state.api is typed
-import type { KeepState } from "@mrg-keystone/rune";
-export interface State extends KeepState {}
+// a sprig page's resolve.ts (or a service)
+import { inject } from "@sprig/core";
+import { Backend } from "@sprig/keep";
+
+export async function resolve() {
+  const res = await inject(Backend).fetch("/users"); // in-process; bypasses token auth
+  return { users: await res.json() };
+}
 ```
 
-`embed` rebases `/api/*` onto the root-registered routes and forwards Fresh's
-conn info automatically, so loopback detection (localhost trust, `/_mint`) keeps
-working without remembering `ctx.info`. For mounting into anything other than
-Fresh, use the lower-level `withBasePath(prefix, handler)` directly.
-
-`bootstrapServer` is **bundler-safe**: it lazy-loads the Swagger builder (and
-its CommonJS `handlebars` dependency), so importing it from Fresh works through
-Vite's SSR in both `deno task dev` and the production build (`deno task build` →
-`deno serve _fresh/server.js`). A complete, runnable version of this whole
-section — plus the browser token flow and a localhost-trust toggle — is in
-[`examples/fresh-project`](../examples/fresh-project).
-
-Fresh's server-side code (handlers, loaders) calls the backend **in-process** —
-no network hop, no token needed:
-
-```tsx
-// routes/users.tsx
-import { page } from "fresh";
-import { define } from "../utils.ts";
-
-export const handler = define.handlers({
-  async GET(ctx) {
-    const res = await ctx.state.api.fetch("/users"); // in-process; bypasses token auth
-    return page({ users: await res.json() });
-  },
-});
-
-export default define.page<typeof handler>(({ data }) => (
-  <ul>{data.users.map((u) => <li key={u.id}>{u.name}</li>)}</ul>
-));
-```
-
-So one Deno Deploy process serves the Fresh UI at `/`, exposes the token-gated
-API at `/api/*` for external callers, and lets the frontend reach the backend
+So one Deno Deploy process serves the sprig UI, exposes the token-gated API at
+`/api/*` for browser/external callers, and lets SSR reach the backend
 in-process. The backend stays fully runnable standalone — same `api`, different
 entry.
 
-For browser-side calls that _do_ go over the network to `/api` (an island's
-`fetch`), attach a credential — either a **signed token** seeded from `?token=`
-and auto-injected from `localStorage` (see
+`rune init` scaffolds this whole sprig+keep app: a `serve.ts` composition root,
+an `app/` sprig UI tree (`app/src/main.ts` + a starter page), the `bootstrap/`
+keep backend, and a `deno.json` wired with `@sprig/core` + `@mrg-keystone/rune`
+and a `deno serve serve.ts` start task.
+
+`bootstrapServer` is **bundler-safe**: it lazy-loads the Swagger builder (and
+its CommonJS `handlebars` dependency), so importing the backend into a bundled
+SSR frontend works in both dev and production builds.
+
+To mount the sprig UI inside an existing host (`Deno.serve`, Danet, Hono), use
+`sprigUi(config)` — a framework-agnostic middleware that returns
+`Response | null` (`null` = pass-through, so the host handles the route). To
+mount the keep's `handler` under a prefix in any host, reach for the lower-level
+[`withBasePath(prefix, handler)`](#withbasepathprefix-handler) directly.
+
+Browser islands can't make in-process calls, so for browser-side calls that go
+over the network to `/api` (an island's `fetch`), attach a credential — either a
+**signed token** seeded from `?token=` and auto-injected from `localStorage`
+(see
 [Browser access to your own API](#browser-access-to-your-own-api-frontend-token)),
 or the user's **Firebase ID token** as `Authorization: Bearer <idToken>` (with
-`FIREBASE_PROJECT_ID` set). Server-side rendering should still prefer
-`api.backend.fetch(...)`, which is in-process and needs no credential.
+`FIREBASE_PROJECT_ID` set). Server-side rendering should always prefer the
+in-process `inject(Backend)` path, which needs no credential.
 
 **Deno Deploy notes**
 
 - Set env vars in the Deploy project: `MANUAL_KEY` (signed tokens) and/or
   `FIREBASE_PROJECT_ID` (Firebase Auth), plus `DD_API_KEY` / `POSTMARK_*` as
   needed.
-- Fresh requires a build: `deno task build`, then serve `_fresh/server.js` — the
-  backend singleton is imported by Fresh's server code and runs in the same
-  process.
+- The start command is `deno serve serve.ts` — `serveSprig` returns the
+  `{ fetch }` export `deno serve` expects, and the backend singleton runs in the
+  same process as the UI.
 - The localhost `/_mint` UI is unreachable in production (it `403`s
   off-localhost). Mint tokens locally, or programmatically with `signToken` (see
   above).

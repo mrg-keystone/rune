@@ -1,0 +1,26 @@
+[MOD] chat
+
+[ENT:ws] chat @ /rooms/{room}
+    join(JoinDto): JoinedDto
+    send(ChatDto): EchoDto
+    leave(LeaveDto): void
+
+[DTO] JoinDto: room
+    a request to join a room
+[DTO] JoinedDto: room, members
+    the join acknowledgement
+[DTO] ChatDto: text
+    a chat line typed by a member
+[DTO] EchoDto: text, at
+    the line echoed back with a server timestamp
+[DTO] LeaveDto: room
+    a request to leave a room
+
+[TYP] room: string
+    a room id, bound once from the handshake path
+[TYP] members: number
+    the current member count
+[TYP] text: string
+    the message text
+[TYP] at: number
+    a server timestamp

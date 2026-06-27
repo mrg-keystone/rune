@@ -50,6 +50,21 @@ pub enum LineKind {
         /// Explicit HTTP verb (lowercased) from an `@ METHOD /…` clause, if any.
         method: Option<String>,
     },
+    /// An `[ENT:ws] <surface> @ /path` WebSocket socket header. The handshake path is
+    /// shared by every topic; codegen translates `{name}` segments like a route template.
+    WsSocket {
+        surface: String,
+        path: Option<String>,
+        indent: usize,
+    },
+    /// A `verb(InputDto): OutputDto` topic line under an `[ENT:ws]` socket — one WebSocket
+    /// message handler (the verb is the message topic).
+    WsTopic {
+        verb: String,
+        input: String,
+        output: String,
+        indent: usize,
+    },
     Step {
         noun: String,
         verb: String,
@@ -167,6 +182,9 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
     let mut in_multiline_step = false;
     let mut paren_depth: i32 = 0;
     let mut multiline_indent: usize = 0;
+    // True while inside an `[ENT:ws]` socket: indented `verb(In): Out` lines are its
+    // topics. Closed by a dedent to column 0 or the next top-level tag. Mirrors the TS engine.
+    let mut in_ws_socket = false;
 
     for (line_num, line) in text.lines().enumerate() {
         // Calculate leading whitespace (from original line)
@@ -232,6 +250,28 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
                 },
             });
             continue;
+        }
+
+        // [ENT:ws] socket body: indented `verb(InputDto): OutputDto` topic lines. A dedent to
+        // column 0 or a `[tag]` line closes the socket and falls through to normal parsing;
+        // blank lines (handled above) keep it open so topics may be visually grouped.
+        if in_ws_socket {
+            if actual_indent > 0 && !trimmed.starts_with('[') {
+                match parse_ws_topic(trimmed) {
+                    Some((verb, input, output)) => results.push(ParsedLine {
+                        line_num,
+                        kind: LineKind::WsTopic { verb, input, output, indent: actual_indent },
+                    }),
+                    None => results.push(ParsedLine {
+                        line_num,
+                        kind: LineKind::Unknown(
+                            "[ENT:ws] malformed topic — expected \"<verb>(InputDto): OutputDto\"".to_string(),
+                        ),
+                    }),
+                }
+                continue;
+            }
+            in_ws_socket = false;
         }
 
         // Any bracket-tag line ends an open [MOD]/[SRV] description block (the
@@ -311,10 +351,27 @@ pub fn parse_document(text: &str) -> Vec<ParsedLine> {
         // `_modifier` here; [REQ] and [TYP] keep it because their LineKind exposes
         // it downstream ([TYP] for constraint-modifier validation in the LSP).
         // [ENT] / [ENT:modifier] — same signature shape as [REQ]
-        if let Some((_modifier, rest)) = match_tag(trimmed, "ENT") {
+        if let Some((modifier, rest)) = match_tag(trimmed, "ENT") {
             in_dto_block = false;
             in_typ_block = false;
             in_non_block = false;
+            // `[ENT:ws]` opens a WebSocket socket: `[ENT:ws] <surface> @ /path`. The indented
+            // `verb(In): Out` lines that follow are its topics (consumed above on later lines).
+            if modifier.as_deref() == Some("ws") {
+                match parse_ws_header(rest) {
+                    Some((surface, path)) => {
+                        in_ws_socket = true;
+                        results.push(ParsedLine { line_num, kind: LineKind::WsSocket { surface, path, indent: actual_indent } });
+                    }
+                    None => results.push(ParsedLine {
+                        line_num,
+                        kind: LineKind::Unknown(
+                            "[ENT:ws] malformed — expected \"[ENT:ws] <surface> @ /path\"".to_string(),
+                        ),
+                    }),
+                }
+                continue;
+            }
             if let Some((noun, verb, input, output, _cc, method)) = parse_req_signature(rest) {
                 results.push(ParsedLine { line_num, kind: LineKind::Ent { noun, verb, input, output, indent: actual_indent, method } });
             } else {
@@ -717,6 +774,66 @@ fn parse_signature(s: &str) -> Option<(String, String, Vec<String>, String, bool
     }
 
     Some((noun, verb, params, output, is_static))
+}
+
+/// True for a bare identifier (a letter/underscore start, then letters/digits/underscores).
+fn is_bare_ident(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Parse an `[ENT:ws]` socket header `<surface> [@ /path]`. Returns the surface and the optional
+/// handshake path. Rejects a header carrying a `(...)` signature (topics live on indented lines).
+/// Mirrors the TS `parseWsHeader`.
+fn parse_ws_header(rest: &str) -> Option<(String, Option<String>)> {
+    let trimmed = rest.trim();
+    if trimmed.is_empty() || trimmed.contains('(') {
+        return None;
+    }
+    let (surface, path) = match trimmed.find('@') {
+        Some(at) => {
+            let surface = trimmed[..at].trim().to_string();
+            let p = trimmed[at + 1..].trim();
+            (surface, if p.is_empty() { None } else { Some(p.to_string()) })
+        }
+        None => (trimmed.to_string(), None),
+    };
+    // Surface: a letter/underscore start, then letters/digits/`-`/`_` (same shape as a [SRV] name).
+    let mut chars = surface.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return None,
+    }
+    if !surface.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        return None;
+    }
+    Some((surface, path))
+}
+
+/// Parse one `[ENT:ws]` topic line `<verb>(InputDto): OutputDto`. The verb is a bare identifier
+/// (the message topic); empty parens mean no inbound payload. Mirrors the TS `parseWsTopicSignature`.
+fn parse_ws_topic(trimmed: &str) -> Option<(String, String, String)> {
+    let paren_open = trimmed.find('(')?;
+    let paren_close = trimmed.rfind(')')?;
+    if paren_close < paren_open {
+        return None;
+    }
+    let verb = trimmed[..paren_open].trim();
+    if !is_bare_ident(verb) {
+        return None;
+    }
+    let after = &trimmed[paren_close + 1..];
+    let colon = after.find(':')?;
+    let output = after[colon + 1..].trim().to_string();
+    if output.is_empty() {
+        return None;
+    }
+    let input = trimmed[paren_open + 1..paren_close].trim().to_string();
+    Some((verb.to_string(), input, output))
 }
 
 fn parse_req_signature(

@@ -3,7 +3,8 @@
 // can actually read. Deterministic: same data.json in → same HTML out.
 //
 // It leads with the DESTINATION, not the decision machinery: a storage map
-// (what lives in Firestore vs Deno KV) and a concrete example record per entity
+// (what lives in Firestore vs Deno KV vs a local SQLite file vs S3 for large
+// files) and a concrete example record per entity
 // — the literal shape of a stored document, with the append-only collection
 // drawn out so "new objects, never edits" is visible at a glance. One plain
 // sentence of why per record, and a notes box per entity for a second pass.
@@ -30,6 +31,7 @@ const PAGE = String.raw`<!doctype html><html lang="en"><head><meta charset="utf-
 <style>
 :root{--bg:#0f1115;--panel:#161922;--p2:#1c2029;--ink:#e9edf3;--mut:#98a2b3;--line:#2a3040;
 --fire:#ff9f1c;--fireb:#3a2c12;--kv:#36c46b;--kvb:#12301d;--acc:#6ea8fe;--warn:#ffd166;
+--sql:#5ad1e0;--sqlb:#0e2a30;--s3:#ff7a85;--s3b:#371518;
 --key:#ffcd7b;--str:#7ee0a0;--num:#86b7ff;}
 *{box-sizing:border-box}
 body{margin:0;font:15px/1.6 system-ui,-apple-system,Segoe UI,Roboto;background:var(--bg);color:var(--ink)}
@@ -43,9 +45,11 @@ main{max-width:900px;margin:0 auto;padding:26px 22px 90px}
 .store{border-radius:13px;padding:16px;border:1px solid var(--line)}
 .store.fs{background:linear-gradient(180deg,var(--fireb),transparent 70%);border-color:#5a4014}
 .store.kv{background:linear-gradient(180deg,var(--kvb),transparent 70%);border-color:#1c4d30}
+.store.sql{background:linear-gradient(180deg,var(--sqlb),transparent 70%);border-color:#1c4d52}
+.store.s3{background:linear-gradient(180deg,var(--s3b),transparent 70%);border-color:#5a2228}
 .store h3{margin:0 0 4px;font-size:14px;display:flex;align-items:center;gap:8px}
 .store .sub{color:var(--mut);font-size:12px;margin-bottom:10px}
-.store.fs h3 .d{color:var(--fire)} .store.kv h3 .d{color:var(--kv)}
+.store.fs h3 .d{color:var(--fire)} .store.kv h3 .d{color:var(--kv)} .store.sql h3 .d{color:var(--sql)} .store.s3 h3 .d{color:var(--s3)}
 .path{font-family:ui-monospace,Menlo,monospace;font-size:13px;padding:6px 0;border-top:1px solid var(--line)}
 .path:first-of-type{border-top:none}
 .path .n{color:var(--ink)} .path .why{color:var(--mut);font-size:12px;font-family:system-ui}
@@ -57,7 +61,12 @@ main{max-width:900px;margin:0 auto;padding:26px 22px 90px}
 .badge{font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px}
 .badge.fs{background:var(--fireb);color:var(--fire);border:1px solid #5a4014}
 .badge.kv{background:var(--kvb);color:var(--kv);border:1px solid #1c4d30}
+.badge.sql{background:var(--sqlb);color:var(--sql);border:1px solid #1c4d52}
+.badge.s3{background:var(--s3b);color:var(--s3);border:1px solid #5a2228}
+.badge.blob{background:var(--s3b);color:var(--s3);border:1px solid #5a2228}
 .badge.mirror{background:#10243f;color:var(--acc);border:1px solid #234668}
+.badge.perm{background:#10261a;color:#7ee0a0;border:1px solid #1c4d30}
+.badge.ttl{background:#2c2410;color:var(--warn);border:1px solid #5a4a14}
 .rec .purpose{padding:13px 18px 0;font-size:14.5px;color:var(--ink)}
 .used{margin:12px 18px 2px}
 .used .lbl{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--mut);margin-bottom:7px}
@@ -97,7 +106,15 @@ padding:12px 30px;display:flex;justify-content:space-between;align-items:center}
 const DOC = /*__DATA__*/;
 const notes = {};
 function esc(s){return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
-function storeName(s){return s==='firestore'?'Firestore':s==='denokv'?'Deno KV':s;}
+function storeName(s){return s==='firestore'?'Firestore':s==='denokv'?'Deno KV':s==='sqlite'?'SQLite':s==='s3'?'S3':s;}
+function badgeCls(s){return s==='firestore'?'fs':s==='denokv'?'kv':s==='sqlite'?'sql':s==='s3'?'s3':'';}
+// a compact header chip for an entity's retention: kept forever vs expires after N
+function retBadge(ret){
+  if(!ret||!ret.policy) return '';
+  if(ret.policy==='permanent') return '<span class="badge perm">∞ kept forever</span>';
+  const verb=ret.policy==='purge-after'?'purge after':'expires in';
+  return '<span class="badge ttl">⏱ '+esc(verb+' '+(ret.ttl||'?'))+'</span>';
+}
 
 // pretty-print an example record as colored, indented lines; annotate the
 // append-only collection's opening line with "appended — never edited".
@@ -158,30 +175,50 @@ function fallbackDoc(e){
 function render(){
   document.getElementById('mod').textContent=DOC.module||'(module)';
   const ents=DOC.entities||[];
-  const fs=ents.filter(e=>e.store==='firestore'), kv=ents.filter(e=>e.store==='denokv');
+  const fs=ents.filter(e=>e.store==='firestore'), kv=ents.filter(e=>e.store==='denokv'), sq=ents.filter(e=>e.store==='sqlite'), s3=ents.filter(e=>e.store==='s3');
   const proj=ents.flatMap(e=>(e.projections||[]).map(p=>({...p,owner:e.name})));
+  const blobs=ents.flatMap(e=>(e.blobs||[]).map(b=>({...b,owner:e.name})));
   const hasAppend=ents.some(e=>(e.immutability||{}).strategy==='append-child');
   // plain-language lede
   const parts=[];
   parts.push(ents.length+' record '+(ents.length===1?'type':'types')+'. ');
-  if(fs.length) parts.push(fs.map(e=>e.name).join(' & ')+' '+(fs.length>1?'live':'lives')+' in Firestore (you list & query them)');
-  if(kv.length) parts.push((fs.length?'; ':'')+kv.map(e=>e.name).join(' & ')+' in Deno KV');
-  if(proj.length) parts.push('. '+proj.length+' fast KV '+(proj.length>1?'mirrors':'mirror')+' for by-id lookups.');
+  const byStore=[];
+  if(fs.length) byStore.push(fs.map(e=>e.name).join(' & ')+' '+(fs.length>1?'live':'lives')+' in Firestore (you list & query them)');
+  if(kv.length) byStore.push(kv.map(e=>e.name).join(' & ')+' in Deno KV');
+  if(sq.length) byStore.push(sq.map(e=>e.name).join(' & ')+' '+(sq.length>1?'live':'lives')+' in one local SQLite file (list & by-id from one engine)');
+  if(s3.length) byStore.push(s3.map(e=>e.name).join(' & ')+' '+(s3.length>1?'live':'lives')+' in S3 (large files)');
+  if(byStore.length) parts.push(byStore.join('; ')+'.');
+  if(proj.length) parts.push(' '+proj.length+' fast lookup '+(proj.length>1?'mirrors':'mirror')+' for by-id reads.');
+  if(blobs.length) parts.push(' '+blobs.length+' file '+(blobs.length>1?'fields are':'field is')+' offloaded to S3 (e.g. <b>'+esc(blobs[0].field||'file')+'</b>) — bytes in a bucket, a reference in the record.');
+  const ttlN=ents.filter(e=>{const r=e.retention||{};return r.policy==='ttl'||r.policy==='purge-after';}).length;
+  if(ttlN) parts.push(' '+ttlN+' '+(ttlN>1?'records expire':'record expires')+' on a <b>TTL</b>; the rest are kept permanently.');
   if(hasAppend) parts.push(' Changes are <b>appended as new entries</b>, never edited in place.');
   document.getElementById('lede').innerHTML=parts.join('');
 
   const root=document.getElementById('root');
-  // STORAGE MAP
-  let map='<div class="sec">Where it lives</div><div class="map">';
-  map+='<div class="store fs"><h3><span class="d">●</span> Firestore</h3><div class="sub">documents you list, filter & sort</div>';
-  if(fs.length) fs.forEach(e=>map+='<div class="path"><span class="n">'+esc(e.key||(e.name+'s/{id}'))+'</span></div>');
-  else map+='<div class="empty">nothing here</div>';
+  // STORAGE MAP — one column per store actually used (local-only => a single SQLite column)
+  const STORE_DEFS={
+    firestore:{cls:'fs',label:'Firestore',sub:'documents you list, filter & sort',dft:e=>e.name+'s/{id}'},
+    denokv:{cls:'kv',label:'Deno KV',sub:'instant lookups by a known key',dft:e=>e.name+':{id}'},
+    sqlite:{cls:'sql',label:'SQLite',sub:'one local file — relational queries & lookups',dft:e=>e.name},
+    s3:{cls:'s3',label:'S3',sub:'large files & binary blobs (a reference lives in a record)',dft:e=>e.name+'/{id}'},
+  };
+  const usedStores=['firestore','denokv','sqlite','s3'].filter(s=>ents.some(e=>e.store===s)||proj.some(p=>p.store===s)||(s==='s3'&&blobs.length));
+  const cols=usedStores.length?usedStores:['firestore','denokv'];
+  let map='<div class="sec">Where it lives</div><div class="map" style="grid-template-columns:repeat('+cols.length+',1fr)">';
+  for(const sid of cols){
+    const def=STORE_DEFS[sid]||{cls:'',label:storeName(sid),sub:'',dft:e=>e.name};
+    map+='<div class="store '+def.cls+'"><h3><span class="d">●</span> '+esc(def.label)+'</h3><div class="sub">'+esc(def.sub)+'</div>';
+    const rows=[
+      ...ents.filter(e=>e.store===sid).map(e=>({k:e.key||def.dft(e),why:''})),
+      ...proj.filter(p=>p.store===sid).map(p=>({k:p.key||p.name,why:'mirror of '+p.owner})),
+      ...(sid==='s3'?blobs.map(b=>({k:b.key||(b.owner+'/'+(b.field||'file')+'/{id}'),why:b.owner+'.'+(b.field||'file')})):[]),
+    ];
+    if(rows.length) rows.forEach(r=>map+='<div class="path"><span class="n">'+esc(r.k)+'</span>'+(r.why?' <span class="why">— '+esc(r.why)+'</span>':'')+'</div>');
+    else map+='<div class="empty">nothing here</div>';
+    map+='</div>';
+  }
   map+='</div>';
-  map+='<div class="store kv"><h3><span class="d">●</span> Deno KV</h3><div class="sub">instant lookups by a known key</div>';
-  const kvrows=[...kv.map(e=>({k:e.key||(e.name+':{id}'),why:''})),...proj.map(p=>({k:p.key||p.name,why:'mirror of '+p.owner}))];
-  if(kvrows.length) kvrows.forEach(r=>map+='<div class="path"><span class="n">'+esc(r.k)+'</span>'+(r.why?' <span class="why">— '+esc(r.why)+'</span>':'')+'</div>');
-  else map+='<div class="empty">nothing here</div>';
-  map+='</div></div>';
   root.insertAdjacentHTML('beforeend',map);
 
   // RECORDS
@@ -191,11 +228,15 @@ function render(){
     const example = e.document || fallbackDoc(e);
     const appendKey = im.strategy==='append-child' ? (im.collection||{}).name : null;
     let h='<div class="rec"><div class="head"><span class="name">'+esc(e.name)+'</span>';
-    h+='<span class="badge '+(e.store==='firestore'?'fs':'kv')+'">'+storeName(e.store)+'</span>';
+    h+='<span class="badge '+badgeCls(e.store)+'">'+storeName(e.store)+'</span>';
     (e.projections||[]).forEach(p=>h+='<span class="badge mirror">+ '+storeName(p.store)+' copy</span>');
+    if((e.blobs||[]).length) h+='<span class="badge blob">+ '+(e.blobs.length>1?e.blobs.length+' files in S3':'file in S3')+'</span>';
+    h+=retBadge(e.retention);
     h+='</div>';
     if(e.purpose)h+='<div class="purpose">'+esc(e.purpose)+'</div>';
     h+='<pre class="doc">'+prettyDoc(example,appendKey)+'</pre>';
+    if((e.blobs||[]).length)
+      h+='<div class="read"><b>Files in S3:</b> '+e.blobs.map(b=>esc(b.field||'file')+' → <span class="p">'+esc(b.key||'(key)')+'</span>').join(', ')+' — bytes in a bucket, this record keeps only the reference.</div>';
     if(im.currentStateOnRead && appendKey)
       h+='<div class="read"><b>Reading it:</b> '+esc(im.currentStateOnRead)+'</div>';
     if((e.usedBy||[]).length){
@@ -216,6 +257,15 @@ function render(){
       h+='<div class="imnote ok"><b>Counter:</b> a derived number, updated atomically in place — no history kept (none needed).</div>';
     } else if(im.strategy==='overwrite-justified'){
       h+='<div class="imnote"><b>Overwrites in place:</b> '+esc(im.why||'(reason not given)')+'</div>';
+    }
+    // retention one-liner: how long it lives, and the mechanism that enforces it
+    const ret=e.retention;
+    if(ret&&ret.policy){
+      const mech=ret.mechanism&&ret.mechanism!=='none'?' <span class="p">('+esc(ret.mechanism)+')</span>':'';
+      if(ret.policy==='permanent')
+        h+='<div class="imnote ok"><b>Kept forever:</b> no TTL — '+esc(ret.why||'permanent record')+'.</div>';
+      else
+        h+='<div class="imnote"><b>'+(ret.policy==='purge-after'?'Purged':'Expires')+' after '+esc(ret.ttl||'?')+':</b>'+mech+' '+esc(ret.why||'')+'</div>';
     }
     h+='<div class="notes"><label>Notes for a second pass</label>'+
        '<textarea data-e="'+esc(e.name)+'" placeholder="what would you change about how '+esc(e.name)+' is stored?"></textarea></div>';

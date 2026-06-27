@@ -1,4 +1,4 @@
-import { RUNE_COMMIT, RUNE_VERSION } from "@core/dto/version.gen.ts";
+import { RUNE_BUILT_AT, RUNE_COMMIT, RUNE_VERSION } from "@core/dto/version.gen.ts";
 
 const YELLOW = "\x1b[33m";
 const BOLD = "\x1b[1m";
@@ -55,9 +55,32 @@ export async function fetchLatestCommit(): Promise<string | undefined> {
   }
 }
 
+// Render a UTC ISO instant as Eastern wall-clock time. America/New_York applies the
+// EST↔EDT switch itself, so the zone label (EST in winter, EDT in summer) is honest
+// year-round. Returns null for a missing/unparseable stamp so `rune -v` omits the line.
+export function formatEastern(iso: string): string | null {
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return null;
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZoneName: "short",
+  }).format(ms);
+}
+
 export async function runVersion(_args: string[]): Promise<number> {
   const short = RUNE_COMMIT === "unknown" ? "dev" : RUNE_COMMIT.slice(0, 7);
-  console.log(`rune ${RUNE_VERSION} ${DIM}(${short})${RESET}`);
+  // A released binary's build time IS the release time (CI stamps it at release); a
+  // local dev build (commit "unknown") shows its own build time. Eastern, per request.
+  const built = formatEastern(RUNE_BUILT_AT);
+  const verb = RUNE_COMMIT === "unknown" ? "built" : "released";
+  const when = built ? ` ${DIM}· ${verb} ${built}${RESET}` : "";
+  console.log(`rune ${RUNE_VERSION} ${DIM}(${short})${RESET}${when}`);
 
   const latest = await fetchLatestCommit();
   if (isNewer(RUNE_COMMIT, latest)) {

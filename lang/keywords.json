@@ -60,7 +60,7 @@
       "follows": "signature",
       "color": "#89babf",
       "syntax": "[ENT] surface.action(InputDto): OutputDto",
-      "summary": "An inbound entrypoint (HTTP route, CLI command, queue handler) — the inverse of a boundary. Its body references the [REQ] it dispatches to.",
+      "summary": "An inbound entrypoint (HTTP route, CLI command, queue handler) — the inverse of a boundary. Its body references the [REQ] it dispatches to. [ENT:ws] instead declares a WebSocket socket: a `[ENT:ws] <surface> @ /path` header with indented `verb(In): Out` message topics.",
       "rules": []
     },
     {

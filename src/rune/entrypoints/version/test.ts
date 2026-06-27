@@ -1,5 +1,5 @@
-import { assertEquals } from "#std/assert";
-import { isNewer, latestCommitUrl } from "./mod.ts";
+import { assertEquals, assertStringIncludes } from "#std/assert";
+import { formatEastern, isNewer, latestCommitUrl } from "./mod.ts";
 
 Deno.test("latestCommitUrl — points at the release's commit.txt asset (default latest)", () => {
   assertEquals(
@@ -30,4 +30,27 @@ Deno.test("isNewer — unknown baked commit (dev build) never nags", () => {
 
 Deno.test("isNewer — unreachable API (no latest sha) never nags", () => {
   assertEquals(isNewer("aaaaaaa", undefined), false);
+});
+
+Deno.test("formatEastern — summer UTC instant renders in EDT (UTC-4)", () => {
+  // 19:32 UTC on Jun 26 → 15:32 (3:32 PM) EDT.
+  const s = formatEastern("2026-06-26T19:32:00Z");
+  assertEquals(s !== null, true);
+  assertStringIncludes(s!, "Jun 26, 2026");
+  assertStringIncludes(s!, "3:32");
+  assertStringIncludes(s!, "EDT");
+});
+
+Deno.test("formatEastern — winter UTC instant renders in EST (UTC-5)", () => {
+  // 19:32 UTC on Jan 15 → 14:32 (2:32 PM) EST — the zone label tracks the season.
+  const s = formatEastern("2026-01-15T19:32:00Z");
+  assertEquals(s !== null, true);
+  assertStringIncludes(s!, "Jan 15, 2026");
+  assertStringIncludes(s!, "2:32");
+  assertStringIncludes(s!, "EST");
+});
+
+Deno.test("formatEastern — missing/unparseable stamp yields null (line omitted)", () => {
+  assertEquals(formatEastern("unknown"), null);
+  assertEquals(formatEastern(""), null);
 });

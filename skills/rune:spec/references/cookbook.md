@@ -99,3 +99,24 @@ it's walked deliberately, and order it last:
 The cake's flow selector lets you exercise `create → use` green, then switch to
 `teardown` to clean up — without `delete` ever blocking or auto-running in the
 main walk.
+
+## A WebSocket socket is a surface of topics
+
+When the surface is a live socket rather than request/response, use `[ENT:ws]`. The
+header declares the handshake path once; each indented verb is a message **topic**.
+Model one verb per inbound message type — the topic *is* the discriminant, so you
+don't need a union DTO:
+
+```
+[ENT:ws] chat @ /rooms/{room}
+    join(JoinDto): JoinedDto      # client sends {topic:"join", data:{…}}; reply → sender
+    send(ChatDto): EchoDto
+    leave(LeaveDto): void         # void ⇒ no reply
+```
+
+Each topic dispatches to its `[REQ]` by `(input, output)` just like an HTTP `[ENT]`,
+and a non-`void` return is sent back **to the sender**. Two things to remember: the
+handshake bindings (`{room}`, and a `[TYP:from=query]` auth token — a WS handshake
+can't set an `Authorization` header) are read once at connect, not per message; and a
+handler can only reply to its own sender — fan-out/broadcast to other clients isn't
+modeled (keep a connection registry yourself if you need it).

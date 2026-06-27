@@ -64,6 +64,13 @@ export interface EntNode {
    */
   pathTemplate?: string | null;
   /**
+   * Transport kind. "http" (the default, and the value when omitted) is a request/response
+   * route. "ws" is a WebSocket message handler grouped under an `[ENT:ws]` socket header:
+   * `action` is the message topic, `pathTemplate` is the handshake path shared by every
+   * topic on the socket, and `method` is null (the upgrade is always a GET).
+   */
+  kind?: "http" | "ws";
+  /**
    * The [REQ] this ent dispatches to, captured from an indented `[REQ]` line in the ent body
    * (`[ENT] http.x(A): B` then `    [REQ] noun.verb(A): B`). When set, codegen delegates to exactly
    * this coordinator instead of guessing by the (input, output) signature.
@@ -215,6 +222,12 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
   let currentCse: CseNode | null = null;
   let lastStep: StepNode | BoundaryStepNode | null = null;
   let currentEnt: EntNode | null = null;
+  // An open `[ENT:ws]` socket. While set, subsequent indented `verb(InputDto): OutputDto`
+  // lines are its topics — each becomes a kind:"ws" EntNode sharing this handshake path.
+  // Closed by any dedent to column 0 (the next top-level tag) or end-of-file.
+  let currentWsSocket:
+    | { surface: string; pathTemplate: string | null; line: number; topicCount: number }
+    | null = null;
   // The [SRV] whose description block is currently open — routes an indented
   // `@docs <url>` line to its docsLink. Only "active" while descTarget === it.
   let currentSrv: SrvNode | null = null;
@@ -262,6 +275,46 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
         continue;
       }
       currentEnt = null;
+    }
+
+    // Topics of an open [ENT:ws] socket. Each indented `verb(InputDto): OutputDto` line
+    // becomes a kind:"ws" EntNode sharing the socket's handshake path (action = the topic).
+    // A dedent to column 0 closes the socket and falls through to normal top-level parsing;
+    // blank lines (handled above) keep it open so topics may be visually grouped.
+    if (currentWsSocket) {
+      if (indent > 0) {
+        const topic = parseWsTopicSignature(trimmed);
+        if (topic) {
+          ast.ents.push({
+            surface: currentWsSocket.surface,
+            action: topic.verb,
+            input: topic.input,
+            output: topic.output,
+            modifier: null,
+            line: i,
+            method: null,
+            pathTemplate: currentWsSocket.pathTemplate,
+            kind: "ws",
+          });
+          currentWsSocket.topicCount++;
+        } else {
+          ast.errors.push({
+            line: i,
+            message:
+              `[ENT:ws] ${currentWsSocket.surface}: malformed topic — expected "<verb>(InputDto): OutputDto"`,
+          });
+        }
+        descTarget = null;
+        continue;
+      }
+      if (currentWsSocket.topicCount === 0) {
+        ast.errors.push({
+          line: currentWsSocket.line,
+          message:
+            `[ENT:ws] ${currentWsSocket.surface} has no topics — add at least one "<verb>(InputDto): OutputDto"`,
+        });
+      }
+      currentWsSocket = null;
     }
 
     // Close [PLY]/[CSE] block when indentation drops back to step level (≤4)
@@ -371,6 +424,33 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
     // [ENT] — same shape as REQ
     const entTag = rec.match(trimmed, "ent");
     if (entTag) {
+      // [ENT:ws] opens a WebSocket socket: `[ENT:ws] <surface> @ /path`. The indented
+      // `verb(InputDto): OutputDto` lines that follow are its topics (consumed above on
+      // the next iterations). The header itself emits no EntNode — only its topics do.
+      if (entTag.modifier === "ws") {
+        const header = parseWsHeader(entTag.rest);
+        if (!header) {
+          ast.errors.push({
+            line: i,
+            message: '[ENT:ws] malformed — expected "[ENT:ws] <surface> @ /path"',
+          });
+          currentWsSocket = null;
+        } else {
+          currentWsSocket = {
+            surface: header.surface,
+            pathTemplate: header.pathTemplate,
+            line: i,
+            topicCount: 0,
+          };
+        }
+        currentReq = null;
+        currentPly = null;
+        currentCse = null;
+        lastStep = null;
+        currentEnt = null;
+        descTarget = null;
+        continue;
+      }
       const sig = parseReqSignature(entTag.rest);
       if (!sig) {
         ast.errors.push({ line: i, message: "[ENT] missing or malformed signature" });
@@ -656,6 +736,16 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
 
     // Fall-through: unrecognized line.
     ast.errors.push({ line: i, message: `unrecognized line: "${trimmed}"` });
+  }
+
+  // An [ENT:ws] socket still open at EOF with no topics is an error (mirrors the
+  // dedent-close check inside the loop, for a socket that ends the file).
+  if (currentWsSocket && currentWsSocket.topicCount === 0) {
+    ast.errors.push({
+      line: currentWsSocket.line,
+      message:
+        `[ENT:ws] ${currentWsSocket.surface} has no topics — add at least one "<verb>(InputDto): OutputDto"`,
+    });
   }
 
   // Every property used in a [DTO] must resolve to a declared type — no untyped
@@ -946,6 +1036,55 @@ function parseReqSignature(s: string): ReqSig | null {
 
   if (noun === "" || verb === "") return null;
   return { noun, verb, input, output, method, pathTemplate };
+}
+
+/**
+ * Parse an `[ENT:ws]` socket header: `<surface> [@ /path]`. Returns the socket surface
+ * (the controller noun) and the optional handshake path template — `{name}` segments are
+ * translated to route params at codegen exactly like an HTTP route template. A header
+ * carrying a `(...)` signature is rejected: topics are declared on indented lines below,
+ * never on the header.
+ */
+function parseWsHeader(
+  rest: string,
+): { surface: string; pathTemplate: string | null } | null {
+  const trimmed = rest.trim();
+  if (trimmed === "" || trimmed.includes("(")) return null;
+  const atIdx = trimmed.indexOf("@");
+  let surface: string;
+  let pathTemplate: string | null = null;
+  if (atIdx === -1) {
+    surface = trimmed;
+  } else {
+    surface = trimmed.slice(0, atIdx).trim();
+    pathTemplate = trimmed.slice(atIdx + 1).trim() || null;
+  }
+  if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(surface)) return null;
+  return { surface, pathTemplate };
+}
+
+/**
+ * Parse one `[ENT:ws]` topic line: `<verb>(InputDto): OutputDto`. The verb is a bare
+ * identifier (the message topic); the socket header supplies the surface. Empty parens
+ * (`verb(): Out`) mean the topic carries no inbound payload. Returns null on any other
+ * shape so the caller can report a malformed topic.
+ */
+function parseWsTopicSignature(
+  s: string,
+): { verb: string; input: string; output: string } | null {
+  const trimmed = s.trim();
+  const parenOpen = trimmed.indexOf("(");
+  const parenClose = trimmed.lastIndexOf(")");
+  if (parenOpen === -1 || parenClose === -1 || parenClose < parenOpen) return null;
+  const verb = trimmed.slice(0, parenOpen).trim();
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(verb)) return null;
+  const afterParen = trimmed.slice(parenClose + 1);
+  const colonIdx = afterParen.indexOf(":");
+  if (colonIdx === -1) return null;
+  const output = afterParen.slice(colonIdx + 1).trim();
+  if (output === "") return null;
+  const input = trimmed.slice(parenOpen + 1, parenClose).trim();
+  return { verb, input, output };
 }
 
 function isFaultName(s: string): boolean {

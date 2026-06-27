@@ -2150,3 +2150,60 @@ Deno.test("planManifest — S7: a [PLY] with no [CSE] emits an error and no brok
     );
   }
 });
+
+Deno.test("planManifest — [ENT:ws] emits a WebSocket controller, not an HTTP one", () => {
+  const rune = `[MOD] chat
+
+[ENT:ws] chat @ /rooms/{room}
+    join(JoinDto): JoinedDto
+    send(ChatDto): EchoDto
+    leave(LeaveDto): void
+
+[DTO] JoinDto: room
+    join
+[DTO] JoinedDto: room, members
+    joined
+[DTO] ChatDto: text
+    chat
+[DTO] EchoDto: text, at
+    echo
+[DTO] LeaveDto: room
+    leave
+
+[TYP] room: string
+    r
+[TYP] members: number
+    m
+[TYP] text: string
+    t
+[TYP] at: number
+    a`;
+  const plan = planManifest("specs/chat.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const mod = plan.toCreate.find((f) => f.path === "src/chat/entrypoints/chat/mod.ts");
+  assert(mod, "WS controller file must be emitted");
+  // The handshake path mounts via @WsEndpointController; {room} → :room.
+  assertStringIncludes(mod.content, '@WsEndpointController("rooms/:room")');
+  assertStringIncludes(mod.content, "WsEndpoint, WsEndpointController");
+  // One @WsEndpoint per topic; the topic is the verb.
+  assertStringIncludes(
+    mod.content,
+    '@WsEndpoint({ topic: "join", input: JoinDto, output: JoinedDto })',
+  );
+  assertStringIncludes(
+    mod.content,
+    '@WsEndpoint({ topic: "send", input: ChatDto, output: EchoDto })',
+  );
+  // A void topic mints no reply: no `output:` and a Promise<void> handler.
+  assertStringIncludes(mod.content, '@WsEndpoint({ topic: "leave", input: LeaveDto })');
+  assertStringIncludes(mod.content, "leave(data: LeaveDto): Promise<void>");
+  // It is a WS controller, never an HTTP one (no HTTP decorators leak in).
+  assert(!mod.content.includes("@EndpointController"), "no HTTP @EndpointController");
+  assert(!mod.content.includes("@Endpoint("), "no HTTP @Endpoint");
+  assert(!/@(Get|Post|Put|Patch|Delete)\b/.test(mod.content), "no HTTP method decorator");
+  // No HTTP e2e harness for a WS socket in v1.
+  assertEquals(
+    plan.toCreate.some((f) => f.path === "src/chat/entrypoints/chat/e2e.test.ts"),
+    false,
+  );
+});

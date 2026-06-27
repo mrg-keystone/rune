@@ -74,9 +74,19 @@ Derived from LSP implementation.
 | An `[ENT]` body `[REQ]` takes no modifier | ERROR |
 | Without a body `[REQ]`, an `[ENT]` is matched to its coordinator by `(input, output)` DTO pair | - |
 | Two `[REQ]`s sharing an `[ENT]`'s `(input, output)` signature are ambiguous — disambiguate with a body `[REQ]` | ERROR |
+| `[ENT:ws]` declares a WebSocket socket: `[ENT:ws] <surface> @ /path` header + indented `verb(InputDto): OutputDto` topics | - |
+| An `[ENT:ws]` socket must declare at least one topic | ERROR |
+| An `[ENT:ws]` topic must read `verb(InputDto): OutputDto` (`void` output ⇒ no reply) | ERROR |
+| A surface is either HTTP `[ENT]`s or a WebSocket `[ENT:ws]` socket, never both | ERROR |
 
 An empty input (`[ENT] http.refresh({}): StatusDto`) generates a no-argument
 handler: the `@Endpoint` omits its `input` key and the method takes no body.
+
+A WebSocket socket (`[ENT:ws] chat @ /rooms/{room}`) generates a `@WsEndpointController`
+with one `@WsEndpoint` per topic; the verb is the message topic, the inbound `data` is
+validated against the input DTO, and a non-`void` return is the reply sent to the sender.
+Handshake bindings (`{path}` segments, `[TYP:from=query]` tokens) are read once at connect,
+not per message. WS endpoints carry no HTTP verb, so they never enter the OpenAPI document.
 
 ## Process derivation
 
