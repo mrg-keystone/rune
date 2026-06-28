@@ -87,6 +87,17 @@ export interface ManifestOptions {
    * plan error. The user-facing entrypoints (check/sync/manifest/dev) set this;
    * raw codegen callers (studio preview, golden capture) leave it off. */
   strictServices?: boolean;
+  /** The absolute project root the entrypoint resolved. Diagnostics-only: paired
+   * with `coreSpecFound` to name the root in the root-resolution error below. */
+  projectRoot?: string;
+  /** Whether the entrypoint found a core spec FILE under `projectRoot` (see
+   * coreSpecExists). When `strictServices` finds undeclared services and this is
+   * explicitly `false`, the planner emits ONE root-resolution diagnostic — the
+   * resolved root almost certainly doesn't point at the rune project, so no
+   * core.rune could declare anything — instead of N "undeclared service" errors
+   * that send the user to edit an already-correct spec/core. Left `undefined` by
+   * raw codegen callers, who keep the per-service behavior. */
+  coreSpecFound?: boolean;
 }
 
 /** Map a loaded artifact to the engine's options: layout bindings, codegen
@@ -219,8 +230,31 @@ export function planManifest(
       }
     };
     for (const req of ast.reqs) collectUsedServices(req.steps);
-    for (const [service, line] of usedServices) {
-      if (!srvByName.has(service)) {
+    const undeclared = [...usedServices].filter(([s]) => !srvByName.has(s));
+    if (undeclared.length > 0 && opts.coreSpecFound === false) {
+      // No core.rune ANYWHERE under the resolved root — so nothing could declare
+      // these services. That's a root-resolution problem (the root doesn't point
+      // at the rune project, e.g. the spec is staged above it), NOT a spec error.
+      // Emit ONE diagnostic that names the root + the fix, instead of N
+      // red-herrings telling the user to edit a core.rune that's correct and
+      // simply elsewhere. (Only fires when the entrypoint explicitly reports the
+      // core absent; raw codegen callers leave coreSpecFound undefined and keep
+      // the per-service errors below.)
+      const root = opts.projectRoot ?? ".";
+      const names = undeclared.map(([s]) => `"${s}"`).join(", ");
+      const plural = undeclared.length > 1;
+      plan.errors.push(
+        `${runePath}: no core.rune found under the resolved project root ` +
+          `"${root}" — shared services live in its src/core/core.rune and none ` +
+          `was found there, so the boundary service${plural ? "s" : ""} ${names} ` +
+          `cannot be resolved. The root is usually mis-resolved here (e.g. the ` +
+          `spec is staged above the rune project): pass \`--root <project-dir>\` ` +
+          `— the dir whose src/core/core.rune declares ${plural ? "them" : "it"} ` +
+          `— or move the spec into that project. rune resolves the root from the ` +
+          `spec's path; see \`rune sync --help\`.`,
+      );
+    } else {
+      for (const [service, line] of undeclared) {
         plan.errors.push(
           `${runePath}:${line + 1}: undeclared service "${service}" — declare ` +
             `it as \`[SRV] (TRANSPORT)${service}: <ENV,…>\` in src/core/core.rune`,

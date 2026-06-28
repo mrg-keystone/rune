@@ -5,7 +5,11 @@ import {
   planManifest,
 } from "@rune/domain/business/rune-manifest/mod.ts";
 import { loadArtifact } from "@rune/domain/business/artifact/mod.ts";
-import { loadCoreSrvs, resolveRoot } from "@rune/entrypoints/spec-root.ts";
+import {
+  coreSpecExists,
+  loadCoreSrvs,
+  resolveRoot,
+} from "@rune/entrypoints/spec-root.ts";
 
 const RED = "\x1b[31m";
 const GREEN = "\x1b[32m";
@@ -111,11 +115,12 @@ export async function runManifest(args: string[]): Promise<number> {
 
   const existingFiles = await collectFiles(root);
   const sharedSrvs = await loadCoreSrvs(root, absRune);
+  const coreSpecFound = await coreSpecExists(root, absRune);
   const plan = planManifest(
     relRune,
     runeText,
     existingFiles,
-    { ...(opts ?? {}), strictServices: true },
+    { ...(opts ?? {}), strictServices: true, projectRoot: root, coreSpecFound },
     sharedSrvs,
   );
 
@@ -131,7 +136,7 @@ export async function runManifest(args: string[]): Promise<number> {
         2,
       ));
     } else {
-      console.error(`${RED}parse error in ${relRune}:${RESET}`);
+      console.error(`${RED}error in ${relRune}:${RESET}`);
       for (const e of plan.errors) console.error(`  ${e}`);
     }
     return 2;

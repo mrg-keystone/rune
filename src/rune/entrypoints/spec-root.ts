@@ -32,33 +32,24 @@ export function resolveRoot(absRune: string): string {
   return specDir;
 }
 
-/** Load the project's shared `[SRV]` set from the core spec.
- *
- * Looks for the core spec under any supported layout, in order: the canonical
- * `<root>/src/core/core.rune`, the `spec/runes/` staging dir
- * (`<root>/spec/runes/core.rune`), the legacy flat `spec/` and `specs/` folder
- * layouts (`<root>/spec/core.rune`, `<root>/specs/core.rune`), and a flat
- * `<root>/core.rune` sibling. Returns the services by name, or `undefined` when there is no
- * core spec, it declares no services, or `targetAbs` IS the core spec itself (a
- * spec never merges its own declarations). Pure read — the planners stay
- * I/O-free; the entrypoints do this loading, like they read the target text. */
-export async function loadCoreSrvs(
-  root: string,
-  targetAbs: string,
-): Promise<Map<string, SrvNode> | undefined> {
-  const candidates = [
+/** The core-spec file locations probed under `root`, in resolution order: the
+ * canonical `<root>/src/core/core.rune` first, then the `spec/runes/` staging
+ * dir, the legacy flat `spec/`+`specs/` layouts, and a flat `<root>/core.rune`
+ * sibling — each trailed (last) by its `.in-prog.rune` draft. A draft core
+ * STILL supplies the shared services so every module resolves its boundary
+ * calls while core is iterated on (core is infrastructure, not a composable
+ * module — it declares no endpoints and is never mounted — so unlike a module
+ * draft it must not be "ignored"); finalized core wins when both exist. Shared
+ * by loadCoreSrvs (reads them) and coreSpecExists (stats them) so the two
+ * can't drift. */
+function coreSpecCandidates(root: string): string[] {
+  return [
     join(root, CORE_SPEC_REL), // canonical: src/core/core.rune
     join(root, "spec", "runes", "core.rune"), // spec/runes/ staging dir
     join(root, "specs", "runes", "core.rune"), // specs/runes/ staging dir
     join(root, "spec", "core.rune"), // legacy flat spec/ layout
     join(root, "specs", "core.rune"), // legacy flat specs/ layout
     join(root, "core.rune"), // flat sibling
-    // A draft core (`core.in-prog.rune`) STILL supplies the shared services so
-    // every module resolves its boundary calls while core is iterated on. Core
-    // is infrastructure, not a composable module — it declares no endpoints and
-    // is never mounted — so unlike a module draft it must not be "ignored" here,
-    // else marking it in-prog silently breaks every module's `db:`/service step.
-    // Finalized core wins when both exist (these come last).
     join(root, "src", "core", "core.in-prog.rune"),
     join(root, "spec", "runes", "core.in-prog.rune"),
     join(root, "specs", "runes", "core.in-prog.rune"),
@@ -66,7 +57,20 @@ export async function loadCoreSrvs(
     join(root, "specs", "core.in-prog.rune"),
     join(root, "core.in-prog.rune"),
   ];
-  for (const corePath of candidates) {
+}
+
+/** Load the project's shared `[SRV]` set from the core spec.
+ *
+ * Probes coreSpecCandidates() in order. Returns the services by name, or
+ * `undefined` when there is no core spec, the first core spec found declares no
+ * services, or `targetAbs` IS the core spec itself (a spec never merges its own
+ * declarations). Pure read — the planners stay I/O-free; the entrypoints do
+ * this loading, like they read the target text. */
+export async function loadCoreSrvs(
+  root: string,
+  targetAbs: string,
+): Promise<Map<string, SrvNode> | undefined> {
+  for (const corePath of coreSpecCandidates(root)) {
     if (resolve(corePath) === resolve(targetAbs)) continue; // never self-merge
     let text: string;
     try {
@@ -79,4 +83,27 @@ export async function loadCoreSrvs(
     return new Map(ast.srvs.map((s) => [s.name, s]));
   }
   return undefined; // no core spec in this project
+}
+
+/** Whether a core spec FILE exists under `root` (any supported layout), as
+ * opposed to whether it declares services. The entrypoints pass this to the
+ * planner so a strict-services run can tell two very different failures apart:
+ * "no core.rune anywhere under the resolved root" (almost always the root
+ * doesn't point at the rune project — e.g. the spec is staged above it — a
+ * root-resolution error) versus "core.rune exists but doesn't declare service
+ * X" (a genuine spec error). Same candidate set + self-skip as loadCoreSrvs. */
+export async function coreSpecExists(
+  root: string,
+  targetAbs: string,
+): Promise<boolean> {
+  for (const corePath of coreSpecCandidates(root)) {
+    if (resolve(corePath) === resolve(targetAbs)) continue;
+    try {
+      await Deno.stat(corePath);
+      return true;
+    } catch {
+      continue; // not at this location
+    }
+  }
+  return false;
 }

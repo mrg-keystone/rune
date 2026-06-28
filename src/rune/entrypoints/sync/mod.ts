@@ -28,7 +28,11 @@ import {
   renderHealRules,
   todoSlugs,
 } from "@rune/domain/business/rune-heal/mod.ts";
-import { loadCoreSrvs, resolveRoot } from "@rune/entrypoints/spec-root.ts";
+import {
+  coreSpecExists,
+  loadCoreSrvs,
+  resolveRoot,
+} from "@rune/entrypoints/spec-root.ts";
 
 const RED = "\x1b[31m";
 const GREEN = "\x1b[32m";
@@ -133,6 +137,9 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
     console.error(
       "Usage: rune sync <rune-file> [--root <dir>] [--artifact <keywords.json>] [--dry-run] [--force] [--regen <path>] [--no-run]",
     );
+    console.error(
+      "  The project root is resolved from <rune-file>'s path (the dir above spec/runes/, spec/, or src/<module>/); --root overrides it. Shared [SRV]s are read from <root>/src/core/core.rune.",
+    );
     return 2;
   }
 
@@ -155,16 +162,17 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
 
   const existingFiles = await collectFiles(root);
   const sharedSrvs = await loadCoreSrvs(root, absRune);
+  const coreSpecFound = await coreSpecExists(root, absRune);
   const plan = planSync(
     relRune,
     runeText,
     existingFiles,
-    { ...(opts ?? {}), strictServices: true },
+    { ...(opts ?? {}), strictServices: true, projectRoot: root, coreSpecFound },
     sharedSrvs,
   );
 
   if (plan.errors.length > 0) {
-    console.error(`${RED}parse error in ${relRune}:${RESET}`);
+    console.error(`${RED}error in ${relRune}:${RESET}`);
     for (const e of plan.errors) console.error(`  ${e}`);
     return 2;
   }

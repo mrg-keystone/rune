@@ -1950,6 +1950,85 @@ Deno.test("planManifest — strictServices errors on an undeclared boundary serv
   );
 });
 
+Deno.test("planManifest — strictServices: no core.rune under the root reports a root-resolution error, not undeclared-service", () => {
+  const rune = `[MOD] catalog
+[REQ] product.add(InDto): OutDto
+    cache:product.save(InDto): void
+    [RET] OutDto
+[DTO] InDto: id
+    x
+[DTO] OutDto: id
+    y
+[TYP] id: string
+    z`;
+  // The entrypoint resolved a root but found NO core.rune there
+  // (coreSpecFound:false) — almost always a mis-resolved root (the spec is
+  // staged above the project), NOT a genuinely undeclared service. The planner
+  // must emit ONE root-resolution error, never N spec red-herrings that send the
+  // user to edit a core.rune that's correct and simply elsewhere.
+  const plan = planManifest("spec/runes/catalog.rune", rune, new Set(), {
+    strictServices: true,
+    projectRoot: "/repo",
+    coreSpecFound: false,
+  });
+  assertEquals(plan.errors.length, 1);
+  const msg = plan.errors[0];
+  assertStringIncludes(msg, "no core.rune found under the resolved project root");
+  assertStringIncludes(msg, '"/repo"'); // names the wrong root it actually looked in
+  assertStringIncludes(msg, "--root"); // surfaces the fix
+  assertStringIncludes(msg, '"cache"'); // names what couldn't resolve
+  // Crucially NOT the message that points the user at editing the spec/core.
+  assert(!msg.includes("undeclared service"));
+});
+
+Deno.test("planManifest — strictServices: core.rune present but lacking the service keeps the per-service undeclared error", () => {
+  const rune = `[MOD] catalog
+[REQ] product.add(InDto): OutDto
+    cache:product.save(InDto): void
+    [RET] OutDto
+[DTO] InDto: id
+    x
+[DTO] OutDto: id
+    y
+[TYP] id: string
+    z`;
+  // core.rune EXISTS (coreSpecFound:true) but genuinely doesn't declare `cache` —
+  // here the actionable "declare it in src/core/core.rune" message is correct.
+  const plan = planManifest("src/catalog/catalog.rune", rune, new Set(), {
+    strictServices: true,
+    projectRoot: "/repo",
+    coreSpecFound: true,
+  });
+  assert(plan.errors.some((e) => e.includes('undeclared service "cache"')));
+  assert(!plan.errors.some((e) => e.includes("no core.rune found")));
+});
+
+Deno.test("planManifest — strictServices: multiple unresolved services collapse into one plural root-resolution error", () => {
+  const rune = `[MOD] catalog
+[REQ] product.add(InDto): OutDto
+    cache:product.save(InDto): void
+    db:product.write(InDto): void
+    [RET] OutDto
+[DTO] InDto: id
+    x
+[DTO] OutDto: id
+    y
+[TYP] id: string
+    z`;
+  const plan = planManifest("spec/runes/catalog.rune", rune, new Set(), {
+    strictServices: true,
+    projectRoot: "/repo",
+    coreSpecFound: false,
+  });
+  // Both services named in a SINGLE error (plural phrasing), not one error each.
+  const root = plan.errors.find((e) => e.includes("no core.rune found"));
+  assert(root !== undefined, `expected a root-resolution error, got: ${JSON.stringify(plan.errors)}`);
+  assertStringIncludes(root!, '"cache"');
+  assertStringIncludes(root!, '"db"');
+  assertStringIncludes(root!, "services"); // plural
+  assert(!plan.errors.some((e) => e.includes("undeclared service")));
+});
+
 Deno.test("planManifest — (s?) lenient array keeps @IsArray, drops element validation", () => {
   const rune = `[MOD] webhook
 

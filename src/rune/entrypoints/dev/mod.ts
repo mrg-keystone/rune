@@ -2,7 +2,11 @@ import { join, relative, resolve } from "#std/path";
 import { isProjectSpec } from "@rune/domain/business/rune-bindings/mod.ts";
 import { planManifest } from "@rune/domain/business/rune-manifest/mod.ts";
 import { runSync } from "@rune/entrypoints/sync/mod.ts";
-import { loadCoreSrvs, resolveRoot } from "@rune/entrypoints/spec-root.ts";
+import {
+  coreSpecExists,
+  loadCoreSrvs,
+  resolveRoot,
+} from "@rune/entrypoints/spec-root.ts";
 
 const RED = "\x1b[31m";
 const GREEN = "\x1b[32m";
@@ -117,8 +121,12 @@ async function checkSpec(root: string, rel: string): Promise<string[]> {
     return [`${rel}: cannot read spec: ${errMessage(e)}`];
   }
   const sharedSrvs = await loadCoreSrvs(root, join(root, rel));
-  return planManifest(rel, text, new Set<string>(), { strictServices: true }, sharedSrvs)
-    .errors;
+  const coreSpecFound = await coreSpecExists(root, join(root, rel));
+  return planManifest(rel, text, new Set<string>(), {
+    strictServices: true,
+    projectRoot: root,
+    coreSpecFound,
+  }, sharedSrvs).errors;
 }
 
 export async function runDev(args: string[]): Promise<number> {
