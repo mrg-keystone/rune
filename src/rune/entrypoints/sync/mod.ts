@@ -409,9 +409,9 @@ const REQUIRED_IMPORTS: Record<string, string> = {
   "#std/assert": "jsr:@std/assert",
   "#std/path": "jsr:@std/path",
   // Generated [ENT] controllers + e2e tests import the keep backend framework.
-  "@mrg-keystone/rune": "jsr:@mrg-keystone/rune@^1",
+  "@mrg-keystone/rune": "jsr:@mrg-keystone/rune@^2",
   // Generated coordinators validate their seams via keep's assert runtime.
-  "#assert": "jsr:@mrg-keystone/rune@^1/assert",
+  "#assert": "jsr:@mrg-keystone/rune@^2/assert",
   // DTO [TYP:example=…] fields emit @ApiProperty({ example }) — the swagger
   // decorator keep's runner/cake read example values from. Same range keep
   // itself maps #danet/swagger to.

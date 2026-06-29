@@ -115,10 +115,18 @@ export class DanetDocumentBuilder {
     const meta = Reflect.getMetadata("module", mod) ?? {};
     // A standalone copy of the module's metadata with `imports` stripped, so we can build the
     // Swagger doc for THIS module in isolation (without recursively pulling in its imports).
+    // WebSocket controllers (`@WsEndpointController` → danet's truthy `websocket-endpoint`
+    // metadata) carry no HTTP route, so @danet/swagger's MethodDefiner throws on them
+    // (`trimSlash(undefined)`). Per rune's contract — WS endpoints never enter the OpenAPI
+    // document — drop them here so the doc covers only the HTTP controllers (an all-WS module
+    // yields an empty doc instead of crashing the whole app's swagger build at boot).
+    const httpControllers: Type[] = ((meta.controllers ?? []) as Type[]).filter(
+      (c) => !Reflect.getMetadata("websocket-endpoint", c),
+    );
     const facadeMetadata = {
       ...meta,
       imports: [],
-      controllers: meta.controllers ? [...meta.controllers] : undefined,
+      controllers: meta.controllers ? httpControllers : undefined,
       providers: meta.providers ? [...meta.providers] : undefined,
       exports: meta.exports ? [...meta.exports] : undefined,
     };
