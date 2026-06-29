@@ -1337,7 +1337,7 @@
       }
     },
     "spec/": {
-      "$desc": "rune staging area — authored specs (runes/), data design + cake artifacts (misc/), UI prototype (ui/)",
+      "$desc": "rune staging area — authored specs (runes/), data design + cake artifacts (misc/), UI prototype (ui/), founding product docs (product/)",
       "<name>": {
         "ext": [
           ".rune"
@@ -1360,6 +1360,10 @@
       },
       "ui/": {
         "$desc": "sprig UI prototype + design system (sprig:prototype / sprig:design output)",
+        "$ignore": "*"
+      },
+      "product/": {
+        "$desc": "founding product docs — spec.md + user-stories.md (rune:scope output)",
         "$ignore": "*"
       }
     },

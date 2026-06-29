@@ -100,9 +100,11 @@ Deno.test("check — the spec/ staging layout: runes/ holds specs, misc/ + ui/ a
       "spec/misc/scenarios/happy.json",
       "spec/ui/index.html",
       "spec/ui/pages/queue.tsx",
+      "spec/product/spec.md",
+      "spec/product/user-stories.md",
       "spec/orders.rune", // legacy flat — still allowed
     ],
-    ["spec", "spec/runes", "spec/misc", "spec/misc/scenarios", "spec/ui", "spec/ui/pages"],
+    ["spec", "spec/runes", "spec/misc", "spec/misc/scenarios", "spec/ui", "spec/ui/pages", "spec/product"],
   );
   // The three staging folders are recognized.
   assertEquals(await check("spec/runes", "folder", ctx), null);
@@ -119,6 +121,10 @@ Deno.test("check — the spec/ staging layout: runes/ holds specs, misc/ + ui/ a
   assertEquals(await check("spec/misc/scenarios/happy.json", "json", ctx), null);
   assertEquals(await check("spec/ui/index.html", "html", ctx), null);
   assertEquals(await check("spec/ui/pages/queue.tsx", "tsx", ctx), null);
+  // spec/product/ holds the founding docs (rune:scope output) — an ignore bucket.
+  assertEquals(await check("spec/product", "folder", ctx), null);
+  assertEquals(await check("spec/product/spec.md", "md", ctx), null);
+  assertEquals(await check("spec/product/user-stories.md", "md", ctx), null);
 });
 
 Deno.test("check — dto .ts file is allowed", async () => {

@@ -35,7 +35,7 @@ the self-contained sub-projects — `keep` (the runtime library), the two integr
 acceptances (`e2e/cake`, `e2e/checkout`), and the `examples/in-process-client` demo
 — so they resolve the runtime from the **in-tree source** (`keep/`) and you can test
 rune against an unreleased runtime. Generated *user* projects still pin
-`jsr:@mrg-keystone/rune@^1` (they live outside this repo) — that is intentional and
+`jsr:@mrg-keystone/rune@^2` (they live outside this repo) — that is intentional and
 unchanged. (`rune-studio/` is a standalone Vite app with its own lockfile, run via
 its own `deno task dev`.)
 
@@ -171,7 +171,7 @@ API client, Fresh embedding; built on `@danet/core`. It lives in [`keep/`](keep/
 which holds only the publishable package; the package name is its stable id, not a
 separate product. Its assert runtime is what rune's generated seams import via
 `#assert` (resolved in-tree to `keep/src/assert/mod.ts` here, and to
-`jsr:@mrg-keystone/rune@^1/assert` in generated user projects). The lockstep guard
+`jsr:@mrg-keystone/rune@^2/assert` in generated user projects). The lockstep guard
 (`deno task check:lockstep`) machine-checks that the class-validator /
 class-transformer / reflect-metadata ranges rune emits match the ranges the runtime
 declares in `keep/deno.json` — a single decorator stack across both.

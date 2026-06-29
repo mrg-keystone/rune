@@ -24,210 +24,67 @@ description: >-
   `/docs/<m>/json` doc content → use `rune:docs`.
 ---
 
-# rune:framework — the runtime the generated code runs on
+# rune:framework — orchestration playbook
 
-The DSL and the codegen are upstream; this skill is the backend the generated
-code becomes once it runs. You rarely write runtime wiring by hand — `rune sync`
-generates `bootstrap/` — but when you tune a running app, debug a 401, wire
-`@Endpoint` metadata, run the headless runner, or mount/deploy, the runtime
-facts here are what bite.
+The runtime the generated code runs on, as a **router**. This skill is advisory
+knowledge split across three reference-expert specialists; the main session reads
+the request, routes it to the right specialist, and synthesizes the answer. It
+does **not** answer runtime questions inline — it delegates.
 
-## This skill vs its siblings
+## When this skill applies
 
-- **`rune:spec`** — author/edit the `.rune` DSL (tags, scope, DTO suffixes,
-  `[TYP]` modifiers, how the spec *expresses* order/deps/flows). The seam: a
-  `rune check`-clean `spec/runes/<m>.in-prog.rune`. Come here once you're tuning the
-  app it generates.
-- **`rune:build`** — finalize that spec (`.in-prog` → `.rune`), `rune sync`,
-  fill bodies, the TDD fleet, `rune lint`, green run-all. `rune:build` *runs*
-  the app; this skill explains what the app *is*.
-- **`rune:framework`** (here) — `bootstrapServer`, the in-process `backend`,
-  `handler`/`listen` + conn-info forwarding, auth (401/403, `@Public`/`@Roles`,
-  tokens, Firebase), the `#assert`→422 mapping, `@Endpoint` semantics, the
-  headless runner, deploy/sprig-hosting/Deno Deploy.
-- **`rune:cake`** — the interactive cake at `/docs/<module>`: Emulate/Run-all,
-  expectations, scenarios, module setup, the heal panel. This skill *mounts*
-  the cake and owns the headless runner under it; `rune:cake` drives the UI.
-- **`rune:docs`** — the Swagger/Danet doc content: `@ApiProperty`, `example=`,
-  `/docs/<m>/swagger` and `/docs/<m>/json`. This skill owns the auth *posture*
-  on those routes (see `references/auth.md`); `rune:docs` owns the doc surface.
+Tuning or debugging the *running* app (not the `.rune` spec): a 401/403, what
+`bootstrapServer` returns, `@Endpoint` order/deps/bind, the headless runner, or
+deploying / hosting under a sprig UI.
 
-## `bootstrapServer` — initializes, does not listen
+## Specialist roster
 
-`bootstrapServer(appName, module | modules[], options?)` **initializes but does
-NOT listen.** It returns `{ listen, stop, backend, handler }`:
+- **`rune-framework-auth`** — auth & trust: why a request 401s/403s, the trust
+  model, tokens + minting, `@Public`/`@Roles`, Firebase, the docs/browser token
+  flow. Owns `references/auth.md`.
+- **`rune-framework-runtime`** — the process layer: `bootstrapServer`, in-process
+  `backend.fetch`, `@Endpoint`/`@EndpointController` semantics, the
+  `exerciseEndpoints` runner + `POST /docs/_run` + `/docs/_map`, `@WsEndpoint`.
+  Owns `references/endpoints.md`.
+- **`rune-framework-deploy`** — deployment & hosting: standalone, sprig-hosted
+  (`serveSprig`/`sprigUi`), `withBasePath`, Deno Deploy, the in-process `backend`
+  client, logging. Owns `references/deployment.md`.
 
-- `listen()` — bind a real port.
-- `backend.fetch(...)` — usable immediately (no `listen()` needed) for
-  in-process calls (tests, SSR) with **no token** — it dispatches through the
-  full server pipeline (controllers, guards, pipes, interceptors, filters,
-  middleware) with no port or TCP, and is recognized as in-process so it
-  bypasses token auth. It is `typeof fetch` — a true drop-in for client code.
-- `handler` — mount it to serve without binding a port.
+## Flow
 
-No `import "reflect-metadata"` needed — the package loads the polyfill itself.
-Because it only initializes, bootstrap **once** in a shared module and import
-the `api` everywhere (standalone server, tests, sprig hosting). Full mounting
-shapes, the `backend` client, and logging live in `references/deployment.md`.
+1. **Classify the question by domain** (main session):
+   - auth / 401 / 403 / tokens / roles / Firebase / docs-access → `rune-framework-auth`
+   - `bootstrapServer` / `@Endpoint` semantics / `order`·`dependsOn`·`bind` / the
+     `exerciseEndpoints`·`/docs/_run`·`/docs/_map` runner surface / WS sockets →
+     `rune-framework-runtime`
+   - serving / hosting under sprig / `withBasePath` / Deno Deploy / logging →
+     `rune-framework-deploy`
+2. **Delegate** to that specialist via the Task tool. Pass: the question/symptom
+   (with the failing request + origin + any response body), the project root,
+   optionally a running server's base URL, and **the absolute path to the
+   specialist's reference file** (`claude/skills/rune:framework/references/<auth|endpoints|deployment>.md`,
+   or the installed `~/.claude/skills/rune:framework/references/…`). The agent
+   reads its own reference; do not paste it into the prompt.
+3. **Summarize** the specialist's return (cause + cited rule + evidence + minimal
+   fix) for the user. If the answer spans domains (e.g. "my deployed sprig app
+   401s" = deploy mount + auth trust), call the second specialist with the first's
+   finding as context, then synthesize both.
+4. **Route real fixes out**: a spec change → `rune:spec`; a generated-body/test fix
+   → `rune:build`; a real-data e2e walk → `rune:cake`; a per-endpoint Swagger
+   example → `rune:docs`.
 
-**Forward the conn info.** When you serve via your own `Deno.serve`, pass
-`info` through:
+**Cross-cutting note (`#assert` → 422):** the runtime maps a failed `RuneAssertError`
+to HTTP 422; `rune-framework-runtime` explains the mapping, but the *authoring* side
+(where asserts/`[TYP]` modifiers come from) is **`rune:spec`**.
 
-```ts
-Deno.serve((req, info) => api.handler(req, info));   // or: await api.listen();
-```
+## Hard rule
 
-`api.handler` takes `(req, info?)` and `info` carries `remoteAddr` — which
-localhost trust, the token-auth localhost exemption, and the `/_mint` guard all
-rely on. Drop it and every request looks origin-less: localhost stops being
-recognized and `/_mint` becomes unreachable.
+The main session delegates to the named specialist; it does not answer the runtime
+question itself. Each specialist is read-mostly and owns exactly one reference —
+keep their domains distinct so routing stays unambiguous.
 
-## Auth: deny-by-default, two trusted origins
+## What's no longer here
 
-Auth is a **global guard** — deny-by-default on every controller route. The
-common "401 in my project" cases:
-
-| Caller | Credential needed |
-| --- | --- |
-| `backend.fetch(...)` | none — in-process trust (a process-private header, unforgeable) |
-| localhost | none by default (`TRUST_LOCALHOST=false` to require) |
-| network | `Authorization: Bearer <token>` or `?token=` |
-
-- `MANUAL_KEY=<secret>` signs/verifies tokens (set it per deployment; tests use
-  any value, e.g. `MANUAL_KEY=k`, to silence the warning).
-- `FIREBASE_PROJECT_ID=<id>` additionally accepts Firebase ID tokens
-  (browser/frontend callers; verified against Google's public certs — only the
-  project id, no service account).
-- Mint a signed token at `GET /_mint` (localhost-only, 403 from the network) or
-  with `signToken`.
-- `@Public()` makes a route **auth-optional** (a valid credential is still
-  attributed for logging; an invalid one is ignored, not rejected).
-- `@Roles("admin")` requires a role. It **implies authentication**: no
-  credential → 401; valid credential without the role → 403. Roles are
-  namespaced `appName:role` and scoped to the app.
-
-**Never route inbound network traffic through `backend.fetch`** — it's the
-trusted channel and skips auth. Expose the API by mounting `api.handler`
-(which strips the in-process trust header from every inbound request, so no
-network request can impersonate an in-process call).
-
-The full trust model — the in-process key, the localhost/loopback-proxy
-caveat, the token shape + minting, `@Public`/`@Roles` rules, Firebase claims,
-the docs-page browser token flow, and `signToken`/`verifyToken`/
-`createFirebaseVerifier` — is in **`references/auth.md`**. Read it before
-touching auth, roles, or anything returning 401/403.
-
-## `#assert` → `RuneAssertError` → HTTP 422
-
-The bodies you fill in are validated at the coordinator shell: whatever your
-adapter or core returns must satisfy the DTO contract before it crosses a seam.
-A failed contract throws `RuneAssertError { target, context, failures }` with
-dotted failure paths (`"lines.1.qty"`); **the runtime maps it to HTTP 422** with
-that body. Entrypoint controllers stay validation-free — validation lives in the
-coordinator, the runtime maps the 422. `RUNE_ASSERT=off` turns every assert into
-a passthrough (trusted prod mode). The *authoring* side of `#assert` — where you
-place asserts in the spec and how `[TYP]` modifiers drive them — is the
-**`rune:spec`** skill.
-
-## `@Endpoint` semantics — the runtime view
-
-Endpoints in a module run as a *process*. The `@Endpoint` metadata is the
-contract the runner, the cake, and the map all read:
-
-- `order` — position in the sequence (ascending).
-- `dependsOn` — endpoint id(s) (the handler method names) that must run first.
-- `bind` — `{ thisInputField: "otherEndpointId.outputField" }`: fill this
-  request from an earlier response.
-
-```ts
-@Endpoint({ input: CreateOrderDto, output: OrderDto, order: 1 })
-create(body: CreateOrderDto) { /* … */ }          // outputs { id }
-
-@Endpoint({ path: "pay", input: PayDto, output: ReceiptDto, order: 2,
-            dependsOn: "create", bind: { orderId: "create.id" } })
-pay(body: PayDto) { /* … */ }
-```
-
-This metadata orders the cake's bullets and auto-chains `create`'s `id` into
-`pay`'s `orderId` (and drives the headless runner). **You rarely write it by
-hand:** `rune sync` derives `order`/`dependsOn`/`bind` from the DTO field graph
-(same-named output→input fields chain automatically) when it generates the
-entrypoint. The endpoint **id** is the handler method name. A *stale* generated
-entrypoint controller is the classic cause of wrong order/deps — delete it and
-re-sync.
-
-The full `@EndpointController`/`@Endpoint` option tables, the three `bind`
-value forms (`"id.field"`, `"$name"` external inputs, `["a","b"]` OR-joins),
-and the `$name` resolution rules are in **`references/endpoints.md`**. How the
-*spec* expresses order/deps/flows is the **`rune:spec`** skill.
-
-A `[ENT:ws]` socket generates a **WebSocket** controller instead — `@WsEndpointController`
-plus one `@WsEndpoint({ topic, input?, output? })` per message topic, on danet 2.11's WS
-transport. It carries no HTTP verb (so it's absent from Swagger and the cake walk), replies
-to the sender only, and reads handshake bindings once at connect. Full surface in
-**`references/endpoints.md`**.
-
-## Verifying a running app — the headless runner
-
-Serve the app (`deno run -A bootstrap/mod.ts`, generated by sync) and open
-`/docs/<module>` for the interactive cake — that walk is the **`rune:cake`**
-skill. For CI / unattended runs, call the same thing in code:
-
-```ts
-import { exerciseEndpoints } from "@mrg-keystone/rune";
-const report = await exerciseEndpoints({ api });   // in-process; { passed, failed, … }
-```
-
-It discovers endpoints from the bootstrapped app's docs (ALL composed modules),
-orders them topologically, chains outputs into inputs via `bind`, and loops
-until green. Pass `overrides.seeds` / `overrides.byEndpoint` for values the
-chain can't produce (and `overrides.auth` to bootstrap a token for a network
-run), and `rateLimit` so retries don't hammer the server. Re-run after every
-spec change. The localhost-only `POST /docs/_run` is the HTTP door to the same
-runner (so an agent/CI can ask a *running* server "does the whole composed
-process work right now?"), and `/docs/_map` renders the whole composed app as
-one live process graph. Every option, the `$name` resolution order, the
-composition acceptance pattern, the map mechanics, and the `/docs/_run` body
-shape are in **`references/endpoints.md`**. `rune:cake` drives this runner for
-real-data e2e; `rune:build` calls it as a CI gate.
-
-## Deployment and hosting
-
-`bootstrapServer` is UI-agnostic and serves three ways:
-
-- **Standalone** (no UI) — `Deno.serve((req, info) => api.handler(req, info))`
-  (forward `info`!) or `await api.listen()`.
-- **Hosted under a sprig UI** — `serveSprig({ keep: api, app })` from
-  `@sprig/keep` returns one `{ fetch }` default export (run via `deno serve
-  serve.ts`, **not** `Deno.serve()`). It routes `/api/*` + `/docs*` to the keep's
-  token-gated `handler` and everything else to the sprig SSR app, with the
-  in-process `backend.fetch` bound to sprig's `Backend` DI token. SSR pages read
-  data via `inject(Backend)` (no TCP, no token); browser islands hit `/api/*`
-  with a credential. To mount the sprig UI inside an existing host, use the
-  framework-agnostic `sprigUi(config)` middleware. `rune init` scaffolds this
-  whole app (`serve.ts` + `app/` + `bootstrap/` + a `deno serve serve.ts` task).
-- **Anything else** — `withBasePath(prefix, handler)` dispatches `prefix`-rooted
-  requests with the prefix stripped, 404s the rest.
-
-**Deno Deploy:** set `MANUAL_KEY` and/or `FIREBASE_PROJECT_ID` (plus
-`DD_API_KEY` / `POSTMARK_*`) in the project env; `/_mint` is unreachable in
-production (403s off-localhost) — mint locally or with `signToken`. The full
-mounting recipes, the in-process `backend` client surface, request/`log`
-logging internals, the smaller exports (`setupWithSwagger`, `Server`,
-`DanetDocumentBuilder`, the DI builders), and the keep-repo release flow are in
-**`references/deployment.md`**.
-
-## References
-
-- **`references/auth.md`** — the complete trust model, token shape + minting,
-  `@Public`/`@Roles`, docs access, the browser/frontend token pattern,
-  `signToken`/`verifyToken`/`createFirebaseVerifier`. Read before touching auth,
-  roles, or anything returning 401/403.
-- **`references/deployment.md`** — standalone vs sprig-hosted mounting,
-  `serveSprig`/`sprigUi`/`withBasePath`, the in-process `backend` client, logging
-  internals, Deno Deploy, and the JSR release flow. Read when deploying or
-  hosting under a UI.
-- **`references/endpoints.md`** — every `@Endpoint`/`@EndpointController`
-  option, the `bind` value forms, the `exerciseEndpoints` runner (options,
-  `$name` resolution, composition acceptance), `/docs/_map`, and `POST /docs/_run`.
-  Read when wiring process chains, running the headless runner, or gating CI.
+The per-domain how-to (the trust model, the `@Endpoint`/runner option surface, the
+mounting recipes) now lives in the three specialists and their reference files —
+this playbook only routes.

@@ -47,6 +47,16 @@ These are the **founding documents**: prose intent that the machine pipeline
 tested backend. This skill ends the moment the user has **signed off on both** —
 then it hands the module/endpoint inventory to **`rune:spec`**.
 
+## Specialist & what's delegated
+
+This skill is **mostly a main-session playbook**: the discovery interview, drafting
+`spec.md`, and the review/sign-off loop are **interactive**, so the main session runs
+them itself (a subagent cannot converse with the user). Exactly one job is delegated:
+
+- **`rune-scope-story-deriver`** — once `spec.md` is drafted/signed off, derive
+  `user-stories.md` from it (non-interactive). The main session owns everything else
+  below.
+
 > **This skill is self-contained — do not go spelunking.** Everything you need is
 > in this skill's **`references/`** folder: a complete, real, well-structured
 > exemplar pair — **`example-spec.md`** and **`example-user-stories.md`** (a
@@ -238,33 +248,18 @@ architectural layer:
 State, in the Verdict, which milestone proves the heart — that's the one to reach
 fast.
 
-## Anatomy of `user-stories.md`
+## Deriving `user-stories.md` — delegate to `rune-scope-story-deriver`
 
-`user-stories.md` is **derived from `spec.md`**, not invented alongside it — write
-the spec first, then read it for the stories (the file even links back to
-`spec.md`). The bundled **`references/example-user-stories.md`** is the template.
-Shape:
+`user-stories.md` is **derived from `spec.md`**, not invented alongside it — so once
+`spec.md` is drafted, **delegate** the derivation to **`rune-scope-story-deriver`** (Task
+tool). Pass: the `spec.md` path, the directory to write into (co-located with `spec.md`),
+and the absolute path to `references/example-user-stories.md`. It returns the written
+`user-stories.md`, the role/capability groups, and any capability it could not trace to a
+spec section. **Summarize** that for the user and fold any flagged gap back into `spec.md`.
 
-- **Roles up front** — list the roles from the spec's users section, one line each
-  (the exemplar: *Developer* — carries their identity box to box; *Operator* — runs
-  the host).
-- **Grouped by capability area** — `## Sign in & connect`, `## The workspace`,
-  `## Secrets`, … one group per coherent slice of the product, roughly tracking the
-  spec's sections/goals.
-- **One capability per story**, in the canonical form: **"As a `<role>`, I want
-  `<capability>`, so that `<benefit>`."** The *so that* is mandatory — it's the why,
-  and it's what keeps stories outcome-focused instead of solution-focused.
-- **Annotate edge/persistence states** where they carry weight — the exemplar tags
-  `_(detached)_` / `_(stopped)_` on the lifecycle stories so the hard cases are
-  visible.
-- **Trace to the spec** — every story should map to a goal, flow, or milestone in
-  `spec.md`. If a story has no home in the spec, either the spec is missing
-  something (go back and add it) or the story is out of scope (cut it). Don't let the
-  two drift.
-
-Keep stories small and testable: a story a reader can imagine demoing is the right
-size. "I want to manage my account" is too big; "I want to rename a session, so that
-I recognize it later" is right.
+The agent owns the story shape — roles up front, the canonical **"As a `<role>`, I want
+`<capability>`, so that `<benefit>`"** form, edge/persistence annotations, and
+spec-traceability — so this playbook does not restate it.
 
 ## Feeding `rune:spec` — what makes this a *rune* skill
 
@@ -364,9 +359,10 @@ defined before it's scaffolded.
    becomes a `[DECIDE — D-<slug>]` with its recommended default written into the
    body and collected in *Decisions to confirm*. Make the four `rune:spec` inputs
    (modules, endpoints, entities, external services) explicit.
-4. **Derive `user-stories.md` from it** — roles up front, grouped by capability,
-   each story "As a `<role>`, I want …, so that …", traced back to the spec. Annotate
-   the edge/persistence cases.
+4. **Derive `user-stories.md`** — delegate to **`rune-scope-story-deriver`** (pass the
+   `spec.md` path, the output dir, and the `references/example-user-stories.md` path); it
+   writes the role-grouped stories traced back to the spec. Summarize its return and fold
+   any flagged gap back into `spec.md`.
 5. **Present both for review — always.** Show the user `spec.md` and
    `user-stories.md` (write them to disk and point at the paths, and summarize the
    key decisions + open `[D-<slug>]`s in chat). Walk them through the non-goals and

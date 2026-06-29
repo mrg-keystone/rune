@@ -1,3 +1,20 @@
+> **STATUS — all three resolved (2026-06-29).**
+>
+> - **Diagnostic red herring** (first section): already fixed in the CLI — `rune sync`
+>   now emits a single root-resolution error (*"no core.rune found under the resolved
+>   project root … pass `--root`"*) instead of N "undeclared service" red herrings.
+> - **BUG 1** (generated projects pinned `@^1`): **fixed in the CLI and released.**
+>   `rune init`/`rune sync` now pin `jsr:@mrg-keystone/rune@^2`. NOTE: this only affects
+>   *newly generated* projects — an **existing** project (e.g. cogasaur, the cogasaur
+>   template) must bump its own `deno.json` pin `@^1`→`@^2` to pick up the WS runtime.
+> - **BUG 2** (`SwaggerBuilder` crash on `@WsEndpointController`): **fixed in the runtime
+>   and PUBLISHED as `@mrg-keystone/rune@2.0.1`** on JSR — `DanetDocumentBuilder` now drops
+>   WS controllers from the OpenAPI doc. **No further runtime publish is needed.** Any
+>   project on `@^2` (resolves to ≥2.0.1) gets it; the `swagger: { filters: ["<WsModule>"] }`
+>   workaround can be removed once the app is on `@^2`.
+
+---
+
 # rune — feedback: misleading diagnostic when the project root is mis-inferred
 
 **Type: diagnostics / UX, not a correctness bug.** `rune sync` works correctly once it
@@ -107,3 +124,86 @@ and high-leverage; auto-discovery (#3) removes the flag entirely for nested layo
 
 *Not a bug in codegen or resolution — `--root server` works and the generated output is
 correct. This is purely about the error pointing at the wrong cause.*
+
+---
+
+# rune — feedback: WebSocket (`[ENT:ws]`) modules can't boot — two bugs
+
+**Severity: blocker for the WS feature.** The `[ENT:ws]` construct authors and `rune
+check`-cleans, and `rune sync` generates a `@WsEndpointController` — but the generated
+module **cannot run**. Two independent defects, both reproduced in a clean `rune init`
+project (no cogasaur), demonstrated by `./feedback-ws-repro.sh`.
+
+- Env: CLI `rune 2.0.0`; runtime `@mrg-keystone/rune@2.0.0` (latest on JSR); macOS.
+- Minimal trigger: any project with a `[ENT:ws]` module (a one-topic socket is enough).
+
+## BUG 1 — `rune init` pins the runtime too old for the CLI's own WS codegen
+
+`rune init` scaffolds a `deno.json` pinning `@mrg-keystone/rune@^1`. But the CLI emits a
+WS controller that imports WS runtime classes only present in `@^2`:
+
+```ts
+// src/<m>/entrypoints/<surface>/mod.ts  (generated)
+import { endpointModule, WsEndpoint, WsEndpointController } from "@mrg-keystone/rune";
+```
+
+```
+$ deno run -A --unstable-kv bootstrap/mod.ts
+error: Uncaught SyntaxError: The requested module '@mrg-keystone/rune'
+       does not provide an export named 'WsEndpoint'
+```
+
+`@^1` exports `Endpoint`/`EndpointController` but **not** `WsEndpoint`/
+`WsEndpointController`; `@2.0.0` adds them. So a fresh WS module never imports. **Fix:**
+`rune init` (and the published cogasaur template, which pins `@^1` too) should pin the
+runtime to the version that ships the WS runtime the CLI generates against (`@^2`) —
+the scaffold's runtime must track the CLI's codegen.
+
+## BUG 2 — the `@^2` runtime's SwaggerBuilder crashes on a `@WsEndpointController`
+
+After pinning `@^2` so the import resolves, `bootstrapServer(...)` (default `swagger:
+true`) crashes at boot building the OpenAPI doc — it tries to document the WS
+controller, but WS topics have no HTTP path, so `trimSlash(undefined)` throws:
+
+```
+error: Uncaught (in promise) TypeError: Cannot read properties of undefined (reading 'length')
+    if (path[path.length - 1] === '/') {
+    at trimSlash (jsr:@danet/core/2.11.1/src/router/utils.ts:2:16)
+    at new MethodDefiner (jsr:@danet/swagger/2.3.2/method-definer.ts:44:18)
+    at SwaggerModule.generateControllerDefinition (jsr:@danet/swagger/2.3.2/mod.ts:87:27)
+    at DanetDocumentBuilder.createDocument (jsr:@mrg-keystone/rune/2.0.0/.../document-builder/mod.ts:159:33)
+    at async SwaggerBuilder.build (jsr:@mrg-keystone/rune/2.0.0/.../swagger-builder/mod.ts:161:25)
+    at async BootstrapServer.create (jsr:@mrg-keystone/rune/2.0.0/.../bootstrap-server/mod.ts:422:46)
+```
+
+This contradicts rune's own contract — the spec docs/lint state **"WS endpoints carry
+no HTTP verb, so they never enter the OpenAPI document"** — but `SwaggerBuilder` does
+not skip them. Because swagger is on by default and the cake/docs (`/docs/...`,
+`/docs/_run`) only mount when swagger builds, the composed app with **any** WS module
+**fails to boot at all** (and the cake is unreachable). Reproduced on every boot of a
+real `@^2` project until worked around.
+
+**Fix:** `SwaggerBuilder`/`Crawler` should skip `@WsEndpointController` modules (or
+`@WsEndpoint` methods) when generating the OpenAPI document — they have no HTTP route,
+exactly as the contract says.
+
+**Workarounds (confirmed):**
+- `bootstrapServer("server", modules, { swagger: { filters: ["<WsModuleName>"] } })`
+  — excludes just the WS module from swagger; keeps the cake/docs for the HTTP modules
+  AND leaves the WS module composed/usable. Best interim. (The module name is what
+  `endpointModule("<Name>", …)` produces, e.g. `endpointModule("Terminal", …)` →
+  `"TerminalModule"`.)
+- `{ swagger: false }` — boots, but disables the cake/docs for the whole app.
+
+## Minor (repro-harness note, possibly a separate run-doc gap)
+
+A throwaway `rune init` project run with a bare `deno run -A --unstable-kv
+bootstrap/mod.ts` (after the `@^2` bump) trips `error: Import "@/bootstrap/modules.ts"
+not a dependency` before reaching BUG 2 — so BUG 2 isn't hermetically reachable from a
+fresh init via `deno run` (it reproduces reliably in a real synced project). If the
+intended run path needs `--node-modules-dir=auto` or `deno task start`, the generated
+README/`deno run` story for a freshly-init'd backend could call that out.
+
+*BUG 1 is hermetically reproduced by `./feedback-ws-repro.sh`; BUG 2's evidence is the
+stack trace above from a real `@^2` project. Neither is a codegen/spec issue — the CLI
+generates correct WS code; the runtime can't import it (`@^1`) or document it (`@^2`).*

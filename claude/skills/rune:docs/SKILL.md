@@ -22,120 +22,46 @@ description: >-
   `example=` modifier as a spec construct → use `rune:spec`.
 ---
 
-# rune:docs — the Swagger/Danet documentation surface
+# rune:docs — orchestration playbook
 
-The OpenAPI docs a rune-generated keep backend serves, and how to make them
-sharper. The schema is **derived from your DTO classes** — you tune it by
-tuning the spec's `[TYP]`/`[DTO]` declarations, not by hand-editing generated
-code.
+The Swagger/OpenAPI documentation surface of a rune backend. This skill delegates to
+a single read-only specialist; the main session routes the diagnosis and then routes
+the actual fix.
 
-## This skill vs its siblings
+## When this skill applies
 
-- **`rune:spec`** — author/edit the `.rune` DSL itself: the `[TYP:example=V]`
-  modifier as a spec construct, the `[SRV]` block, and the `@docs <url>`
-  *requirement*. You change a swagger example by editing the spec there; come
-  here to know *where it surfaces* and *what to set it to*.
-- **`rune:build`** — `rune sync` (the codegen that emits the DTO classes,
-  decorators, and `@ApiProperty` from your spec), filling bodies, the test
-  fleet, lint.
-- **`rune:framework`** — the runtime that serves the docs routes and the trust
-  posture on them (who may read `/docs/<m>/json`, localhost/token rules); its
-  `references/auth.md` owns the docs-access *trust model*. This skill only
-  summarizes the browser token flow.
-- **`rune:cake`** — the interactive page at `/docs/<m>`: the guided ordered
-  walk, Emulate/Run-all, expectations, scenarios, heal, `/docs/_map`. That's
-  exercising the app; this skill is the *static OpenAPI/swagger doc* the same
-  module also publishes.
-- **`rune:docs`** (you are here) — the Swagger UI + raw OpenAPI spec, per-endpoint
-  examples and descriptions, the `@docs`→`@see` adapter JSDoc, and the
-  doc-setup exports.
+A per-endpoint swagger doc/example needs to be sharper or is wrong; "document this
+endpoint"; setting up/customizing the API docs; questions naming `@ApiProperty`,
+`example=`, `/docs/<m>/swagger`, `/docs/<m>/json`, or `@docs <url>`.
 
-## The three pages per module
+## Specialist roster
 
-With Swagger on (the default), each composed module gets three pages, named
-after the module class lowercased without the `Module` suffix
-(`endpointModule("Orders", …)` → `/docs/orders`):
+- **`rune-docs-advisor`** — read-only: diagnoses a doc-surface issue and prescribes the
+  exact spec edit + where it surfaces. Owns `references/swagger.md`.
 
-| Path | What | This skill |
-| ---- | ---- | ---------- |
-| `/docs/<module>` | the cake — a guided, ordered walk of the chain | defer to **`rune:cake`** |
-| `/docs/<module>/swagger` | standard Swagger UI | **you own** |
-| `/docs/<module>/json` | the raw OpenAPI spec (**token-gated**) | **you own** |
+## Flow
 
-The `/json` page is the only gated one — doc *pages* load publicly, the
-OpenAPI *spec* is served only to a genuine loopback caller or a valid token.
-See `references/swagger.md` for the browser token flow that feeds it, and
-defer the full trust posture (in-process bypass is NOT honored on docs, the
-401-wipes-token rule) to **`rune:framework`**'s `references/auth.md`.
+1. **Delegate** the question to `rune-docs-advisor` (Task tool). Pass: the symptom/endpoint,
+   the project root + the relevant `spec/runes/<m>.rune` and generated DTO path, and the
+   absolute path to `claude/skills/rune:docs/references/swagger.md` (or the installed
+   `~/.claude/skills/rune:docs/references/swagger.md`).
+2. It returns the diagnosis + the exact spec edit + where it surfaces. **Summarize** that.
+3. **Apply the fix via `rune:spec`** (the `.rune` edit); the schema regenerates on the next
+   `rune sync` (`rune:build`). The doc surfaces are static — tune them by tuning the spec,
+   never by hand-editing generated code.
 
-## How the schema gets built
+## Routing to siblings
 
-Everything in the swagger doc derives from the `@Endpoint`'s `input`/`output`
-DTO classes plus the metadata `x-keep-process` that `@Endpoint` stamps. (A
-`[ENT:ws]` socket's `@WsEndpoint` carries no HTTP verb, so it never appears in the
-doc — see `references/swagger.md`.) The
-DTO classes carry the schema because their fields are decorated — and **both**
-`@danet/swagger`'s `@ApiProperty()` and class-validator decorators
-(`@IsString()` etc.) emit the `design:type` reflection the schema builder
-reads. You don't choose one or the other: rune's codegen emits the validators
-(from `[TYP]` constraint modifiers) and merges everything documentable into a
-single `@ApiProperty({…})` umbrella per field (description, example, required,
-isArray, minimum/maximum, format, minLength, enum, binary).
+- the interactive cake walk at `/docs/<m>` (Run-all, heal) → **`rune:cake`**
+- the docs-route trust posture (who may read `/json`, localhost/token) → **`rune:framework`**
+- the `[TYP:example=]` / `[SRV]` / `@docs` constructs as spec syntax → **`rune:spec`**
 
-You make a doc more specific by enriching the **spec**, then `rune sync`
-(see **`rune:build`**) regenerates the DTOs:
+## Hard rule
 
-- a `[TYP]` description becomes the field's `@ApiProperty({ description })`;
-- `[TYP:example=V]` becomes `@ApiProperty({ example: V })`;
-- `[TYP:uuid|email|url]` becomes `format: "uuid"|"email"|"uri"`;
-- `[TYP:min=N,max=N]` becomes `minimum`/`maximum`; `(s)` → `isArray: true`;
-  `?` → `required: false`.
+The main session delegates the diagnosis to `rune-docs-advisor` and routes the actual
+spec edit to `rune:spec`; it does not diagnose the doc surface inline.
 
-The full mapping (and the maximal "every discarded AST field becomes a
-doc-comment" story — `[NON]` descriptions, faults as `@throws`, `[TYP]`
-descriptions on DTO fields) lives in
-`/Users/raphaelcastro/Documents/programming/rune/lang/docs/codegen-enrichment.md`
-— point at it rather than reproducing it.
+## What's no longer here
 
-## The example that prevents a 422
-
-`[TYP:example=V]` is **not a validator** — it emits the swagger example that
-the runtime's headless runner and the cake fill required, unbound input fields
-from. A required field with no producer, no `bind`, and no example is a
-**guaranteed 422 in any headless walk** (`rune sync` warns about exactly those
-fields). So a good per-endpoint example is not cosmetic: it is what lets the
-cake/runner construct a valid request body at all. Pick a realistic value
-typed by the declared primitive (`[TYP:example=3,min=1] qty: number` →
-`example: 3`). When a red walk blames a missing example, the fix is a spec
-edit — see **`rune:cake`** for diagnosing the walk, **`rune:spec`** for the
-`example=` syntax.
-
-## `@docs <url>` → `@see` on the adapter
-
-Every `[SRV]` in `src/core/core.rune` requires an `@docs <url>` line (the
-requirement and the `[SRV]` block itself belong to **`rune:spec`**). Its
-payoff lives here: codegen surfaces that url as an **`@see <url>` JSDoc tag on
-the generated data-adapter method**, so a dev hovering the adapter call jumps
-straight to the backing service's API docs. That is the doc-surface half of
-the `[SRV]` story — the URL the spec demands is what becomes navigable IDE
-documentation.
-
-## Setting up / customizing docs (the exports)
-
-Swagger is on by default through `bootstrapServer`. The lower-level knobs:
-
-- `setupWithSwagger(server)` — configure an existing `Server` with the Swagger
-  routes, **without starting it**.
-- `@SwaggerDescription(text)` — a module-level Swagger description.
-- `DanetDocumentBuilder` — the lower-level OpenAPI builder (and `Server`, the
-  registry) when you need to construct the doc by hand.
-
-`@Endpoint`'s `description` option (and `@EndpointController(surface,
-{ description })`) sets the endpoint/controller description text in the doc.
-`bootstrapServer` is bundler-safe — it lazy-loads the Swagger builder and its
-CJS `handlebars` dep, so importing the backend from Fresh works in both `deno
-task dev` and the production build.
-
-See `references/swagger.md` for the consolidated detail: the DTO→schema
-mechanics, the full `@ApiProperty` merge, the browser docs-access token flow,
-and the doc-setup exports.
+The DTO→schema mechanics, the `@ApiProperty` merge, and the doc-setup exports now live in
+`rune-docs-advisor` + `references/swagger.md`.

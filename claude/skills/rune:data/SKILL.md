@@ -40,696 +40,87 @@ user-invocable: true
 argument-hint: "[module or feature whose data structure to design]"
 ---
 
-# rune:data
-
-The **data-design layer** of rune. Every other rune skill treats persistence as an
-opaque `[SRV] db:` boundary — `db:task.save(...)`, `db:order.load(...)` — and never
-asks *what* sits behind it. This skill answers that question. It reads the module's
-specs and its UI prototype, then produces a single design artifact, **`spec/misc/data.json`**,
-that decides for every entity:
-
-1. **Which store** — for a **local-only** app, **SQLite** (one embedded file that serves
-   every operation); otherwise **Firestore or Deno KV**, based on the *performance profile
-   of the actual operations* the app runs against it. Any payload that's a **large file or
-   binary blob** (an upload, image, video, PDF, export) goes to **S3** instead — its bytes
-   in a bucket, a small reference in the record store.
-2. **How to key/index it** so those operations are fast.
-3. **How to make it immutable** — restructure any "load → change → save" mutation into
-   an append of a *new* object, so history is never overwritten.
-4. **How long to keep it** — a conscious **retention** call per entity: a **TTL** for
-   ephemeral data (sessions, caches, idempotency keys, signed-URL stubs, temp exports), or
-   **no TTL — permanent** for domain records and history. Large data is often *stubbed* by
-   an S3 link rather than stored inline; the object and the link each get a lifetime.
-
-The primary deliverable is `spec/misc/data.json`: a faithful, performance-justified,
-immutable-by-construction map of the module's data. But the design only pays off if the
-spec actually *uses* it, so this skill closes with a fifth step:
-
-5. **Nudge the runes to fit the design** — make the *smallest* edits to the existing
-   `.rune` specs that let the flows exploit the structure you just chose: surface an
-   append-only trail as a readable `(s)` field, add the step that keeps a projection
-   fresh, retag a verb whose meaning changed. **Create the data structure first, then
-   nudge the runes to best use it** — never the reverse, and never a from-scratch rewrite
-   (that is `rune:spec`). You still do **not** write adapter code or `[SRV]` transport
-   wiring — those stay with `rune:build` and `rune:framework`.
-
-## This skill vs its siblings
-
-- **`rune:data` (here)** — *what* the data is and *where/how* it's stored: SQLite for a
-  local-only app, else Firestore vs Deno KV per operation, S3 for large files/blobs, plus
-  keys, indexes, immutability restructuring. Emits `spec/misc/data.json`,
-  then makes **minimal, data-driven nudges to an existing spec** so the flows exploit that
-  design (a readable trail field, a projection-maintenance step, a retagged verb).
-- **`rune:spec`** — *authors* the `.rune` DSL from intent: new `[NON]` entities, `[DTO]`s,
-  `[SRV]` boundaries, `[TYP]`s, whole endpoints and flows. The dividing line: `rune:spec`
-  decides what the module *does*; `rune:data` only adjusts an *already-authored* spec to
-  fit the data design it just produced. A from-scratch spec, a brand-new endpoint, or a
-  modelling decision about granularity is `rune:spec` — not here. When a nudge here grows
-  into real re-modelling, hand back to `rune:spec`.
-- **`rune:build`** — turns the spec into code, including the per-noun data **adapters**
-  that actually call the store. This skill tells build's adapters *which* store and
-  *which* shape; it doesn't write them.
-- **`rune:framework`** — the runtime data **clients** behind a `[SRV]` (transport, env
-  wiring, the `src/core/data/<svc>` client, including a local SQLite client). This skill
-  decides SQLite-vs-Firestore-vs-KV at the design level; framework is how a chosen client
-  connects.
-- **`rune:cake`** — exercises the built module against real data end-to-end. If a walk is
-  slow or a write clobbers history, that's a signal to revisit `spec/misc/data.json` here.
-
-## What you consume
-
-Read all three inputs before deciding anything — the spec tells you the *entities and
-their writes*, the prototype tells you the *reads and their performance demands*, and the
-two together tell you where mutation hides.
-
-1. **The `.rune` specs** (`spec/runes/*.rune` and any `src/<module>/*.rune`). Pull out:
-   - **`[NON]` nouns / `[DTO]`s** — the entities you must store and their field shape.
-   - **Boundary save/load steps** — `db:order.save(OrderDto)`, `db:task.load(id)`. Each
-     `.save` is a **write**; each `.load` is a **read**. The verb pair per noun is your
-     write/read inventory.
-   - **`[REQ]` flows** — the *sequence*. A flow that does `load → <mutate> → save` on the
-     same noun is an **in-place edit** — the prime target for immutability restructuring
-     (see below). A flow that only ever `.save`s new ids is already append-friendly.
-   - **`(s)` array fields and nested DTOs** — these are your natural append targets
-     (`reviews(s)`, `events(s)`).
-2. **The sprig UI prototype + design system** under `spec/ui/**` (the `sprig:prototype` /
-   `sprig:design` output — the page/component tree and design tokens, e.g.
-   `spec/ui/index.html`, `spec/ui/pages/…`). This is the **read-pattern oracle** — the spec
-   rarely tells you how data is *queried*, but the UI shows it directly. Walk the whole
-   `spec/ui/` tree; for each screen/region, classify what it demands of the store (see
-   *Reading the prototype* below).
-3. **Existing `src/` adapters**, if any — to stay consistent with shapes already chosen
-   and not contradict a store decision already in flight.
-
-## The store decision — optimize each operation, not each entity
-
-### First: is the app local-only?
-
-Before splitting operations across cloud stores, ask one gating question: **does this app
-run on a single machine, with no cloud backend, no cross-device sync, and no client-direct
-reads?** A CLI, a desktop/Electron tool, a local dev/utility server, a single-box service
-with no multi-tenant fan-out — these are *local-only*.
-
-If yes, **use SQLite** — one embedded, single-file relational database — as the store for
-**every** entity, and you're essentially done with the placement question. The
-Firestore-vs-Deno-KV split below exists to trade a cloud *query* engine against a cloud
-*key-value* engine; that trade is moot when there is no cloud. A local SQLite file is
-*both* at once: from one engine on local disk, with real transactions, it serves the
-query-shaped operations (lists, filters, sorts, joins, aggregates, search — Firestore's
-job) **and** the keyed point lookups and atomic counters (Deno KV's job). So a local-only
-design is usually the simplest of all: every entity → `store: "sqlite"`, keyed by a
-primary-key column, queried with indexed SQL, **no projections needed** (one engine already
-does both). Say so in the entity's `rationale` ("app is local-only — single SQLite file
-serves list + by-id from one engine"), and skip straight to the immutability work.
-
-Only when the app is **networked** — a hosted backend, multiple clients/devices, reads that
-hit the store directly from the browser — do you reach for the per-operation Firestore/KV
-split that follows.
-
-### Large files & binary blobs → S3 (object storage)
-
-Orthogonal to the record-store choice is a second question, asked per field: **is this
-payload a large file or a binary blob** — an upload, an image, audio/video, a PDF, a
-generated export, an attachment? None of the record stores is built for bytes: a Firestore
-document caps at ~1 MiB, a Deno KV value at 64 KiB, and binary media doesn't query or index
-anyway. Past those limits, or for anything you'd stream rather than read as a field, the
-file belongs in **S3** (Amazon S3 / any S3-compatible object store).
-
-The pattern is always the same: **the bytes go to S3; a *reference* to them lives in the
-record store** next to whatever owns the file. The reference is a small JSON object —
-`{ key, url, contentType, size, checksum }` — that *is* queryable/keyable in Firestore, KV,
-or SQLite, while the object itself sits in a bucket. Never inline a blob into a record.
-
-Two shapes, by whether the file *is* the entity or just hangs off one:
-
-- **Blob-primary entity** → `store: "s3"`: the entity essentially *is* the file — an
-  `attachment`, an `upload`, a `videoAsset`. The object lives in S3 under a key; its
-  queryable metadata (owner, filename, createdAt, contentType, size) rides in a companion
-  record (a Firestore/KV/SQLite row, often expressed as a `projection`) so you can still
-  list it and look it up without touching S3.
-- **Blob field on a structured entity** → the record stays in `firestore`/`denokv`/`sqlite`
-  and declares its file fields under `blobs[]` (a `product` whose `image` is an S3 object, a
-  `message` with `attachments`). The record is the queryable thing; only the bytes are
-  offloaded.
-
-S3 pairs with **any** record store and **any** deployment. A **local-only** app can keep big
-files on the local filesystem instead — but reach for S3 when it needs durable, remote, or
-shared object storage even from one machine. The access shape for a blob is `blob` (an
-object `PUT`/`GET`), not a `query` or a `point-get`.
-
-### When the app is networked — optimize each operation
-
-The question is never "is `order` a Firestore thing or a KV thing" in the abstract. It's
-**"what operations run against `order`, and which store makes *those* operations fast?"**
-Decide per operation, then assign the entity to the store that serves its *hottest, most
-demanding* operations — and call out explicitly when an entity's operations split (some
-reads want one store, some want the other) so the design can carry a secondary
-projection.
-
-Both stores must perform well — there is no "throwaway" side. The split is about which
-engine's strengths match the operation:
-
-**Firestore — when the operation is shaped like a query or a live view.** Firestore earns
-its keep when reads are *not* a simple key lookup:
-
-- **Lists, filters, sorts, pagination** — "all orders where status = paid, newest first."
-  Indexed queries are Firestore's core competency.
-- **Real-time / live views** — a screen that updates as data changes (listeners,
-  `onSnapshot`). If the prototype shows a feed, a live dashboard, presence, or anything
-  that should refresh without a reload, that's Firestore.
-- **Client-direct reads & cross-device sync** — data the UI reads straight from the store,
-  or that must be consistent across a user's devices.
-- **Unbounded or large collections** browsed by humans.
-
-**Deno KV — when the operation is a fast keyed access on a known id.** KV earns its keep on
-the hot path where you already know the key:
-
-- **Point lookups by id** — "load order `abc123`." A single `get` on a structured key,
-  lowest latency, no index needed.
-- **Hot-path reads/writes** the server itself makes mid-request — the `db:x.load` in the
-  middle of a `[REQ]` that must return fast.
-- **Atomic operations & transactions** — counters, idempotency keys, reserve-then-commit,
-  anything needing `atomic()` compare-and-set.
-- **Sessions, ephemeral state, queues, secondary indexes** you maintain yourself for O(1)
-  reach.
-
-**When operations on one entity disagree**, don't force a single store. Record the primary
-store for the demanding read, and note a **projection**: e.g. `order` lives in Firestore
-for the customer's order-history list, but a KV `order:byId` mirror serves the in-request
-point lookup. Make the duplication explicit in `data.json` (`projections`) rather than
-silently picking one and making the other slow.
-
-### Reading the prototype for access patterns
-
-Walk every screen and interactive region of the prototype and write down, for each, what
-it asks of the store. These become the `accessPatterns` in `data.json` and they *drive*
-the store choice — the store is a conclusion *from* the patterns, never a prior.
-
-| In the prototype you see…                          | Operation shape | Leans |
-| -------------------------------------------------- | --------------- | ----- |
-| A list/table/feed, filters, sort, "load more"      | query           | Firestore |
-| A view that updates live / "new" badges / presence | subscription    | Firestore |
-| A detail page reached by clicking one row (`/x/:id`)| point-get       | Deno KV |
-| A counter, like count, inventory number ticking    | atomic          | Deno KV |
-| A form that submits then shows the new item         | write + read-back | match the read-back |
-| Search across a collection                         | query/index     | Firestore |
-| An upload / image / video / file download / attachment | blob          | S3 (+ ref in record store) |
-
-Note **frequency and latency demands** too — a view on the landing screen that every user
-hits is hotter than an admin report. Hot + point-lookup is the strongest KV signal; hot +
-query is the strongest Firestore signal.
-
-The `Leans` column describes a **networked** app. In a **local-only** app every one of
-these rows is served by the single SQLite file — the column collapses to SQLite, and you
-skip the projection step entirely (one engine already does both the query and the
-point-get). Still record the `accessPatterns` (they document what the store must do and
-which indexes it needs), just with `store: "sqlite"`.
-
-## Immutability — append new objects, never edit existing ones
-
-This is the structural heart of the skill, and it is **not** about versioning rows for
-their own sake. The rule is concrete: **a domain action that changes something must write
-a NEW object, leaving every prior object exactly as it was.** History is the data.
-
-**The canonical example.** An `audit` has an array of `reviews`. The first audit appends a
-review holding that audit's findings. Later an **appeal** comes in. The wrong (mutable)
-design edits the existing review with the appeal's outcome — the original finding is gone.
-The right design **appends a second review** to the array; the appeal is a new object, the
-original review is untouched. Reading "the current state" means taking the latest review;
-the full trail is always intact.
-
-```jsonc
-// WRONG — appeal mutates the review, original lost
-audit { id, status: "appealed", review: { outcome: "overturned" } }
-
-// RIGHT — appeal appends; both objects survive, latest wins on read
-audit {
-  id,
-  reviews: [
-    { kind: "audit",  outcome: "failed",     at: "...", by: "..." },
-    { kind: "appeal", outcome: "overturned", at: "...", by: "..." }  // appended
-  ]
-}
-```
-
-**How to apply it to a spec.** Any `[REQ]` flow shaped `load(noun) → noun.mutate() →
-save(noun)` is an in-place edit and a candidate to restructure. First, in `data.json`,
-*describe the immutable shape the storage should take* (do not touch the spec yet) — then,
-in the reconcile step, nudge the spec to carry it **only if the trail must be visible in
-the read model** (see *Reconciling the spec*; a purely storage-internal trail needs no
-spec change — the adapter folds it). To describe the shape:
-
-- Identify the mutated field/state.
-- Replace "update field X" with "append a child object to collection `Xs`" — name the
-  collection, the per-action object shape, and what triggers each append (audit vs appeal).
-- Define how **current state is derived on read** (latest child, or fold the collection).
-- Note that the parent's identity (`id`) is stable; only children accrete.
-
-Two storage realizations, both append-only — pick by the read patterns above:
-
-- **Embedded array** on the parent document (Firestore array / KV value) — best when the
-  collection is small and always read *with* the parent (the `reviews` case).
-- **Child collection / keyed siblings** — Firestore subcollection or KV keys
-  `audit:<id>:review:<seq>` — best when children are many, queried independently, or
-  appended concurrently (KV `atomic()` on a monotonic seq guarantees no lost append).
-- **Child table (SQLite, local-only)** — a `<parent>_<child>` table with a foreign key to
-  the parent and a monotonic `seq`, appended with `INSERT` and **never** `UPDATE`; the
-  parent row's `id` stays stable. Current state on read is `ORDER BY seq DESC LIMIT 1` (or a
-  fold over the rows). This is the local form of the child-collection realization above —
-  same append-only discipline, one SQLite file.
-- **New S3 object per version (object storage, for files)** — a file "change" uploads a
-  *new* object under a content-addressed (`<hash>`) or versioned (`<id>/v<seq>`) key and
-  repoints the reference; the prior object's bytes are **never** overwritten in place.
-  Fresh-key-per-upload is `already-immutable`; an accreting version trail in the reference is
-  `append-child`. Do **not** `PUT` over a live key for a domain file.
-
-### Immutability protects domain records — not aggregates
-
-The rule guards **history-bearing domain records**: the things a user or auditor would be
-upset to find silently rewritten — an audit, an order, a review, a message, a status
-change. Those carry a trail that *is* the data, so you append instead of edit.
-
-It does **not** mean "turn every changing number into an event log." A value that is itself
-a **derived aggregate** — a counter, a running total, an inventory count, a cache, a
-"latest" pointer, a like-count — is not a domain record; it is a *summary of events that
-live elsewhere*. Updating it in place (atomically) is the correct, idiomatic design, **not**
-a mutation to feel guilty about. Manufacturing a `movements`/`events` ledger just to back a
-counter is over-engineering: you've reinvented event-sourcing for something whose only job
-is to be read fast.
-
-The test: **does anyone need the per-change history of this value as a feature?** If yes,
-the *events* are the domain records (store them append-only) and the counter is a fast
-projection over them. If no — it's a stock count, a session, a cache — then it's a pure
-aggregate: store it in Deno KV, update it with `atomic()`, and mark it `aggregate` (in a
-local-only app the same aggregate is a SQLite column updated inside a transaction, or a
-`SELECT` aggregate computed over the rows). Do not wrap it in a ledger by default.
-
-- ✓ A product's `stock` count → KV `atomic()` counter, `strategy: "aggregate"`. No ledger
-  unless the business actually wants an auditable stock-movement history.
-- ✓ A `like`/`view` count, a session token, a rate-limit window → `aggregate`, overwrite in
-  place atomically.
-- ✗ An `audit` whose appeal would overwrite the finding → `append-child` (history matters).
-
-So `immutability.strategy` has four honest values: **`append-child`** (history-bearing
-record — append), **`already-immutable`** (only ever writes fresh ids), **`aggregate`** (a
-derived counter/cache — atomic in-place update is correct), and **`overwrite-justified`**
-(a one-off forced overwrite — explain why). Prefer append-only for real domain records
-"whenever humanly possible," but call a derived aggregate what it is rather than
-event-sourcing it.
-
-## Retention — how long to keep it (a TTL, or none)
-
-Immutability decides *whether* you overwrite; **retention** decides *when, if ever, you
-delete*. Every entity gets a **conscious** retention call — not a silent default. The two
-honest outcomes are "**keep it forever**" and "**expire it after _N_**"; the failure mode is
-leaving it unstated, so data either piles up forever when it shouldn't or vanishes when it
-mustn't. Record it as a `retention` object on every entity (and on projections and blobs
-that have their own lifetime).
-
-Ask one question per entity: **how long is this data actually needed?** Three answers:
-
-1. **Forever → `policy: "permanent"`, no TTL.** Domain records and history — an order, an
-   audit trail, a posted message, a ledger, anything a user or auditor expects to still be
-   there next year. **Never put a TTL on a history-bearing record.** Set `permanent`
-   *explicitly* (with a one-line `why`) so the absence of a TTL is a decision, not an
-   oversight. Most `append-child` and `already-immutable` records are `permanent`.
-2. **A bounded window → `policy: "ttl"` with the shortest correct `ttl`.** Ephemeral or
-   rebuildable data: sessions, auth/OTP codes, idempotency keys, rate-limit windows, caches
-   and **projections** (rebuildable from the source of truth), signed-URL stubs, scratch and
-   temp-export artifacts. These are usually the `aggregate`/cache-flavored values. Pick the
-   tightest lifetime that still works (a session `24h`, an OTP `10m`, an idempotency key
-   `48h`) and let the store expire it.
-3. **A business-retention window, then purge → `policy: "purge-after"` with a `ttl`.** Data
-   you must keep for a while then delete: logs (`30d`), soft-delete tombstones, GDPR
-   "erase after _N_ days", uploads awaiting confirmation. Use the store's native TTL if it
-   has one, else a scheduled sweep.
-
-**Enforce it with the store's own mechanism** (`retention.mechanism`):
-
-- **Deno KV** → native per-key `expireIn` (set at write). Ideal for sessions, idempotency,
-  caches, signed-link stubs. `mechanism: "kv-expireIn"`.
-- **Firestore** → a **TTL policy** on a timestamp field auto-deletes the doc; name the field
-  (e.g. `expiresAt`). `mechanism: "firestore-ttl-field"`.
-- **S3** → bucket **Lifecycle** rules expire objects by age/prefix.
-  `mechanism: "s3-lifecycle"`. (See the stub note below for the *link's* separate expiry.)
-- **SQLite** → no native TTL: add an `expires_at` column and sweep (delete-on-read or a
-  scheduled job). `mechanism: "sqlite-expires-col"`.
-- **Permanent** data needs no mechanism — `mechanism: "none"`.
-
-### Stubbing large data with an S3 link — two lifetimes
-
-When data is large, you often **stub it with an S3 link** instead of storing it inline (the
-blob pattern above). That stub has **two independent lifetimes**, and the design must state
-both:
-
-- **The object** (the bytes in the bucket) — lifetime via `s3-lifecycle`. A permanent
-  attachment is `permanent`; a generated export the user downloads once is `ttl: "7d"`.
-- **The link** (a pre-signed URL) — a *short-lived access grant*, minutes to hours, with its
-  own `signed-url-expiry`. **Do not persist a long-lived signed URL in a record**: store the
-  S3 *key* (permanent reference) and mint a fresh short-TTL URL on read. If the reference's
-  `url` is a signed link, its `retention` is the URL expiry, not the object's.
-
-So a blob in `blobs[]` (or a blob-primary `s3` entity) can carry its own `retention` — the
-object's lifecycle — while the *reference* stored in the record notes the signed-URL expiry.
-A permanent file with on-demand short-lived links is the common, correct shape.
-
-### Retention vs immutability — they compose, they don't fight
-
-Append-only history is normally `permanent`: you never overwrite *and* never expire it. But
-the two are independent — an **append-only audit log** can still be `purge-after: "365d"` if
-policy says logs roll off after a year (you append immutably, and old entries age out
-whole). The one hard rule: **a TTL on an `append-child` record is almost always a bug** — it
-silently deletes the history the immutability work just protected. The validator warns on
-exactly this (`append-child` + a `ttl`/`purge-after`); justify the roll-off in `why` or set
-`permanent`. An `already-immutable` artifact, by contrast, is often *meant* to expire — a
-one-off export or a stub — so a TTL there is fine and draws no warning.
-
-## The output — `spec/misc/data.json`
-
-The design itself is one file: **`spec/misc/data.json`** (in `spec/misc/`, beside the
-`spec/runes/` specs and the `spec/ui/` prototype) — the source of truth.
-`scripts/render_review.ts` then derives a human-facing **`spec/misc/data.review.html`**
-from it (see *Scripts*). Use this shape for `data.json`; keep `rationale` fields short and
-concrete — they are the justification a reviewer reads (and what the visualizer surfaces
-under each store choice).
-
-```jsonc
-{
-  "module": "audits",
-  "generatedFrom": {
-    "specs": ["spec/runes/audits.rune"],
-    "prototype": "spec/ui"
-  },
-  "entities": [
-    {
-      "name": "audit",
-      "dto": "AuditDto",
-      "store": "firestore",
-      "purpose": "A compliance review of a subject; its outcome is the latest entry in its review trail.",
-      "usedBy": [
-        { "by": "audit.run", "kind": "endpoint", "does": "creates the audit + first review" },
-        { "by": "audit.appeal", "kind": "endpoint", "does": "appends an appeal review" },
-        { "by": "QueueView", "kind": "screen", "does": "lists & filters open audits" }
-      ],
-      "rationale": "Reviewer dashboard lists/filters audits live — query + subscription.",
-      "key": "audits/{auditId}",
-      "document": {
-        "id": "a_1011", "subjectId": "initech",
-        "reviews": [
-          { "kind": "audit",  "outcome": "failed",     "at": "...", "by": "..." },
-          { "kind": "appeal", "outcome": "overturned", "at": "...", "by": "..." }
-        ]
-      },
-      "accessPatterns": [
-        { "operation": "list open audits, newest first", "source": "prototype: QueueView",
-          "shape": "query", "store": "firestore", "hotness": "high" },
-        { "operation": "open one audit by id", "source": "prototype: AuditDetail",
-          "shape": "point-get", "store": "denokv", "hotness": "high" }
-      ],
-      "projections": [
-        { "name": "audit:byId", "store": "denokv", "key": "audit:{auditId}",
-          "why": "in-request point lookup during appeal flow must be sub-ms" }
-      ],
-      "indexes": [
-        { "fields": ["status", "createdAt"], "for": "QueueView filter+sort" }
-      ],
-      "immutability": {
-        "strategy": "append-child",
-        "mutationFound": "spec audit.appeal does load→setOutcome→save (edits review)",
-        "collection": { "name": "reviews", "appendOnly": true,
-          "childShape": ["kind", "outcome", "at", "by"],
-          "appendTriggers": ["audit", "appeal"] },
-        "currentStateOnRead": "last element of reviews[]",
-        "realization": "embedded array (small, read with parent)"
-      },
-      "retention": {
-        "policy": "permanent",
-        "mechanism": "none",
-        "why": "compliance record + appeal trail — must never expire or be deleted"
-      }
-    }
-  ],
-  "notes": [
-    "Any entity whose only write is a fresh-id .save is already append-friendly."
-  ]
-}
-```
-
-**Large files use S3 — store a reference, not the bytes.** A blob-primary entity sets
-`store: "s3"` (its queryable metadata rides in a `projection`); a structured entity that
-merely *owns* files lists them under `blobs[]`:
-
-```jsonc
-// blob-primary: the entity IS the file — bytes in S3, metadata mirrored to a record store
-{
-  "name": "attachment", "store": "s3",
-  "purpose": "An uploaded file attached to a message.",
-  "key": "attachments/{messageId}/{attachmentId}",
-  "document": { "key": "attachments/m_42/a_7", "url": "s3://bucket/attachments/m_42/a_7",
-    "contentType": "application/pdf", "size": 184320, "checksum": "sha256-…" },
-  "accessPatterns": [
-    { "operation": "download an attachment", "source": "prototype: MessageView",
-      "shape": "blob", "store": "s3", "hotness": "med" } ],
-  "projections": [
-    { "name": "attachment:meta", "store": "firestore", "key": "attachments/{attachmentId}",
-      "why": "list a message's files without touching S3" } ],
-  "immutability": { "strategy": "already-immutable",
-    "realization": "new S3 object per upload; key never overwritten" },
-  "retention": {
-    "policy": "permanent", "mechanism": "none",
-    "why": "attachment kept with its message forever; download links are minted fresh & short-lived (signed-url-expiry ~15m), never stored"
-  }
-}
-
-// blob field on a structured record: the record is queryable, only the bytes are offloaded
-{
-  "name": "product", "store": "firestore", "...": "...",
-  "blobs": [
-    { "field": "image", "store": "s3", "key": "products/{productId}/image",
-      "contentTypes": ["image/*"], "why": "product photo — too large/binary for the doc",
-      "retention": { "policy": "permanent", "mechanism": "none", "why": "lives as long as the product" } } ]
-}
-
-// ephemeral record with a TTL — let the store expire it, don't keep it forever
-{
-  "name": "session", "store": "denokv", "...": "...",
-  "key": "session:{sessionId}",
-  "immutability": { "strategy": "aggregate" },
-  "retention": {
-    "policy": "ttl", "ttl": "24h", "mechanism": "kv-expireIn",
-    "why": "auth session — short-lived, rebuildable by re-login; no reason to persist"
-  }
-}
-
-// a generated export the user downloads once, then it ages out
-{
-  "name": "export", "store": "s3", "...": "...",
-  "key": "exports/{userId}/{exportId}.csv",
-  "immutability": { "strategy": "already-immutable" },
-  "retention": { "policy": "ttl", "ttl": "7d", "mechanism": "s3-lifecycle",
-    "why": "one-off download artifact — regenerate on demand, don't accumulate" }
-}
-```
-
-**Always include `document`, `purpose`, and `usedBy`** — these three make the design
-*reviewable by a human* rather than a pile of access metadata, and they are what
-`render_review.ts` renders as each record's story:
-
-- **`document`** — a concrete example of the stored record, real-ish values, with the
-  nested append-only collection shown as a couple of sample entries. The hero of the view;
-  it's what someone reads to grasp the shape. Make it faithful to the DTO + immutability
-  shape, including any `listId`/`ownerId` the queries need.
-- **`purpose`** — one sentence: *what this record is and what it's for* (lift it from the
-  `[NON]` prose and the flows; e.g. "a single task in a list — added, completed, archived").
-- **`usedBy`** — *where it's used*: one entry per endpoint/screen that touches it,
-  `{ by, kind: "endpoint" | "screen", does }`. The `scan_spec.ts` output already maps which
-  `[REQ]` reads/writes each noun — turn that into the endpoint rows, and add the prototype
-  screens that read it. This is what connects the stored shape back to the app's behavior.
-- **`retention`** — *how long it lives*: `permanent` for a domain record, or a `ttl`/
-  `purge-after` with a duration for ephemeral data. Always present and always with a `why`,
-  so "kept forever" is a visible decision rather than a default nobody made.
-
-A design with only access-pattern metadata and no `document`/`purpose`/`usedBy`/`retention`
-is unreviewable — don't ship one.
-
-Field guide: `store` ∈ `firestore` | `denokv` | `sqlite` | `s3` (use `sqlite` for a
-local-only app — one engine serves every operation, so its entities need no projections;
-use `s3` for large files / binary blobs — bytes in S3, a `{ key, url, contentType, size,
-checksum }` reference in a record store).
-`accessPatterns[].shape` ∈ `query` |
-`subscription` | `point-get` | `atomic` | `write` | `blob` (a `blob` is an object PUT/GET,
-not a query or keyed-record op). A structured entity that *owns* files declares them under
-`blobs[]` — each `{ field, store: "s3", key, contentTypes?, why }` — instead of inlining the
-bytes. `immutability.strategy` ∈
-`append-child` | `already-immutable` | `aggregate` | `overwrite-justified` — use
-`aggregate` for a derived counter/cache (atomic in-place update, no ledger); the last two
-require a `why`.
-Every entity carries a `retention` ∈ `{ policy, ttl?, mechanism, why }`: `policy` ∈
-`permanent` | `ttl` | `purge-after` (a `ttl` duration like `"24h"`/`"30d"` is **required**
-for `ttl`/`purge-after`, and must be **absent** for `permanent`); `mechanism` ∈
-`kv-expireIn` | `firestore-ttl-field` | `s3-lifecycle` | `signed-url-expiry` |
-`sqlite-expires-col` | `none` (use `none` only with `permanent`). Projections and `blobs[]`
-entries may carry their own `retention`. State `permanent` explicitly — an unstated
-lifetime is a warning, and a `ttl` over an `append-child`/`already-immutable` domain record
-is flagged as a likely history-deleting bug.
-Every entity from the spec must appear; every access pattern must trace to a spec step or a
-named prototype region in `source`.
-
-## Reconciling the spec — nudging the runes to fit the design
-
-`data.json` is the ideal data structure. This step makes the existing `.rune` specs
-*exploit* it — **after** the design is written and validated, never before. The governing
-rule is **minimal diff**: the spec already encodes the author's intent; you are nudging it
-to use a better data shape, not re-modelling it. Keep boundary opacity wherever the design
-has no read-model consequence — most append-only restructurings are an *adapter* concern
-(`rune:build`) and need **zero** spec change.
-
-### When a nudge IS warranted
-
-Touch the spec only when the data design has a consequence the spec must carry:
-
-1. **A trail must be readable.** `immutability.strategy: "append-child"` *and* the UI/API
-   needs the history (or the current-state derivation) exposed → add the append-only
-   collection as an `(s)` field on the read DTO and declare its child `[DTO]` + the `[TYP]`s
-   for its fields. This is the canonical `task` → `states(s)` nudge: the immutable redesign
-   adds `states(s)` to the spec, current `done` = last state. If the read model only ever
-   exposes *current* state flat (owner, resolved, latest disposition), **do not** add the
-   field — the adapter folds the trail and the spec stays as-is.
-2. **A projection must be maintained.** `data.json` defines a secondary `projection` (a
-   `denokv` `byId` mirror, a live counter) → the flow that writes the primary must also
-   refresh the projection. Add the maintenance step to that `[REQ]` (e.g. a
-   `state:queueDepth.bump()` after a resolve) and, if the projection rides a new service,
-   ensure its `[SRV]` exists in `core.rune`. A projection nobody updates is a stale read.
-3. **A verb's meaning changed.** A `load→mutate→save` you restructured to append-child
-   reads more honestly as an append. Retag the boundary step (`mirror:call.save` →
-   `mirror:call.appendAction`) so the spec name matches the immutable behavior — a rename,
-   not a re-flow.
-4. **A new field needs a type + example.** Any field you introduced (a child-shape field, a
-   projection key, a derived `atCap`) needs its `[TYP]` declaration, and an unbound required
-   field needs `[TYP:example=…]` or it 422s in the first cake walk (see `rune:docs`).
-
-### When to leave the spec ALONE
-
-- The append-only trail is storage-internal (current state exposed flat) — adapter folds it.
-- The change is a derived `aggregate` counter/cache — atomic in-place, no flow step, no field.
-- The store/key/index choice is invisible to the flow — it lives entirely in the adapter.
-- The nudge would grow into real re-modelling (new endpoint, new entity, granularity call) —
-  stop and hand back to `rune:spec`.
-
-### How to nudge safely
-
-- Make the **smallest** edit that carries the consequence; preserve surrounding lines,
-  ordering, and the author's naming style.
-- After editing, run **`rune check`** on each touched file — it must stay clean. Do **not**
-  run `rune fmt` (it can mangle indentation); fix any error by hand.
-- Re-run `scripts/scan_spec.ts` to confirm the inventory still matches `data.json` (same
-  entities, the restructured verbs now visible).
-- **Show the diff.** Summarize every spec edit and *why the data design forced it* — the
-  user is reviewing a change to their source of truth, not just a generated artifact.
-
-## Scripts — the deterministic spine
-
-The *judgment* in this skill — Firestore vs KV, domain-record vs aggregate, what's
-query-shaped — is yours and can't be scripted without lying. But the mechanics *around* the
-judgment are deterministic and must not be eyeballed, so three bundled Deno scripts own
-them. Run them with `deno run -A`; they need no deps.
-
-| Script | When | What it does (deterministic) |
-| ------ | ---- | ---------------------------- |
-| `scripts/scan_spec.ts` | **before** you design | Parses the `.rune` spec(s) → JSON inventory of entities, DTOs, every persistence read/write, and **every `load→…→save` mutation candidate**. So you never miss an entity or an in-place edit. |
-| `scripts/validate_data.ts` | **after** you write `data.json` | Gates it against the schema + spec coverage: valid stores/shapes/strategies/retention, every spec `[NON]` present, an `aggregate` that smuggled in a ledger, an `overwrite-justified` with no `why`, a `ttl` policy missing its duration, a `ttl` silently deleting append-only history. Exit 1 = fix it. |
-| `scripts/render_review.ts` | **last** | Consumes `data.json` → a self-contained `spec/misc/data.review.html`: the data structure, each store choice and *why*, the append-vs-edit diagram, and a **notes box per entity for a second pass**. This is the human-facing deliverable. |
-
-The scripts handle *plumbing and verification*; you handle *the design in the middle*.
-
-## The procedure
-
-> **Terminal gate — show the review, ALWAYS, no matter how you entered.** However this skill
-> runs — a fresh design, a re-run where `spec/misc/data.json` and `spec/misc/data.review.html`
-> already exist, or just a spec-reconcile pass — you FINISH by re-running `render_review.ts` and
-> `open`ing `spec/misc/data.review.html` for the user. An existing review file on disk is **not**
-> the same as having shown it: if you did not run `open` this session, you have not shown it.
-> Never substitute a prose summary in chat for the visualizer — the summary supplements it,
-> never replaces it. Do not skip this because the design "was already done"; that is the exact
-> failure this gate exists to stop. Steps 8 and 10 below enforce it.
-
-1. **Scan the spec (script).** `deno run -A scripts/scan_spec.ts spec/runes/` → the entity/
-   read/write inventory and the `mutationCandidates`. Read it: this is your checklist of
-   entities to place and edits to make immutable. (The script recurses, so a bare `spec/`
-   also works; in the repo, the spec dir is wherever the module's `.rune` files live.)
-2. **Inventory reads from the prototype** — walk each screen, classify every read as
-   query / subscription / point-get / atomic, with a hotness guess. Tie each to a region
-   name you can cite in `source`. (The prototype is the read-pattern oracle; the script
-   above only sees the spec's writes.)
-3. **Assign stores.** First apply the **local-only gate**: if the app runs on a single
-   machine with no cloud/sync/client-direct reads, set **every** entity to `store: "sqlite"`
-   (no projections — one engine does both) and go to step 4. Otherwise assign stores **per
-   operation, then per entity** — apply the rubric; where operations on one entity disagree,
-   pick the primary store for the hottest read and add a `projection` for the other. Then
-   **flag any large-file/binary payload → S3**: make it a blob-primary entity (`store: "s3"`,
-   metadata in a `projection`) or, if a file just hangs off a record, add a `blobs[]` field —
-   bytes in S3, a `{ key, url, contentType, size, checksum }` reference in the record store.
-4. **Classify each entity's lifecycle — immutability *and* retention.** For each
-   `load → mutate → save` the scan flagged, ask *history-bearing domain record or derived
-   aggregate?* Records become append-only (collection, child shape, triggers, read-
-   derivation, embedded vs child-collection). Aggregates stay `aggregate` — atomic in-place,
-   no ledger unless the history is itself a feature. **Then set each entity's `retention`**:
-   ask *how long is this data needed?* — `permanent` (no TTL) for domain records and history;
-   a `ttl` with the shortest correct duration for ephemeral/rebuildable data (sessions,
-   caches, projections, idempotency keys, signed-URL stubs, temp exports); `purge-after` for
-   a business-retention-then-delete window — each with the store's `mechanism` and a `why`.
-   Never put a `ttl` on a history-bearing record; never leave a lifetime unstated.
-5. **Add keys & indexes** — KV key structure for point/atomic ops; Firestore composite
-   indexes for each query's filter+sort.
-6. **Write `spec/misc/data.json`.**
-7. **Validate (script).** `deno run -A scripts/validate_data.ts spec/misc/data.json spec/runes/` —
-   must exit 0. Fix every `✗` (and consider the `⚠`s) before continuing; the gate is how you
-   know the design conforms, instead of hoping it does.
-8. **Render AND open the review — every run, no exceptions (script).**
-   `deno run -A scripts/render_review.ts spec/misc/data.json` then `open spec/misc/data.review.html`.
-   ALWAYS re-render and `open` it, even when `data.json`/`data.review.html` already exist from
-   a prior run — a file sitting on disk is NOT the same as having put it in front of the user
-   this session. That visualizer — not the raw JSON, and **never** a prose summary you type in
-   chat — is what you show the user to review the decisions and leave second-pass notes. Do not
-   advance to step 9 until you have actually run `open`.
-9. **Reconcile the spec — nudge the runes (judgment + `rune check`).** For each entity, ask:
-   does the design have a consequence the spec must carry (a readable trail, a projection to
-   maintain, a verb to retag, a new field needing a `[TYP]`)? See *Reconciling the spec*.
-   Make the **smallest** edits that carry those consequences and leave the rest of the spec
-   untouched; if the trail is storage-internal or the change is a pure aggregate, change
-   **nothing**. Run `rune check` on every touched file (never `rune fmt`) until clean, then
-   re-run `scan_spec.ts` to confirm the inventory still matches `data.json`.
-10. **Hand off.** First confirm you actually ran step 8 *this session* — rendered the review
-   and `open`ed `spec/misc/data.review.html`. If you somehow reached here without it (e.g. the
-   design already existed and you jumped straight to reconcile), STOP and do step 8 now before
-   writing anything else: the chat handoff supplements the visualizer, it never replaces it.
-   Then summarize the spec diff and *why the data design forced each edit*, and stop. Do not
-   write adapters (`rune:build`) or re-model the module (`rune:spec`).
-
-## Worked references
-
-- `examples/shop/spec/orders.rune` — `order.place` only `.save`s a fresh id: already
-  append-friendly. Add a KV `order:byId` for the receipt point-lookup and Firestore for an
-  order-history list.
-- `examples/todos/src/tasks/tasks.rune` — `task.complete` does `load → markDone → save`: a
-  textbook in-place edit. The immutable redesign gives `task` a `states(s)` append-only
-  collection (`{ done, at }`), current `done` = last state; the task id never changes. The
-  reconcile nudge here: because the detail view shows when a task was completed, add
-  `state(s)` to the read DTO + a `TaskStateDto` child + the `done`/`at` `[TYP]`s, and retag
-  `db:task.save` → `db:task.appendState`. Had the UI only shown a flat done/undone checkbox,
-  the trail would stay storage-internal and the spec would need **no** edit.
-- The same `todos` module shipped as a **local-only** CLI/desktop tool (no cloud, single
-  machine) — the deployment gate fires first, so **every** entity goes to one SQLite file:
-  `task` keyed by an `id` column, listed with `SELECT … ORDER BY created_at`, its append-only
-  `states` as a `task_states(task_id, seq, done, at)` child table (`INSERT` only, current
-  `done` = newest `seq`). No Firestore, no KV, no projections — the one engine serves the
-  list, the by-id lookup, and any counter alike.
-- A `messages` module where each message can carry file `attachments` — the message text +
-  metadata stay in Firestore (`store: "firestore"`, you list a thread), but each attachment's
-  bytes go to **S3** under `attachments/{messageId}/{attachmentId}`. The message declares a
-  `blobs[]` field for `attachments`; the reference (`{ key, url, contentType, size }`) lives
-  in the Firestore doc so the thread renders without ever fetching from S3 until a user
-  downloads. A re-upload writes a new object key — the old bytes are never overwritten.
-
-For the spec constructs referenced here (`[NON]`, `[DTO]`, `[SRV]`, `(s)` arrays) see
-`rune:spec`. For how the chosen store becomes a real client, see `rune:framework`.
+# rune:data — orchestration playbook
+
+The data-design layer of rune. The main session orchestrates three specialists —
+survey → design → reconcile — and owns the **interactive store/retention decisions**
+and the **terminal review gate**. The design comes first (`spec/misc/data.json`), then
+minimal nudges to the existing spec; never the reverse.
+
+## When this skill applies
+
+Deciding how a module's data is stored — which store an entity belongs in, how to make
+a flow append-only, how long data lives, what keys/indexes — or nudging the runes to fit
+a finished design. NOT authoring a spec from scratch (→ `rune:spec`); NOT adapter code
+(→ `rune:build`); NOT the runtime client/transport (→ `rune:framework`); NOT the cake
+walk (→ `rune:cake`).
+
+## Specialist roster
+
+- **`rune-data-surveyor`** — read-only: runs `scan_spec.ts` + walks `spec/ui/**` →
+  one inventory (entities, reads/writes, mutation candidates, access patterns). Runs
+  `scripts/scan_spec.ts`.
+- **`rune-data-designer`** — the judgment core: stores + immutability + retention +
+  keys → writes `spec/misc/data.json`, validated to exit 0. Proposes ambiguous calls
+  back. Runs `scripts/validate_data.ts`.
+- **`rune-data-reconciler`** — minimal `.rune` nudges so flows exploit the design;
+  `rune check` clean; re-scans to confirm. Runs `scripts/scan_spec.ts` to re-verify.
+
+## The interactive decisions the main session owns (do NOT delegate)
+
+Specialists PROPOSE with rationale; the main session CONFIRMS with the user:
+
+- **The local-only gate** — single machine, no cloud/sync/client-direct reads? → one
+  SQLite file for everything. This flips the whole store strategy; confirm when ambiguous.
+- **A genuine store tradeoff** — "Firebase or Deno KV?" on a split entity, or a
+  deployment-preference call (use `AskUserQuestion`).
+- **An ambiguous retention window** — "keep forever, or expire after N?" when the
+  business window isn't inferable.
+
+## The terminal review gate (the orchestrator owns it — fire it EVERY run)
+
+However this skill runs — a fresh design, a re-run where `data.json`/`data.review.html`
+already exist, or a reconcile-only pass — you FINISH by running
+`deno run -A scripts/render_review.ts spec/misc/data.json` and **`open
+spec/misc/data.review.html`** for the user. A file on disk is NOT the same as having shown
+it: if you did not run `open` this session, you have not shown it. Never substitute a prose
+chat summary for the visualizer (it supplements, never replaces). This gate stays in the
+orchestrator (not a specialist) precisely because it must fire even on a reconcile-only
+re-entry where no specialist runs. The orchestrator owns `scripts/render_review.ts` and
+`evals/`.
+
+## Flow
+
+1. **(main session) Entry-mode** — fresh design, re-run (artifacts exist), or
+   reconcile-only. For reconcile-only, skip to step 5 but still fire the review gate.
+2. **Survey** → `rune-data-surveyor` (pass the spec dir, `spec/ui/`, project root, and the
+   `scripts/scan_spec.ts` path). It returns the inventory + access patterns + mutation
+   candidates. Summarize it.
+3. **(main session) Resolve the interactive decisions** above with the user (local-only
+   gate, any store tradeoff, retention windows), so the designer isn't guessing.
+4. **Design** → `rune-data-designer` (pass the inventory, the confirmed decisions, the
+   `scripts/validate_data.ts` path). It writes `spec/misc/data.json` (validated to exit 0)
+   and returns the per-entity summary + any remaining PROPOSE item. Resolve those with the
+   user and re-delegate if needed.
+5. **Review gate (orchestrator)** — render + `open data.review.html`; collect the user's
+   second-pass notes; fold them back via the designer if they change the design.
+6. **Reconcile** → `rune-data-reconciler` (pass the validated `data.json`, the `.rune`
+   files in scope, the `scripts/scan_spec.ts` path). It returns the spec diff + why each
+   edit was forced + what it left untouched. **Show the diff to the user** (it's a change
+   to their source of truth). If it reports a nudge that grew into re-modelling, hand to
+   `rune:spec`.
+7. **Review gate (orchestrator) — re-fire** after reconcile, then **hand off**: summarize
+   the spec diff and stop. No adapters (`rune:build`), no re-modelling (`rune:spec`).
+
+## Hard rule
+
+The main session owns the interactive store/retention decisions and the terminal review
+gate; it delegates survey, design, and reconcile to the named specialists and never
+chooses a store, writes `data.json`, or edits a `.rune` inline.
+
+## What's no longer here
+
+The store rubric (local-only gate, Firestore/KV per-operation, S3 blobs), the immutability
+strategies, the retention policies + mechanisms, the `data.json` shape, and the
+reconcile-nudge patterns now live in the three specialists; this playbook keeps the
+sequencing, the interactive decisions, and the review gate.

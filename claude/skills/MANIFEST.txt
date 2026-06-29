@@ -1,15 +1,11 @@
 claude/skills/rune:build/SKILL.md
-claude/skills/rune:build/agents/method-impl.md
-claude/skills/rune:build/agents/test-author.md
-claude/skills/rune:build/agents/validator.md
 claude/skills/rune:cake/SKILL.md
-claude/skills/rune:cake/agents/e2e-driver.md
 claude/skills/rune:cake/references/cake.md
 claude/skills/rune:cake/references/heal-rules.md
 claude/skills/rune:data/SKILL.md
+claude/skills/rune:data/scripts/render_review.ts
 claude/skills/rune:data/scripts/scan_spec.ts
 claude/skills/rune:data/scripts/validate_data.ts
-claude/skills/rune:data/scripts/render_review.ts
 claude/skills/rune:docs/SKILL.md
 claude/skills/rune:docs/references/swagger.md
 claude/skills/rune:framework/SKILL.md
@@ -20,8 +16,8 @@ claude/skills/rune:scope/SKILL.md
 claude/skills/rune:scope/references/example-spec.md
 claude/skills/rune:scope/references/example-user-stories.md
 claude/skills/rune:spec/SKILL.md
-claude/skills/rune:spec/references/spec.md
 claude/skills/rune:spec/references/constraints.md
 claude/skills/rune:spec/references/cookbook.md
 claude/skills/rune:spec/references/example-core.rune
 claude/skills/rune:spec/references/example-tasks.rune
+claude/skills/rune:spec/references/spec.md
