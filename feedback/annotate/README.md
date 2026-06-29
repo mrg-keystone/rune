@@ -38,3 +38,9 @@ naming-only are in [`proposal.md`](./proposal.md).
 - [`proposal.md`](./proposal.md) — the full write-up: motivation, proposed grammar/semantics/
   codegen, alternatives, migration, and open questions for the maintainer.
 - [`repro/`](./repro/) — self-contained `rune check` repro (3 cases) + captured output.
+
+## Related feedback (same annotate work)
+
+- [`rune-data-local-blob/`](./rune-data-local-blob/) — the `rune:data` skill's `blobs[]` construct
+  is S3-only; a local binary file (the annotate screenshot PNG) has no honest representation. The
+  third local-vs-remote closed-set gap, after `NATIVE` (this one) and `fs_json`.

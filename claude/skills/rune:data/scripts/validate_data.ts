@@ -104,11 +104,15 @@ async function main() {
       if (pr?.retention) checkRetention(`${tag} projections[${j}]`, pr.retention);
     }
 
-    // blobs[] — large-file fields offloaded to S3 (bytes in S3, a reference in this record)
+    // blobs[] — large-file fields stored out-of-band: a remote S3 bucket (`s3`, the
+    // default) or a local file on disk (`fs`, written via the [SRV] (NATIVE)fs boundary —
+    // e.g. a screenshot PNG beside an fs_json/sqlite store). Either way the bytes live
+    // outside the record, which keeps only a reference.
     for (const [j, b] of (ent?.blobs ?? []).entries()) {
-      if (b?.store && b.store !== "s3") E(`${tag} blobs[${j}]: \`store\` must be "s3" (got ${JSON.stringify(b.store)})`);
-      if (!b?.field) W(`${tag} blobs[${j}]: missing \`field\` — name the record field that holds the S3 reference`);
-      if (!b?.key) W(`${tag} blobs[${j}]: missing \`key\` — give the S3 object key pattern`);
+      if (b?.store && b.store !== "s3" && b.store !== "fs") E(`${tag} blobs[${j}]: \`store\` must be "s3" (remote bucket) or "fs" (local file) (got ${JSON.stringify(b.store)})`);
+      const localBlob = b?.store === "fs";
+      if (!b?.field) W(`${tag} blobs[${j}]: missing \`field\` — name the record field that holds the ${localBlob ? "local-file path" : "S3"} reference`);
+      if (!b?.key) W(`${tag} blobs[${j}]: missing \`key\` — give the ${localBlob ? "local file path/pattern" : "S3 object key pattern"}`);
       if (b?.retention) checkRetention(`${tag} blobs[${j}]`, b.retention);
     }
 

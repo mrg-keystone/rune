@@ -66,6 +66,7 @@ main{max-width:900px;margin:0 auto;padding:26px 22px 90px}
 .badge.s3{background:var(--s3b);color:var(--s3);border:1px solid #5a2228}
 .badge.fsj{background:var(--fsjb);color:var(--fsj);border:1px solid #3d2a5c}
 .badge.blob{background:var(--s3b);color:var(--s3);border:1px solid #5a2228}
+.badge.localfile{background:var(--fsjb);color:var(--fsj);border:1px solid #3d2a5c}
 .badge.mirror{background:#10243f;color:var(--acc);border:1px solid #234668}
 .badge.perm{background:#10261a;color:#7ee0a0;border:1px solid #1c4d30}
 .badge.ttl{background:#2c2410;color:var(--warn);border:1px solid #5a4a14}
@@ -180,6 +181,8 @@ function render(){
   const fs=ents.filter(e=>e.store==='firestore'), kv=ents.filter(e=>e.store==='denokv'), sq=ents.filter(e=>e.store==='sqlite'), fsj=ents.filter(e=>e.store==='fs_json'), s3=ents.filter(e=>e.store==='s3');
   const proj=ents.flatMap(e=>(e.projections||[]).map(p=>({...p,owner:e.name})));
   const blobs=ents.flatMap(e=>(e.blobs||[]).map(b=>({...b,owner:e.name})));
+  // a blob is local when store==='fs' (a file on disk via the native fs boundary); else S3 (incl. omitted, the default)
+  const s3Blobs=blobs.filter(b=>b.store!=='fs'), localBlobs=blobs.filter(b=>b.store==='fs');
   const hasAppend=ents.some(e=>(e.immutability||{}).strategy==='append-child');
   // plain-language lede
   const parts=[];
@@ -192,7 +195,8 @@ function render(){
   if(s3.length) byStore.push(s3.map(e=>e.name).join(' & ')+' '+(s3.length>1?'live':'lives')+' in S3 (large files)');
   if(byStore.length) parts.push(byStore.join('; ')+'.');
   if(proj.length) parts.push(' '+proj.length+' fast lookup '+(proj.length>1?'mirrors':'mirror')+' for by-id reads.');
-  if(blobs.length) parts.push(' '+blobs.length+' file '+(blobs.length>1?'fields are':'field is')+' offloaded to S3 (e.g. <b>'+esc(blobs[0].field||'file')+'</b>) — bytes in a bucket, a reference in the record.');
+  if(s3Blobs.length) parts.push(' '+s3Blobs.length+' file '+(s3Blobs.length>1?'fields are':'field is')+' offloaded to S3 (e.g. <b>'+esc(s3Blobs[0].field||'file')+'</b>) — bytes in a bucket, a reference in the record.');
+  if(localBlobs.length) parts.push(' '+localBlobs.length+' large file '+(localBlobs.length>1?'fields are':'field is')+' kept as local sidecar files beside the store (e.g. <b>'+esc(localBlobs[0].field||'file')+'</b>) — bytes on disk, a path in the record.');
   const ttlN=ents.filter(e=>{const r=e.retention||{};return r.policy==='ttl'||r.policy==='purge-after';}).length;
   if(ttlN) parts.push(' '+ttlN+' '+(ttlN>1?'records expire':'record expires')+' on a <b>TTL</b>; the rest are kept permanently.');
   if(hasAppend) parts.push(' Changes are <b>appended as new entries</b>, never edited in place.');
@@ -207,7 +211,7 @@ function render(){
     fs_json:{cls:'fsj',label:'JSON file',sub:'one flat file on disk — loaded, edited, saved (small projects)',dft:e=>e.name+'[]'},
     s3:{cls:'s3',label:'S3',sub:'large files & binary blobs (a reference lives in a record)',dft:e=>e.name+'/{id}'},
   };
-  const usedStores=['firestore','denokv','sqlite','fs_json','s3'].filter(s=>ents.some(e=>e.store===s)||proj.some(p=>p.store===s)||(s==='s3'&&blobs.length));
+  const usedStores=['firestore','denokv','sqlite','fs_json','s3'].filter(s=>ents.some(e=>e.store===s)||proj.some(p=>p.store===s)||(s==='s3'&&s3Blobs.length));
   const cols=usedStores.length?usedStores:['firestore','denokv'];
   let map='<div class="sec">Where it lives</div><div class="map" style="grid-template-columns:repeat('+cols.length+',1fr)">';
   for(const sid of cols){
@@ -216,7 +220,8 @@ function render(){
     const rows=[
       ...ents.filter(e=>e.store===sid).map(e=>({k:e.key||def.dft(e),why:''})),
       ...proj.filter(p=>p.store===sid).map(p=>({k:p.key||p.name,why:'mirror of '+p.owner})),
-      ...(sid==='s3'?blobs.map(b=>({k:b.key||(b.owner+'/'+(b.field||'file')+'/{id}'),why:b.owner+'.'+(b.field||'file')})):[]),
+      ...(sid==='s3'?s3Blobs.map(b=>({k:b.key||(b.owner+'/'+(b.field||'file')+'/{id}'),why:b.owner+'.'+(b.field||'file')})):[]),
+      ...localBlobs.filter(b=>(ents.find(e=>e.name===b.owner)||{}).store===sid).map(b=>({k:b.key||(b.owner+'/'+(b.field||'file')),why:b.owner+'.'+(b.field||'file')+' — local file'})),
     ];
     if(rows.length) rows.forEach(r=>map+='<div class="path"><span class="n">'+esc(r.k)+'</span>'+(r.why?' <span class="why">— '+esc(r.why)+'</span>':'')+'</div>');
     else map+='<div class="empty">nothing here</div>';
@@ -234,13 +239,17 @@ function render(){
     let h='<div class="rec"><div class="head"><span class="name">'+esc(e.name)+'</span>';
     h+='<span class="badge '+badgeCls(e.store)+'">'+storeName(e.store)+'</span>';
     (e.projections||[]).forEach(p=>h+='<span class="badge mirror">+ '+storeName(p.store)+' copy</span>');
-    if((e.blobs||[]).length) h+='<span class="badge blob">+ '+(e.blobs.length>1?e.blobs.length+' files in S3':'file in S3')+'</span>';
+    const eS3=(e.blobs||[]).filter(b=>b.store!=='fs'), eLocal=(e.blobs||[]).filter(b=>b.store==='fs');
+    if(eS3.length) h+='<span class="badge blob">+ '+(eS3.length>1?eS3.length+' files in S3':'file in S3')+'</span>';
+    if(eLocal.length) h+='<span class="badge localfile">+ '+(eLocal.length>1?eLocal.length+' local files':'local file')+'</span>';
     h+=retBadge(e.retention);
     h+='</div>';
     if(e.purpose)h+='<div class="purpose">'+esc(e.purpose)+'</div>';
     h+='<pre class="doc">'+prettyDoc(example,appendKey)+'</pre>';
-    if((e.blobs||[]).length)
-      h+='<div class="read"><b>Files in S3:</b> '+e.blobs.map(b=>esc(b.field||'file')+' → <span class="p">'+esc(b.key||'(key)')+'</span>').join(', ')+' — bytes in a bucket, this record keeps only the reference.</div>';
+    if(eS3.length)
+      h+='<div class="read"><b>Files in S3:</b> '+eS3.map(b=>esc(b.field||'file')+' → <span class="p">'+esc(b.key||'(key)')+'</span>').join(', ')+' — bytes in a bucket, this record keeps only the reference.</div>';
+    if(eLocal.length)
+      h+='<div class="read"><b>Local files:</b> '+eLocal.map(b=>esc(b.field||'file')+' → <span class="p">'+esc(b.key||'(path)')+'</span>').join(', ')+' — bytes in a file on disk beside the store, this record keeps only the path.</div>';
     if(im.currentStateOnRead && appendKey)
       h+='<div class="read"><b>Reading it:</b> '+esc(im.currentStateOnRead)+'</div>';
     if((e.usedBy||[]).length){
