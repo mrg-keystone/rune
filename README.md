@@ -26,7 +26,7 @@ from "write it" to "watch it run green."
   `@mrg-keystone/rune` is a stable identifier, not a separate product.
 
 Everything else is shared across both layers and lives in exactly one place:
-`skills/` (the seven rune skills — `rune:scope`/`spec`/`data`/`build`/`cake`/`framework`/`docs`), `examples/` (spec→code
+`claude/` (Claude Code assets — the seven rune skills under `claude/skills/` — `rune:scope`/`spec`/`data`/`build`/`cake`/`framework`/`docs` — plus `claude/agents/`), `examples/` (spec→code
 demos and runnable backends), `e2e/` (the spec→runtime acceptance suite), `docs/`,
 `todos/`.
 
@@ -51,11 +51,12 @@ known location — `~/.deno/bin`, `~/.cargo/bin`, `~/.local/bin`, …) and then 
 in one fresh copy, so you never end up with stale or duplicate binaries on your
 `PATH`. Pulls the latest prebuilt release (`rune` + the `rune-lsp` / `rune-syntax`
 helpers) into `~/.deno/bin` — no Deno or Rust toolchain required. It also installs
-the **rune Claude Code skills** into `~/.claude/skills/rune:*/` (skipped when
-`~/.claude` doesn't exist), so Claude always matches the installed toolchain.
+the **rune Claude Code skills** into `~/.claude/skills/rune:*/` (plus any bundled
+agents into `~/.claude/agents/`; skipped when `~/.claude` doesn't exist), so Claude
+always matches the installed toolchain.
 
 Already installed? `rune update` (alias: `rune upgrade`) re-runs this installer —
-binaries *and* skill. Options:
+binaries, skills *and* agents. Options:
 
 - `RUNE_INSTALL=/usr/local/bin` — install somewhere else (must be on your `PATH`).
 - `RUNE_VERSION=v0.1.0` — pin a specific snapshot instead of the rolling latest.
@@ -81,14 +82,15 @@ plus the managed skills (`~/.claude/skills/rune:*/`, and any legacy
 `~/.claude/skills/rune/` or `~/.claude/skills/keep/` now folded into them) — anything else you keep
 in that folder (evals, notes) is left alone.
 
-### Claude Code skill
+### Claude Code skills + agents
 
-Installed for you: the skills ship inside every release tarball, and every
-install path (`scripts/install.sh`, `deno task install`, `rune update`) drops them
-into `~/.claude/skills/rune:*/` so Claude knows the syntax, lifecycle, and pitfalls
-of the version you actually have — a pinned `RUNE_VERSION` install gets the skills
-matching those binaries. Working on the skill itself? `deno task install`
-copies it straight from your checkout.
+Installed for you: the skills (and any agents) ship inside every release tarball,
+and every install path (`scripts/install.sh`, `deno task install`, `rune update`)
+drops them into `~/.claude/skills/rune:*/` and `~/.claude/agents/` so Claude knows
+the syntax, lifecycle, and pitfalls of the version you actually have — a pinned
+`RUNE_VERSION` install gets the skills matching those binaries. Source lives in the
+repo's `claude/` dir (`claude/skills/`, `claude/agents/`). Working on them?
+`deno task install` copies them straight from your checkout.
 
 ## Build from source (contributors)
 
@@ -195,9 +197,9 @@ deno task test:e2e                # the spec→runtime integration acceptance (e
 CI is path-filtered by layer:
 
 - `release-rune` rebuilds rune's rolling `latest` release — the three binaries
-  plus the seven Claude skills (`skills/rune:*`, bundled as
-  a `skill/` dir inside each tarball) — on any push **except** ones touching only
-  runtime-owned or non-binary facets (`keep/`, `e2e/`, `examples/`, `docs/`,
-  `todos/`).
+  plus the Claude Code assets (`claude/skills/rune:*` + `claude/agents/`, bundled as
+  `skill/` and `agent/` dirs inside each tarball) — on any push **except** ones
+  touching only runtime-owned or non-binary facets (`keep/`, `e2e/`, `examples/`,
+  `docs/`, `todos/`).
 - `publish-keep` publishes the runtime, `@mrg-keystone/rune`, to JSR on pushes to
   `keep/**`. The skill now ships once (with rune), so this is a pure JSR publish.

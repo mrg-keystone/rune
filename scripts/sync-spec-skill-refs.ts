@@ -9,13 +9,13 @@
 // So the canonical docs (the single source of truth in `lang/docs/`) and a
 // known-good example spec are COPIED, verbatim, into the skill's `references/`.
 // `install.sh` ships the whole skill folder, so the copies travel to
-// `~/.claude/skills/rune:spec/references/`.
+// `~/.claude/skills/rune:spec/references/` (source: claude/skills/rune:spec/).
 //
 // Usage:
 //   deno run -A scripts/sync-spec-skill-refs.ts          # write the copies
 //   deno run -A scripts/sync-spec-skill-refs.ts --check   # verify in sync (CI); exit 1 on drift
 
-// src (repo-relative) → dest (under skills/rune:spec/references/)
+// src (repo-relative) → dest (under claude/skills/rune:spec/references/)
 const PAIRS: [src: string, dest: string][] = [
   ["lang/docs/spec.md", "spec.md"],
   ["lang/docs/constraints.md", "constraints.md"],
@@ -24,7 +24,7 @@ const PAIRS: [src: string, dest: string][] = [
   ["examples/todos/src/tasks/tasks.rune", "example-tasks.rune"],
 ];
 
-const REF_DIR = "skills/rune:spec/references";
+const REF_DIR = "claude/skills/rune:spec/references";
 const check = Deno.args.includes("--check");
 
 const drift: string[] = [];

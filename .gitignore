@@ -12,7 +12,7 @@ src/core/dto/version.gen.ts
 # scratch / os
 .claude/
 .playwright-mcp/
-skills/*-workspace/
+claude/skills/*-workspace/
 .skill-active
 .DS_Store
 .env
