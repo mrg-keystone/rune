@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "slugs": {
+    "not-found": [
+      {
+        "kind": "note",
+        "label": "TODO: describe the one-click fix for \"not-found\"",
+        "why": "TODO: explain when \"not-found\" fires and how to recover (raised by: finish)",
+        "todo": true
+      }
+    ]
+  }
+}

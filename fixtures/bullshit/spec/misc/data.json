@@ -1,0 +1,104 @@
+{
+  "module": "tasks",
+  "generatedFrom": {
+    "specs": [
+      "src/tasks/tasks.rune",
+      "src/core/core.rune"
+    ],
+    "prototype": null,
+    "note": "Local-only app: the local-only gate forces store=sqlite for every entity, so no per-operation Firestore/KV split was needed. The [NON]s live beside code in src/ (spec/runes/ is empty). Access-pattern hotness is spec-derived only — no UI prototype exists."
+  },
+  "entities": [
+    {
+      "name": "task",
+      "dto": "TaskDto",
+      "store": "sqlite",
+      "purpose": "A single todo item whose lifecycle (created, then completed) is recorded as append-only state history; the current task is the latest recorded state.",
+      "usedBy": [
+        {
+          "by": "task.create",
+          "kind": "endpoint",
+          "does": "Pure insert: generates a fresh id and appends the first state row (done=false). No read."
+        },
+        {
+          "by": "task.complete",
+          "kind": "endpoint",
+          "does": "Point-reads the latest state by id, marks it done, then APPENDS a new state row (done=true) — never overwrites the prior state."
+        }
+      ],
+      "rationale": "Local-only app (single machine, embedded datastore, no cloud backend, no cross-device sync, no client-direct reads) — the local-only gate puts every entity in one embedded SQLite file so a single engine serves point-get, point-write, and the transactional append from one place. The access patterns confirm the fit: all I/O is point-keyed by exact id with no query/list/sort/pagination (which would pull toward Firestore) and no cross-process hot atomics/sessions (which would pull toward Deno KV). SQLite transactions give the per-task monotonic seq the append-only model needs.",
+      "key": "Logical identity = task.id. Physical storage key = composite primary key (task_id, seq) on the append-only `task_state` child table, where seq is a monotonic per-task version (1 = creation). The current state for an id is the row with MAX(seq) for that task_id.",
+      "document": {
+        "_note": "Logical view of one task id with its append-only state history. Physically these are rows in the `task_state` child table; `currentState` is the folded TaskDto returned to callers (highest seq).",
+        "task_state": [
+          {
+            "task_id": "t_01J9Z6M3QK4R7V0X2C8B5N",
+            "seq": 1,
+            "title": "Buy milk",
+            "done": false,
+            "recorded_at": "2026-06-29T10:00:00Z"
+          },
+          {
+            "task_id": "t_01J9Z6M3QK4R7V0X2C8B5N",
+            "seq": 2,
+            "title": "Buy milk",
+            "done": true,
+            "recorded_at": "2026-06-29T11:30:00Z"
+          }
+        ],
+        "currentState": {
+          "id": "t_01J9Z6M3QK4R7V0X2C8B5N",
+          "title": "Buy milk",
+          "done": true
+        }
+      },
+      "accessPatterns": [
+        {
+          "operation": "task.create — append first state row",
+          "source": "src/tasks/tasks.rune:3-8 [REQ] task.create -> db:task.save(TaskDto)",
+          "shape": "write",
+          "store": "sqlite",
+          "hotness": "unknown (spec-derived; no UI prototype). Assumed low on a single machine. Transactional INSERT of seq=1."
+        },
+        {
+          "operation": "task.complete — load current state by id",
+          "source": "src/tasks/tasks.rune:11-12 [REQ] task.complete -> db:task.load(id)",
+          "shape": "point-get",
+          "store": "sqlite",
+          "hotness": "unknown (spec-derived). Exact-id lookup folded to the MAX(seq) row; no scan."
+        },
+        {
+          "operation": "task.complete — append completed state row",
+          "source": "src/tasks/tasks.rune:15 [REQ] task.complete -> db:task.save(TaskDto)",
+          "shape": "write",
+          "store": "sqlite",
+          "hotness": "unknown (spec-derived). Read-modify-write on the same id; seq = MAX(seq)+1 assigned inside the same transaction as the INSERT so concurrent completes cannot collide on a seq or lose history."
+        }
+      ],
+      "indexes": [
+        {
+          "name": "task_state_pk",
+          "on": "task_state (task_id, seq)",
+          "why": "Primary key. Serves the current-state read (WHERE task_id=? ORDER BY seq DESC LIMIT 1) and guarantees one row per (task, version)."
+        }
+      ],
+      "immutability": {
+        "strategy": "append-child",
+        "collection": {
+          "name": "task_state",
+          "appendOnly": true,
+          "childKey": "(task_id, seq)",
+          "realization": "child table (SQLite local) — one row per state transition; `seq` is a monotonic per-task version assigned within the write transaction. markDone() appends a new row; it must never UPDATE an existing row."
+        },
+        "currentStateOnRead": "SELECT title, done FROM task_state WHERE task_id = ? ORDER BY seq DESC LIMIT 1 — the highest-seq row is the task's current state (the TaskDto returned by load/toDto).",
+        "why": "spec.md 'The heart of the design': completing a task records a NEW state rather than overwriting the old one, and the latest state is the current one. The existing data adapter's `db.put(\\`task:${id}\\`)` key-overwrite is exactly what this forbids — the design records that the boundary must append a child row, not overwrite. (Reconciling the .rune/code to this is the reconciler/build stage, not this design.)"
+      },
+      "retention": {
+        "policy": "permanent",
+        "mechanism": "none",
+        "why": "Append-only domain history: every state transition IS the audit trail of the task's lifecycle and the source of current state, so nothing may expire. spec.md non-goals also state 'No deletion'. A TTL here would silently delete the very history the append-only model exists to keep."
+      }
+    }
+  ],
+  "notes": "One module-scoped entity (`task`). Local-only gate applied per the orchestrator's confirmed verdict: store=sqlite, no projections. Append-only history applied per the confirmed product heart: task.complete appends a `task_state` child row rather than mutating in place, so the data boundary that today overwrites `task:<id>` must be reconciled to append (handled downstream by the reconciler/build, not here). Validate against the tasks spec only (src/tasks/tasks.rune); src/ as a whole also contains an unrelated `[NON] note` from the notes module, which is out of scope for this design."
+}

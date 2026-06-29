@@ -160,6 +160,19 @@ Deno.test("parse — [SRV] rejects an unknown transport", () => {
   assertEquals(ast.errors[0].message.includes("unknown transport"), true);
 });
 
+Deno.test("parse — [SRV] accepts the NATIVE transport with no env vars", () => {
+  // NATIVE = an in-process runtime/std-lib boundary (filesystem, subprocess,
+  // crypto, clock). It needs no external config, so the env-var list is omitted.
+  const ast = parse(
+    `[SRV] (NATIVE)fs:\n    local filesystem via native Deno APIs\n    @docs https://docs.deno.com/api/deno/~/Deno.writeTextFile`,
+  );
+  assertEquals(ast.errors, []);
+  assertEquals(ast.srvs.length, 1);
+  assertEquals(ast.srvs[0].transport, "NATIVE");
+  assertEquals(ast.srvs[0].name, "fs");
+  assertEquals(ast.srvs[0].envVars, []);
+});
+
 Deno.test("parse — [SRV] without an @docs line is a hard error", () => {
   const ast = parse(`[SRV] (SDK)firebase: A_KEY\n    the firebase backend`);
   assertEquals(ast.srvs.length, 1);

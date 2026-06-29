@@ -573,11 +573,11 @@ impl Backend {
                 // service-presence (boundary → declared service) is a
                 // project-wide rule left to `rune lint`, not the single-file LSP.
                 LineKind::Srv { transport, .. } => {
-                    let valid = ["SDK", "HTTP", "WEBSOCKET", "SIDECAR"];
+                    let valid = ["SDK", "HTTP", "WEBSOCKET", "SIDECAR", "NATIVE"];
                     if !valid.contains(&transport.as_str()) {
                         diagnostics.push(diag_err(
                             line_num,
-                            format!("[SRV] unknown transport \"{}\" — expected SDK/HTTP/WEBSOCKET/SIDECAR", transport),
+                            format!("[SRV] unknown transport \"{}\" — expected SDK/HTTP/WEBSOCKET/SIDECAR/NATIVE", transport),
                         ));
                     }
                     consecutive_empty = 0;

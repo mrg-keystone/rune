@@ -137,12 +137,15 @@ A service is declared once per spec by:
         @docs <url>
 
 `<transport>` is a **closed set**: `SDK` / `HTTP` / `WEBSOCKET`
-/ `SIDECAR`.
+/ `SIDECAR` / `NATIVE`. `NATIVE` is an in-process runtime/std-lib boundary
+(filesystem, subprocess, crypto, clock) — neither a network surface nor a
+co-located process; its faults are synchronous throws and its env-var list is
+optional.
 
 | Rule | Severity |
 |------|----------|
 | `[SRV]` format: `[SRV] (TRANSPORT)<service>: <ENV_VARS>` | ERROR |
-| Transport must be one of `SDK` / `HTTP` / `WEBSOCKET` / `SIDECAR` | ERROR |
+| Transport must be one of `SDK` / `HTTP` / `WEBSOCKET` / `SIDECAR` / `NATIVE` | ERROR |
 | One-line description required (4 spaces) | ERROR |
 | `@docs <url>` line required (4 spaces) | ERROR |
 

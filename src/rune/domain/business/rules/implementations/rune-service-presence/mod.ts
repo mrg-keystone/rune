@@ -55,7 +55,7 @@ export async function check(
         `Undeclared service "${service}" (boundary at line ${line + 1}) — ` +
           `declare it once in ${CORE_SPEC_REL} as ` +
           `\`[SRV] (TRANSPORT)${service}: <ENV,…>\` ` +
-          `(transport: SDK/HTTP/WEBSOCKET/SIDECAR)`,
+          `(transport: SDK/HTTP/WEBSOCKET/SIDECAR/NATIVE)`,
       );
     }
   }
@@ -81,7 +81,9 @@ export const SYSTEM_PROMPT =
 Every boundary call uses a declared service prefix: \`service:noun.verb(...)\`.
 Services are SHARED: declare each one ONCE in src/core/core.rune:
   [SRV] (TRANSPORT)<service>: <ENV_VAR, ENV_VAR2>
-where transport is one of (SDK) / (HTTP) / (WEBSOCKET) / (SIDECAR).
+where transport is one of (SDK) / (HTTP) / (WEBSOCKET) / (SIDECAR) / (NATIVE).
+(NATIVE = an in-process runtime/std-lib boundary — filesystem, subprocess,
+crypto, clock — that is neither a network surface nor a co-located process.)
 Every module spec resolves its boundary services from that core spec — there is
 no per-module [SRV].
 

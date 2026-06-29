@@ -1,0 +1,7 @@
+[MOD] core
+
+// Shared services for the bullshit test project (rune skill/agent eval harness).
+
+[SRV] (SIDECAR)db: DB_URL
+    the app's datastore boundary
+    @docs https://example.com/db

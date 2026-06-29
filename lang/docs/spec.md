@@ -124,7 +124,7 @@ Services are **shared infrastructure**: every service referenced by a `service:`
 Each `[SRV]` generates a shared client at `src/core/data/<service>/mod.ts` (a `<Name>Service` class). A module's per-noun data adapter imports and constructs that shared client for any boundary it calls.
 
 - Format: `[SRV] (TRANSPORT)<service>: <ENV_VAR, ENV_VAR2>`
-- `transport` is a closed set: `SDK`, `HTTP`, `WEBSOCKET`, `SIDECAR`
+- `transport` is a closed set: `SDK`, `HTTP`, `WEBSOCKET`, `SIDECAR`, `NATIVE`. `NATIVE` is an **in-process runtime/std-lib boundary** (filesystem, subprocess, crypto, clock) — neither a network surface nor a co-located process; its declared faults map to synchronous throws. Its env-var list is optional (a root dir / binary path is legitimate config, but many `NATIVE` services need none)
 - `<service>` is the name used in `service:` boundary prefixes (here `db:` in `db:task.save`)
 - The trailing list names one or more environment variables (comma-separated) the generated adapter reads
 - A one-line prose description is **required** on the next line, indented 4 spaces
@@ -347,7 +347,7 @@ The LSP enforces these rules:
 - Every `service:` prefix must have a matching `[SRV]` declaration in the project's `src/core/core.rune`; an undeclared service is an error
 - `[SRV]` may be declared ONLY in `src/core/core.rune` — one in any other spec is an error (`rune-service-core-only`)
 - Every `[SRV]` must have a description line and an `@docs <url>` line; a missing `@docs` line is a hard parse error
-- An `[SRV]` transport must be one of `SDK`, `HTTP`, `WEBSOCKET`, `SIDECAR`
+- An `[SRV]` transport must be one of `SDK`, `HTTP`, `WEBSOCKET`, `SIDECAR`, `NATIVE`
 
 ### Type validation
 

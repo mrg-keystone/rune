@@ -7,8 +7,10 @@ import {
 } from "@rune/domain/business/rune-modifiers/mod.ts";
 
 // The closed set of service transports a [SRV] may declare, written as a
-// parenthesized prefix: `[SRV] (SDK)stripe: KEY`.
-export const SRV_TRANSPORTS = ["SDK", "HTTP", "WEBSOCKET", "SIDECAR"] as const;
+// parenthesized prefix: `[SRV] (SDK)stripe: KEY`. NATIVE is the in-process
+// runtime/std-lib boundary (filesystem, subprocess, crypto, clock) — neither a
+// network surface nor a co-located process; its faults are synchronous throws.
+export const SRV_TRANSPORTS = ["SDK", "HTTP", "WEBSOCKET", "SIDECAR", "NATIVE"] as const;
 export type SrvTransport = typeof SRV_TRANSPORTS[number];
 
 // A [MOD] name becomes a `src/<module>/` directory AND is camel/pascal-cased
@@ -174,7 +176,8 @@ export interface NonNode {
 }
 
 export interface SrvNode {
-  /** Connection transport — one of SRV_TRANSPORTS (SDK/HTTP/WEBSOCKET/SIDECAR). */
+  /** Transport — one of SRV_TRANSPORTS (SDK/HTTP/WEBSOCKET/SIDECAR/NATIVE).
+   * NATIVE is in-process (no connection); the rest front a network/SDK/process. */
   transport: string;
   /** Service name referenced by `<name>:` boundary prefixes. */
   name: string;

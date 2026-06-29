@@ -1,0 +1,12 @@
+[MOD] core
+
+// THE WORKAROUND (today's only option). Tag the native fs call (SIDECAR) and
+// hand it an env token, GIT_ROOT, that the native code never actually reads.
+// This passes `rune check`, but it is a category error — a native in-process
+// call is NOT a co-located sidecar process — and the env var is fabricated.
+//
+//   rune check cases/sidecar-workaround.rune --root .     # exits 0
+//
+[SRV] (SIDECAR)fs: GIT_ROOT
+    local filesystem via native Deno APIs (Deno.writeTextFile / readFile)
+    @docs https://docs.deno.com/api/deno/~/Deno.writeTextFile

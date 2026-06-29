@@ -586,7 +586,7 @@ Static-`[PLY]` (`isStatic`): `// rune: static dispatch verb (Provider::pick)`.
 
 **E52 · `.env.example` (new file)** `[srv-env-example-file, env-example-from-services]` — `[SRV].envVars` · code-stub · **needs-SRV**. Dedup env vars across services; group per `[SRV]` with transport + description header.
 
-**E53 · `deno.json` transport deps** `[deno-json-srv-transport-deps]` — `[SRV].transport` · code-stub · **needs-SRV** (+ a package field for `SDK`). Only `SDK` adds a dep; `HTTP`/`WEBSOCKET`/`SIDECAR` use built-in `fetch`/`WebSocket` (no entry). `ensureImportMap` is the only renderer consuming zero spec signal today.
+**E53 · `deno.json` transport deps** `[deno-json-srv-transport-deps]` — `[SRV].transport` · code-stub · **needs-SRV** (+ a package field for `SDK`). Only `SDK` adds a dep; `HTTP`/`WEBSOCKET`/`SIDECAR`/`NATIVE` use built-in `fetch`/`WebSocket`/Deno runtime APIs (no entry). `ensureImportMap` is the only renderer consuming zero spec signal today.
 
 **E54 · `bootstrap/mod.ts` emulator inventory** `[main-module-emulator-inventory]` — `SurfaceModule[]` · header · changes-emitted-code (created-once). Pass `surfaces` into `renderMain` (already in scope at `sync:525`); print real `/docs/<module> (<surface>)` per surface instead of the literal `<module>` token. Update `sync/test.ts:78` call.
 

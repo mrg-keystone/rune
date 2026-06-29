@@ -1,0 +1,12 @@
+[MOD] core
+
+// THE GAP. A native, in-process filesystem boundary (Deno.writeTextFile etc.)
+// wants a transport that says "this is a native runtime call." rune's transport
+// set is closed to SDK / HTTP / WEBSOCKET / SIDECAR, so `rune check` rejects
+// (NATIVE). There is no honest way to express an in-process boundary.
+//
+//   rune check cases/native-attempt.rune --root .
+//
+[SRV] (NATIVE)fs: GIT_ROOT
+    local filesystem via native Deno APIs (Deno.writeTextFile / readFile)
+    @docs https://docs.deno.com/api/deno/~/Deno.writeTextFile

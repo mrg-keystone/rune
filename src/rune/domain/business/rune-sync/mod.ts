@@ -19,6 +19,7 @@ import {
   bindings,
   processName,
   transformName,
+  typFileName,
 } from "@rune/domain/business/rune-bindings/mod.ts";
 import {
   type FilePlan,
@@ -136,7 +137,15 @@ function predictPaths(
     files.add(`src/${scope}/dto/${name}.ts`);
   }
   for (const typ of ast.typs) {
-    const name = applyCase(typ.name, "kebab");
+    // Mirror the generator's collision handling (rune-manifest / rune-typ-shape /
+    // rune-extra-files): a [TYP] sharing a same-dir [DTO]'s stripped stem
+    // (channel vs ChannelDto) is written to `dto/<name>-type.ts`. Predict it the
+    // SAME way, else the real `<name>-type.ts` file is wrongly pruned as an orphan
+    // on a re-sync — and lint (rune-typ-shape) then demands the file just deleted.
+    const dtoNamesSameDir = ast.dtos
+      .filter((d) => !!d.isCore === !!typ.isCore)
+      .map((d) => d.name);
+    const name = typFileName(typ.name, dtoNamesSameDir, dtoBinding);
     const scope = typ.isCore ? "core" : module;
     files.add(`src/${scope}/dto/${name}.ts`);
   }
