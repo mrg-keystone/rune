@@ -37,7 +37,7 @@ The orchestrator passes: the project root, the spec dir(s) (`spec/runes/` and an
    | counter / like / inventory ticking | atomic | Deno KV |
    | search across a collection | query | Firestore |
    | upload / image / video / download / attachment | blob | S3 (+ ref) |
-   Note frequency + latency demand (`hotness`: high/med/low) — hot+point-get is the strongest KV signal, hot+query the strongest Firestore signal. Tie each pattern to a citable region name (for `source`). In a local-only app these all collapse to one SQLite file, but still record the patterns (they document the needed indexes).
+   Note frequency + latency demand (`hotness`: high/med/low) — hot+point-get is the strongest KV signal, hot+query the strongest Firestore signal. Tie each pattern to a citable region name (for `source`). In a local-only app these all collapse to one local store — a single JSON file (`fs_json`) for the smallest projects or one SQLite file once queries/indexes/growth matter — but still record the patterns (they document the needed indexes and tell the designer which way to lean).
 3. Cross-check `src/` adapters if present (stay consistent with shapes already chosen).
 
 ## Resources

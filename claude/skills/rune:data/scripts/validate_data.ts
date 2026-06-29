@@ -10,11 +10,11 @@
 // Usage: deno run -A validate_data.ts spec/misc/data.json [spec/runes/ or spec/runes/*.rune ...]
 //   (pass the spec path(s) to enable entity-coverage checking)
 
-const STORES = new Set(["firestore", "denokv", "sqlite", "s3"]);
+const STORES = new Set(["firestore", "denokv", "sqlite", "fs_json", "s3"]);
 const SHAPES = new Set(["query", "subscription", "point-get", "atomic", "write", "blob"]);
 const STRATEGIES = new Set(["append-child", "already-immutable", "aggregate", "overwrite-justified"]);
 const RET_POLICIES = new Set(["permanent", "ttl", "purge-after"]);
-const RET_MECHS = new Set(["kv-expireIn", "firestore-ttl-field", "s3-lifecycle", "signed-url-expiry", "sqlite-expires-col", "none"]);
+const RET_MECHS = new Set(["kv-expireIn", "firestore-ttl-field", "s3-lifecycle", "signed-url-expiry", "sqlite-expires-col", "fs-json-sweep", "none"]);
 const durationOk = (s: unknown) => typeof s === "string" && /^\s*\d+\s*(ms|s|m|h|d|w|mo|y)\s*$/.test(s);
 
 const errs: string[] = [];
@@ -38,7 +38,7 @@ function checkRetention(tag: string, ret: any, opts: { required?: boolean; immSt
   if (ret.policy === "permanent" && ret.ttl) E(`${tag}: \`retention.policy: "permanent"\` must NOT carry a \`ttl\` — permanent means it never expires`);
   if (ret.mechanism !== undefined && !RET_MECHS.has(ret.mechanism)) E(`${tag}: \`retention.mechanism\` invalid (${JSON.stringify(ret.mechanism)}) — one of ${[...RET_MECHS].join("|")}`);
   if (ret.policy === "permanent" && ret.mechanism && ret.mechanism !== "none") W(`${tag}: permanent retention usually needs no expiry mechanism — use \`mechanism: "none"\` (unless a lifecycle rule only transitions storage class, never deletes)`);
-  if (timed && (!ret.mechanism || ret.mechanism === "none")) W(`${tag}: a ${ret.policy} retention needs a real \`mechanism\` (kv-expireIn / firestore-ttl-field / s3-lifecycle / sqlite-expires-col), not "none"`);
+  if (timed && (!ret.mechanism || ret.mechanism === "none")) W(`${tag}: a ${ret.policy} retention needs a real \`mechanism\` (kv-expireIn / firestore-ttl-field / s3-lifecycle / sqlite-expires-col / fs-json-sweep), not "none"`);
   if (!ret.why) W(`${tag}: \`retention.why\` empty — say why this lifetime (especially why it is permanent)`);
   if (timed && opts.immStrategy === "append-child")
     W(`${tag}: a \`${ret.policy}\` TTL on an \`append-child\` record will delete the history the immutability work protects — set \`permanent\`, or justify the roll-off in \`why\` if this is truly an append-only log that ages out`);

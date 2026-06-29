@@ -31,7 +31,7 @@ const PAGE = String.raw`<!doctype html><html lang="en"><head><meta charset="utf-
 <style>
 :root{--bg:#0f1115;--panel:#161922;--p2:#1c2029;--ink:#e9edf3;--mut:#98a2b3;--line:#2a3040;
 --fire:#ff9f1c;--fireb:#3a2c12;--kv:#36c46b;--kvb:#12301d;--acc:#6ea8fe;--warn:#ffd166;
---sql:#5ad1e0;--sqlb:#0e2a30;--s3:#ff7a85;--s3b:#371518;
+--sql:#5ad1e0;--sqlb:#0e2a30;--s3:#ff7a85;--s3b:#371518;--fsj:#c08cff;--fsjb:#241634;
 --key:#ffcd7b;--str:#7ee0a0;--num:#86b7ff;}
 *{box-sizing:border-box}
 body{margin:0;font:15px/1.6 system-ui,-apple-system,Segoe UI,Roboto;background:var(--bg);color:var(--ink)}
@@ -47,9 +47,10 @@ main{max-width:900px;margin:0 auto;padding:26px 22px 90px}
 .store.kv{background:linear-gradient(180deg,var(--kvb),transparent 70%);border-color:#1c4d30}
 .store.sql{background:linear-gradient(180deg,var(--sqlb),transparent 70%);border-color:#1c4d52}
 .store.s3{background:linear-gradient(180deg,var(--s3b),transparent 70%);border-color:#5a2228}
+.store.fsj{background:linear-gradient(180deg,var(--fsjb),transparent 70%);border-color:#3d2a5c}
 .store h3{margin:0 0 4px;font-size:14px;display:flex;align-items:center;gap:8px}
 .store .sub{color:var(--mut);font-size:12px;margin-bottom:10px}
-.store.fs h3 .d{color:var(--fire)} .store.kv h3 .d{color:var(--kv)} .store.sql h3 .d{color:var(--sql)} .store.s3 h3 .d{color:var(--s3)}
+.store.fs h3 .d{color:var(--fire)} .store.kv h3 .d{color:var(--kv)} .store.sql h3 .d{color:var(--sql)} .store.s3 h3 .d{color:var(--s3)} .store.fsj h3 .d{color:var(--fsj)}
 .path{font-family:ui-monospace,Menlo,monospace;font-size:13px;padding:6px 0;border-top:1px solid var(--line)}
 .path:first-of-type{border-top:none}
 .path .n{color:var(--ink)} .path .why{color:var(--mut);font-size:12px;font-family:system-ui}
@@ -63,6 +64,7 @@ main{max-width:900px;margin:0 auto;padding:26px 22px 90px}
 .badge.kv{background:var(--kvb);color:var(--kv);border:1px solid #1c4d30}
 .badge.sql{background:var(--sqlb);color:var(--sql);border:1px solid #1c4d52}
 .badge.s3{background:var(--s3b);color:var(--s3);border:1px solid #5a2228}
+.badge.fsj{background:var(--fsjb);color:var(--fsj);border:1px solid #3d2a5c}
 .badge.blob{background:var(--s3b);color:var(--s3);border:1px solid #5a2228}
 .badge.mirror{background:#10243f;color:var(--acc);border:1px solid #234668}
 .badge.perm{background:#10261a;color:#7ee0a0;border:1px solid #1c4d30}
@@ -106,8 +108,8 @@ padding:12px 30px;display:flex;justify-content:space-between;align-items:center}
 const DOC = /*__DATA__*/;
 const notes = {};
 function esc(s){return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
-function storeName(s){return s==='firestore'?'Firestore':s==='denokv'?'Deno KV':s==='sqlite'?'SQLite':s==='s3'?'S3':s;}
-function badgeCls(s){return s==='firestore'?'fs':s==='denokv'?'kv':s==='sqlite'?'sql':s==='s3'?'s3':'';}
+function storeName(s){return s==='firestore'?'Firestore':s==='denokv'?'Deno KV':s==='sqlite'?'SQLite':s==='fs_json'?'JSON file':s==='s3'?'S3':s;}
+function badgeCls(s){return s==='firestore'?'fs':s==='denokv'?'kv':s==='sqlite'?'sql':s==='fs_json'?'fsj':s==='s3'?'s3':'';}
 // a compact header chip for an entity's retention: kept forever vs expires after N
 function retBadge(ret){
   if(!ret||!ret.policy) return '';
@@ -175,7 +177,7 @@ function fallbackDoc(e){
 function render(){
   document.getElementById('mod').textContent=DOC.module||'(module)';
   const ents=DOC.entities||[];
-  const fs=ents.filter(e=>e.store==='firestore'), kv=ents.filter(e=>e.store==='denokv'), sq=ents.filter(e=>e.store==='sqlite'), s3=ents.filter(e=>e.store==='s3');
+  const fs=ents.filter(e=>e.store==='firestore'), kv=ents.filter(e=>e.store==='denokv'), sq=ents.filter(e=>e.store==='sqlite'), fsj=ents.filter(e=>e.store==='fs_json'), s3=ents.filter(e=>e.store==='s3');
   const proj=ents.flatMap(e=>(e.projections||[]).map(p=>({...p,owner:e.name})));
   const blobs=ents.flatMap(e=>(e.blobs||[]).map(b=>({...b,owner:e.name})));
   const hasAppend=ents.some(e=>(e.immutability||{}).strategy==='append-child');
@@ -186,6 +188,7 @@ function render(){
   if(fs.length) byStore.push(fs.map(e=>e.name).join(' & ')+' '+(fs.length>1?'live':'lives')+' in Firestore (you list & query them)');
   if(kv.length) byStore.push(kv.map(e=>e.name).join(' & ')+' in Deno KV');
   if(sq.length) byStore.push(sq.map(e=>e.name).join(' & ')+' '+(sq.length>1?'live':'lives')+' in one local SQLite file (list & by-id from one engine)');
+  if(fsj.length) byStore.push(fsj.map(e=>e.name).join(' & ')+' '+(fsj.length>1?'live':'lives')+' in one local JSON file (loaded, edited, written back — for a small project)');
   if(s3.length) byStore.push(s3.map(e=>e.name).join(' & ')+' '+(s3.length>1?'live':'lives')+' in S3 (large files)');
   if(byStore.length) parts.push(byStore.join('; ')+'.');
   if(proj.length) parts.push(' '+proj.length+' fast lookup '+(proj.length>1?'mirrors':'mirror')+' for by-id reads.');
@@ -201,9 +204,10 @@ function render(){
     firestore:{cls:'fs',label:'Firestore',sub:'documents you list, filter & sort',dft:e=>e.name+'s/{id}'},
     denokv:{cls:'kv',label:'Deno KV',sub:'instant lookups by a known key',dft:e=>e.name+':{id}'},
     sqlite:{cls:'sql',label:'SQLite',sub:'one local file — relational queries & lookups',dft:e=>e.name},
+    fs_json:{cls:'fsj',label:'JSON file',sub:'one flat file on disk — loaded, edited, saved (small projects)',dft:e=>e.name+'[]'},
     s3:{cls:'s3',label:'S3',sub:'large files & binary blobs (a reference lives in a record)',dft:e=>e.name+'/{id}'},
   };
-  const usedStores=['firestore','denokv','sqlite','s3'].filter(s=>ents.some(e=>e.store===s)||proj.some(p=>p.store===s)||(s==='s3'&&blobs.length));
+  const usedStores=['firestore','denokv','sqlite','fs_json','s3'].filter(s=>ents.some(e=>e.store===s)||proj.some(p=>p.store===s)||(s==='s3'&&blobs.length));
   const cols=usedStores.length?usedStores:['firestore','denokv'];
   let map='<div class="sec">Where it lives</div><div class="map" style="grid-template-columns:repeat('+cols.length+',1fr)">';
   for(const sid of cols){

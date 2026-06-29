@@ -1,6 +1,11 @@
 # Repro: no `NATIVE` transport for in-process boundaries
 
-Self-contained. No deps beyond the `rune` CLI. Verified on `rune 2.0.0`.
+Self-contained. No deps beyond the `rune` CLI.
+
+> ✅ **Resolved in rune 2.0.4:** `NATIVE` is now accepted, so `cases/native-attempt.rune` checks
+> clean (exit 0) instead of erroring, and `(NATIVE)fs:` with no env var is accepted. The captured
+> output below is the original `rune 2.0.0` run (the bug as filed); the "what each case shows"
+> notes describe the pre-fix behavior and are kept as the record.
 
 ## Run
 

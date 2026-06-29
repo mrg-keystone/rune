@@ -4,8 +4,10 @@ description: >-
   Design the persistence layer for a rune module: read the `.rune` specs in
   `spec/runes/`+`src/` and the sprig UI prototype + design system in `spec/ui/`,
   then emit a
-  `spec/misc/data.json` that assigns every entity to a store — **SQLite when the
-  app runs local-only, otherwise Firestore or Deno KV by per-operation
+  `spec/misc/data.json` that assigns every entity to a store — **a single JSON
+  file (`fs_json`) for the smallest local projects, SQLite when the
+  app runs local-only but needs real queries/indexes, otherwise Firestore or Deno
+  KV by per-operation
   performance, and S3 for large files / binary blobs** — restructures the
   model to be **immutable —
   new objects, never edits**, and sets a conscious **retention** per entity (a
@@ -18,6 +20,7 @@ description: >-
   for this", "where do big files / uploads / images go?", "store this blob in S3",
   "stub the large data with an s3 link", "how long should we keep this?", "does
   this need a TTL or should it persist forever?", "set an expiry / TTL on this",
+  "just use a json file for this", "it's a small project — a flat file is fine",
   "pick the datastore", "where should this entity live", "the
   audit edits the record — make it immutable", "model this append-only", "optimize
   read/write performance for this view", "generate the data.json", "what indexes /
@@ -71,7 +74,10 @@ walk (→ `rune:cake`).
 Specialists PROPOSE with rationale; the main session CONFIRMS with the user:
 
 - **The local-only gate** — single machine, no cloud/sync/client-direct reads? → one
-  SQLite file for everything. This flips the whole store strategy; confirm when ambiguous.
+  local store for everything: a single JSON file (`fs_json`) for the smallest projects
+  (small bounded data, single writer, no indexed queries — prototypes/CLIs/utilities), or
+  one SQLite file the moment it needs real queries/indexes/concurrency/growth. This flips
+  the whole store strategy; confirm `fs_json`-vs-`sqlite` (and local-only itself) when ambiguous.
 - **A genuine store tradeoff** — "Firebase or Deno KV?" on a split entity, or a
   deployment-preference call (use `AskUserQuestion`).
 - **An ambiguous retention window** — "keep forever, or expire after N?" when the

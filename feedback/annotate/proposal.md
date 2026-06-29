@@ -1,6 +1,6 @@
 # Proposal: add a `NATIVE` transport to `[SRV]`
 
-**Status:** proposal · **Affects:** `[SRV]` grammar, `rune check`/lint, codegen, LSP, docs
+**Status:** ✅ shipped in rune 2.0.4 (filed as a proposal) · **Affects:** `[SRV]` grammar, `rune check`/lint, codegen, LSP, docs
 **Origin:** extracting a standalone `annotate` tool. Self-contained repro in [`./repro/`](./repro/).
 **Verified against:** `rune 2.0.0` (`rune check`). Codegen/`sync` behavior is posed as open
 questions, not asserted.

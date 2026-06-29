@@ -1,7 +1,11 @@
 # Feedback: native (in-process) boundaries have no honest transport
 
 **From:** extracting a standalone `annotate` tool into a rune spec.
-**rune:** 2.0.0 · **Type:** language proposal (new `[SRV]` transport) · **Severity:** papercut
+**rune:** filed against 2.0.0 · **Type:** language proposal (new `[SRV]` transport) · **Severity:** papercut
+
+> ✅ **RESOLVED in rune 2.0.4** (released Jun 29, 2026). `NATIVE` is now an accepted `[SRV]`
+> transport: `repro/cases/native-attempt.rune` checks clean (exit 0), and `(NATIVE)fs:` with no
+> env var is accepted. Kept here as the record of the request + repro.
 
 ## The short version
 
