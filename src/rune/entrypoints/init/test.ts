@@ -50,8 +50,8 @@ Deno.test("runInit — scaffolds the spec/ skeleton (deno.json + spec/runes/core
     // deno.json pins the published runtime so the skeleton type-checks as-is.
     const denoJson = await Deno.readTextFile(join(proj, "deno.json"));
     assert(
-      denoJson.includes("jsr:@mrg-keystone/rune@^2"),
-      "deno.json should pin jsr:@mrg-keystone/rune@^2",
+      denoJson.includes("jsr:@mrg-keystone/rune@^3"),
+      "deno.json should pin jsr:@mrg-keystone/rune@^3",
     );
   });
 });
