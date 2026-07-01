@@ -7,8 +7,12 @@ import {
   endpointModule,
 } from "@foundation/domain/business/endpoint-decorator/mod.ts";
 import { bootstrapServer } from "@foundation/domain/coordinators/bootstrap-server/mod.ts";
+import { Public } from "@foundation/domain/business/public-route/mod.ts";
 import { span, tracer, traceUser } from "./mod.ts";
 
+// The calc endpoints are @Public so a network caller reaches them (there is no localhost trust);
+// tracing is unaffected. The /docs/_traces control plane trusts only the in-process client
+// (internal key, via backend.fetch) or a dev/* bearer — off-host network calls are denied.
 const loopback = {
   remoteAddr: { transport: "tcp", hostname: "127.0.0.1", port: 1 },
 };
@@ -29,6 +33,7 @@ class OutDto {
 
 @EndpointController("calc")
 class CalcController {
+  @Public()
   @Endpoint({ input: InDto, output: OutDto, order: 1 })
   async work(body: InDto): Promise<OutDto> {
     // A user function shows up as its own segment inside the request bar.
@@ -39,6 +44,7 @@ class CalcController {
     return { doubled };
   }
 
+  @Public()
   @Endpoint({ path: "boom", input: InDto, output: OutDto, order: 2 })
   async boom(_body: InDto): Promise<OutDto> {
     await span("explode", () => {
@@ -47,6 +53,7 @@ class CalcController {
     return { doubled: 0 };
   }
 
+  @Public()
   @Endpoint({ path: "labeled", input: InDto, output: OutDto, order: 3 })
   labeled(body: InDto): OutDto {
     // The app labels the trace with its own notion of a user.
@@ -102,7 +109,7 @@ Deno.test("a crashing request marks the crash on the exact span that threw", asy
   assertEquals(explode.error?.message, "kaboom");
 });
 
-Deno.test("traceUser labels the trace; an unlabeled localhost call stays anonymous", async () => {
+Deno.test("traceUser labels the trace; an unlabeled call stays anonymous", async () => {
   const api = await bootstrapServer("traceapp", mod);
   await tracer.clear();
 
@@ -114,12 +121,12 @@ Deno.test("traceUser labels the trace; an unlabeled localhost call stays anonymo
   )!;
   assertEquals(labeled.user, "member-42");
 
-  // No token + no traceUser() → no user (trusted localhost caller is unauthenticated).
+  // No token + no traceUser() → no user (a @Public caller is unauthenticated).
   const anon = (await tracer.list()).find((t) => t.route === "/calc")!;
   assertEquals(anon.user, undefined);
 });
 
-Deno.test("/docs/_traces is localhost-only and tooling routes are not traced", async () => {
+Deno.test("/docs/_traces is control-plane gated and tooling routes are not traced", async () => {
   const api = await bootstrapServer("traceapp", mod);
   await tracer.clear();
 
@@ -134,11 +141,8 @@ Deno.test("/docs/_traces is localhost-only and tooling routes are not traced", a
   );
   assertEquals(denied.status, 403);
 
-  // Localhost gets the JSON; the map view did NOT create a trace of its own.
-  const ok = await api.handler(
-    new Request("http://app/docs/_traces"),
-    conn(loopback),
-  );
+  // The in-process client gets the JSON; the map view did NOT create a trace of its own.
+  const ok = await api.backend.fetch(new Request("http://app/docs/_traces"));
   assertEquals(ok.status, 200);
   const data = await ok.json();
   assert(data.traces.some((t: { route: string }) => t.route === "/calc"));

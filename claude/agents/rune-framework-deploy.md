@@ -5,8 +5,9 @@ description: >-
   (Deno.serve with conn-info forwarding) or await api.listen(), hosting under a
   sprig UI via serveSprig({ keep, app }) / the framework-agnostic sprigUi()
   middleware, mounting under a prefix with withBasePath, Deno Deploy env
-  (MANUAL_KEY/FIREBASE_PROJECT_ID/DD_API_KEY), the in-process backend client, and
-  request logging. Use this agent when the orchestrator needs a deploy/hosting
+  (INFRA_URL for infra-bearer verification, plus DD_API_KEY/POSTMARK_*), the
+  in-process backend client, and request logging. Use this agent when the
+  orchestrator needs a deploy/hosting
   question answered or the serve/composition wiring set up — it does NOT debug
   auth (rune-framework-auth) or explain @Endpoint/runner semantics
   (rune-framework-runtime).
@@ -30,11 +31,11 @@ The orchestrator passes: the goal (e.g. "host this backend under the sprig UI", 
 
 1. Read `references/deployment.md` (path provided) — the mounting recipes, the `backend` client, logging, Deno Deploy, the release flow. Source of truth.
 2. Pick the shape from three:
-   - **Standalone** — `Deno.serve((req, info) => api.handler(req, info))` (always forward `info` — `remoteAddr` powers localhost trust + `/_mint`) or `await api.listen()`.
+   - **Standalone** — `Deno.serve((req, info) => api.handler(req, info))` (forward `info` so `remoteAddr` stays available for request logging/tracing; auth no longer depends on it) or `await api.listen()`.
    - **Hosted under sprig** — `serveSprig({ keep: api, app })` from `@sprig/keep` → one `{ fetch }` default export run by `deno serve serve.ts` (NOT `Deno.serve`); routes `/api/*` + `/docs*` to the keep handler and the rest to the sprig SSR app, binding in-process `backend.fetch` to sprig's `Backend` DI token. To mount the UI inside an existing host, use `sprigUi(config)`.
    - **Under any prefix** — `withBasePath(prefix, handler)`.
 3. `bootstrapServer` initializes once (no `listen`) — import the shared `api` everywhere. Bundler-safe (lazy Swagger/handlebars).
-4. For Deno Deploy: set `MANUAL_KEY` and/or `FIREBASE_PROJECT_ID` (+ `DD_API_KEY`/`POSTMARK_*`); `/_mint` is unreachable in prod — mint locally or via `signToken`.
+4. For Deno Deploy: set `INFRA_URL` (e.g. `https://infra.mrg-keystone.deno.net`) so keep can verify infra session bearers against its JWKS and poll revoke-all (+ `DD_API_KEY`/`POSTMARK_*`). keep mints nothing — clients obtain bearers from infra and present them; auth details → `rune-framework-auth`.
 5. If wiring is needed, Edit only the named composition file(s) to match the chosen recipe. Reason with the sequential-thinking MCP first.
 
 ## Resources

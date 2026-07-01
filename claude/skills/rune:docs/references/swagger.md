@@ -134,29 +134,30 @@ build.
 | ---- | ---- |
 | `/docs/<module>` | the cake — guided ordered walk (→ **`rune:cake`**) |
 | `/docs/<module>/swagger` | standard Swagger UI |
-| `/docs/<module>/json` | the raw OpenAPI spec — **token-gated** |
+| `/docs/<module>/json` | the raw OpenAPI spec — **gated: in-process OR a `dev`-grant infra bearer** |
 
 Module pages are named after the module class, lowercased, without the
 `Module` suffix (`endpointModule("Orders", …)` → `/docs/orders`). The same
 pages work mounted under Fresh (`/api/docs/...`).
 
-### Browser docs-access token flow (summary)
+### Browser docs-access bearer flow (summary)
 
-Doc *pages* load publicly; the OpenAPI *spec* (`/docs/<module>/json`) is gated.
-The pages use a query-param → `localStorage` flow:
+Doc *pages* load publicly; the OpenAPI *spec* (`/docs/<module>/json`) is gated to
+in-process or an infra bearer carrying the `dev` grant. The pages use a
+query-param → `localStorage` flow so a browser can present that bearer:
 
-1. Open any docs page with `?token=<signed token>` — an inline script stores it
+1. Open any docs page with `?token=<infra bearer>` — an inline script stores it
    and strips it from the URL.
 2. Swagger UI / the cake fetch the spec with
-   `Authorization: Bearer <stored token>` — persists across same-origin
+   `Authorization: Bearer <stored bearer>` — persists across same-origin
    navigation.
-3. A 401 wipes the stored token and asks for a fresh `?token=…` link.
+3. A 401 wipes the stored bearer and asks for a fresh `?token=…` link.
 
-Share a `…/docs?token=…` link once (the localhost `/_mint` result page
-generates it).
+The bearer is an ordinary infra session bearer that happens to carry `dev`;
+obtain it from infra (`session.login` / `authz.exchange`).
 
-**Defer the trust posture** — who is recognized as loopback, why the
-in-process bypass is NOT honored on docs (the spec is served only to a genuine
-loopback caller or a valid token), token kinds, roles, and the env that gates
+**Defer the trust posture** — that the docs `/json` and the `/docs/_*` control
+plane are gated to **in-process OR a `dev`-grant infra bearer** (no localhost
+trust), how the bearer is verified offline, and the `INFRA_URL` env that gates
 verification — to **`rune:framework`**'s `references/auth.md`. This skill only
 needs the page-level flow above to wire docs access for a browser.

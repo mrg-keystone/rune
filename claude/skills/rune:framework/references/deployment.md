@@ -24,9 +24,10 @@ Deno.serve((req, info) => api.handler(req, info)); // or: await api.listen();
 ```
 
 **Forward `info`.** `api.handler` takes `(req, info?)` — `info` carries
-`remoteAddr`, which localhost trust, the token-auth localhost exemption, and
-the `/_mint` guard all rely on. Drop it and every request looks origin-less:
-localhost is no longer recognized and `/_mint` becomes unreachable.
+`remoteAddr`, which request logging and tracing attribute the caller with. Drop
+it and every request looks origin-less. (Auth no longer depends on `remoteAddr`
+— trust is in-process key or infra bearer only — but keep forwarding `info` so
+logs stay attributable.)
 
 ### Hosted under a sprig UI
 
@@ -42,14 +43,14 @@ import { api } from "./backend.ts";
 export default serveSprig({ keep: api, app });
 ```
 
-`serveSprig` routes `/api/*` and `/docs*` to the keep's token-gated `handler`
-(forwarding conn info, so loopback detection keeps working) and everything else
-to the sprig SSR app — with the keep's in-process `backend.fetch` bound to
-sprig's `Backend` DI token. SSR pages read data through that in-process channel
-via `inject(Backend)` in a page's `resolve.ts` or a service — **no TCP, no
-token**. Browser islands can't make in-process calls, so they reach the backend
-over the token-gated `/api/*` channel (attach a credential — see
-`references/auth.md`, "Browser access to your own API").
+`serveSprig` routes `/api/*` and `/docs*` to the keep's `handler` (forwarding
+conn info for request attribution) and everything else to the sprig SSR app —
+with the keep's in-process `backend.fetch` bound to sprig's `Backend` DI token.
+SSR pages read data through that in-process channel via `inject(Backend)` in a
+page's `resolve.ts` or a service — **no TCP, no credential**. Browser islands
+can't make in-process calls, so they reach the backend over the `/api/*` channel
+with an **infra session bearer** (see `references/auth.md`, "Browser access to
+your own API").
 
 `bootstrapServer` is bundler-safe (lazy-loads the Swagger builder and its
 CJS `handlebars` dep), so importing the backend into a bundled SSR frontend
@@ -71,9 +72,11 @@ lower-level `withBasePath(prefix, handler)`: it dispatches `prefix`-rooted
 requests with the prefix stripped and 404s the rest. It's plain request
 routing — framework-agnostic, not tied to any UI.
 
-**Deno Deploy:** set `MANUAL_KEY` and/or `FIREBASE_PROJECT_ID` (plus
-`DD_API_KEY` / `POSTMARK_*`) in the project env. `/_mint` is unreachable in
-production (403s off-localhost) — mint locally or with `signToken`.
+**Deno Deploy:** set `INFRA_URL` (e.g. `https://infra.mrg-keystone.deno.net`) so
+keep can verify infra session bearers against its JWKS and poll the revoke-all
+flag, plus `DD_API_KEY` / `POSTMARK_*` as needed. keep mints nothing — clients
+get their bearer from infra (`session.login` / `authz.exchange`) and present it;
+see `references/auth.md`.
 
 ## `backend` — the in-process client
 

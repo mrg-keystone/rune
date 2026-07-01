@@ -6,45 +6,33 @@ import {
   verifyToken,
 } from "@foundation/domain/business/token/mod.ts";
 import { INTERNAL_REQUEST_HEADER } from "@foundation/domain/business/backend-client/mod.ts";
-import type { FirebaseVerifier } from "@foundation/domain/business/firebase-auth/mod.ts";
-import {
-  type InfraClient,
-  InfraError,
-} from "@foundation/domain/business/infra-client/mod.ts";
 import { isPublicContext } from "@foundation/domain/business/public-route/mod.ts";
-import { requiredGrants } from "@foundation/domain/business/grants/mod.ts";
+import {
+  DYNAMIC_GRANT_PREFIX,
+  requiredDomains,
+  requiredGrants,
+} from "@foundation/domain/business/grants/mod.ts";
 
 /**
- * Network credential handling for the infra-centralized model. A request from a trusted origin
- * (in-process key / localhost) passes through unauthenticated. Every other request must present, in
- * `Authorization: Bearer <credential>` (or `?token=`), ONE of:
+ * Network credential handling for the infra-only trust model. Exactly two things are trusted:
  *
- *  1. an **opaque manual token** `mtk_…` — keep calls infra `manualToken.exchange` to trade it for a
- *     signed ~1h session bearer, authorizes from that, and hands the fresh bearer back to the client
- *     (response header) so the client can cache and re-send it;
- *  2. a **session bearer** (infra-signed compact JWT) — verified OFFLINE against infra's JWKS;
- *  3. a **Firebase ID token** — when a Firebase verifier is configured.
+ *  1. the **in-process client** — a request stamped with the process-private internal key (SSR /
+ *     BackendClient), which never crosses the network;
+ *  2. an **infra-signed session bearer** — verified OFFLINE against infra's published JWKS.
  *
- * Revocation: when the polled global `revokeAll` flag is ON (break glass), keep stops trusting
- * cached session bearers and validates every auth live — opaque tokens are re-exchanged each request,
- * and a bare session bearer is rejected (401) so the client re-exchanges its opaque token.
+ * There is no localhost bypass, no keep-side minting/exchange, and no direct Firebase verification:
+ * a Firebase user logs in at infra (`session.login`) and an opaque token is exchanged at infra
+ * (`authz.exchange`); either way the client presents the resulting infra bearer, and keep only
+ * verifies it. Everything else is denied.
+ *
+ * Revocation: when the polled global `revokeAll` flag is ON (break glass), keep stops trusting every
+ * cached session bearer and rejects it (401) so the client re-authenticates at infra.
  */
 
-/** `Authorization` header keep writes the freshly-exchanged session bearer to, for the client. */
+/** @deprecated No fresh bearer is ever minted by keep now; kept only for import stability. */
 export const SESSION_BEARER_HEADER = "x-session-bearer";
-
-/** Hono context key under which a freshly-exchanged session bearer is stashed for SSR/handlers. */
+/** @deprecated Kept for import stability; keep no longer stashes a freshly-minted bearer. */
 export const SESSION_BEARER_CONTEXT_KEY = "danet:session-bearer";
-
-/** Default skeleton (`*`) cap: a `*` token is honored only if minted within this window. */
-export const DEFAULT_SKELETON_MAX_AGE_SECONDS = 24 * 60 * 60;
-
-const OPAQUE_PREFIX = "mtk_";
-
-/** True when the credential is an opaque manual token (`mtk_…`) rather than a signed bearer. */
-export function isOpaqueToken(credential: string): boolean {
-  return credential.startsWith(OPAQUE_PREFIX);
-}
 
 export interface TokenAuthConfig {
   /** Offline verifier for infra-signed session bearers (JWKS). */
@@ -52,29 +40,20 @@ export interface TokenAuthConfig {
   logger: Logger;
   /** Process-private key the in-process client stamps on its requests. Minted at boot. */
   internalKey: string;
-  /** Optional Firebase ID token verifier. When set, a valid Firebase token also authorizes. */
-  firebaseVerifier?: FirebaseVerifier;
-  /** infra client for opaque-token exchange (and live re-validation under revokeAll). */
-  infraClient?: InfraClient;
   /** Reads the polled global revoke-all flag. Default: always false (offline mode). */
   revokeAll?: () => boolean;
-  /** Whether loopback (localhost) callers are trusted without a token. Defaults to true. */
-  trustLocalhost?: boolean;
   /** Path prefixes that bypass auth entirely (public). */
   publicPaths?: string[];
 }
-
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
 export function createTokenAuthMiddleware(
   config: TokenAuthConfig,
 ): MiddlewareHandler {
   const { logger, internalKey, publicPaths = [] } = config;
-  const trustLocalhost = config.trustLocalhost ?? true;
   const revokeAll = config.revokeAll ?? (() => false);
 
   return async (c, next) => {
-    if (isTrustedOrigin(c, internalKey, trustLocalhost)) return next();
+    if (isTrustedOrigin(c, internalKey)) return next();
     if (isPublicPath(c.req.path, publicPaths)) return next();
 
     const credential = bearer(c.req.header("authorization")) ??
@@ -83,16 +62,11 @@ export function createTokenAuthMiddleware(
 
     const outcome = await resolveNetworkCredential(credential, {
       verifier: config.verifier,
-      firebaseVerifier: config.firebaseVerifier,
-      infraClient: config.infraClient,
       revokeAll: revokeAll(),
     });
     if ("error" in outcome) return unauthorized(c, messageFor(outcome.error));
 
     logger.setSource(outcome.resolved.source);
-    if (outcome.freshBearer) {
-      c.header(SESSION_BEARER_HEADER, outcome.freshBearer);
-    }
     return await next();
   };
 }
@@ -103,36 +77,27 @@ export function extractBearer(header: string | undefined): string | undefined {
 }
 
 export interface CredentialGuardConfig {
-  /** This app's name. Role claims are namespaced `appName:role`; the guard scopes to this app. */
+  /** This app's name. Grant claims are namespaced per app; the guard scopes to this app. */
   appName: string;
   /** Offline verifier for infra-signed session bearers (JWKS). */
   verifier?: SessionVerifier;
   /** Process-private key identifying in-process (BackendClient) callers. */
   internalKey: string;
-  firebaseVerifier?: FirebaseVerifier;
-  /** infra client for opaque-token exchange (and live re-validation under revokeAll). */
-  infraClient?: InfraClient;
   /** Reads the polled global revoke-all flag. Default: always false (offline mode). */
   revokeAll?: () => boolean;
   logger: Logger;
-  /** Whether loopback callers are trusted without a credential. Defaults to true. */
-  trustLocalhost?: boolean;
   /**
-   * Honor the `*` skeleton key (a `*` role claim bypasses required claims). Default true.
+   * Honor the `*` skeleton key (a `*` grant bypasses required grants/domains). Default true.
    * **infra runs with `honorSkeleton: false`** so `*` never opens the control plane.
    */
   honorSkeleton?: boolean;
-  /** Max age of a `*` token for it to be honored as skeleton. Default 24h. */
-  skeletonMaxAgeSeconds?: number;
 }
 
 /**
- * The grants a caller holds on THIS app. infra stores a user's per-app grants as the comma-separated
+ * The grants a caller holds on THIS app. infra carries a user's per-app grants as the comma-separated
  * value under the app's own key in the verified claim map (`claims[appName] = "grant1,grant2"`); this
  * returns them trimmed and non-empty. A user with no entry for the app holds no grants here (and, by
  * fail-closed default, reaches only its `@Public` routes).
- *
- * The `*` universal grant is just one of these strings — see {@link createCredentialGuard}.
  */
 export function grantsForApp(
   claims: Record<string, string>,
@@ -150,23 +115,19 @@ export interface DanetGuard {
 }
 
 /**
- * The global credential guard. Deny-by-default for every controller route, with `@Public()` as the
- * only opt-out. A request is allowed when it is `@Public` (credential optional), from a trusted
- * origin, or carrying a valid credential that also satisfies the route's required grants.
+ * The global credential guard. Deny-by-default for every controller route. A request is allowed when
+ * it is `@Public`, from the in-process client, or carrying a valid infra bearer that also satisfies
+ * the route's `@LoggedIn` domain(s) AND `@Grant` grant(s).
  *
- * Authorization is **grant-based and fail-closed**: infra assigns each user a set of app-scoped
- * grant strings (carried in the session bearer under `claims[appName]`); `@Grants([...])` lists the
- * grants (ANY-of) that open a route. A route with no `@Grants` and no `@Public` is closed to everyone
- * but the `*` universal grant. The `*` grant bypasses the required list when honored (config
- * `honorSkeleton`, and only within the 24h mint-age cap) — it treats every endpoint as `@Public`.
+ * Authorization is **fail-closed**: a non-`@Public` route with no `@LoggedIn` and no `@Grant` is
+ * closed to everyone but the `*` universal grant. `@Grant(...)` is any-of and app-scoped; a dynamic
+ * `@Grant("::key")` requires the request's `key` value to be a grant the caller holds. `@LoggedIn`
+ * and `@Grant` stack with AND. The `*` grant (honored via `honorSkeleton`) opens everything.
  */
 export function createCredentialGuard(
   config: CredentialGuardConfig,
 ): DanetGuard {
-  const trustLocalhost = config.trustLocalhost ?? true;
   const honorSkeleton = config.honorSkeleton ?? true;
-  const skeletonMaxAge = config.skeletonMaxAgeSeconds ??
-    DEFAULT_SKELETON_MAX_AGE_SECONDS;
   const revokeAll = config.revokeAll ?? (() => false);
 
   return {
@@ -177,210 +138,178 @@ export function createCredentialGuard(
       if (ctx.websocketTopic !== undefined) return true;
 
       const isPublic = isPublicContext(ctx);
-      // `@Grants(...)` lists the grants (ANY-of) that open this route. Empty = no grant named,
-      // which (being non-@Public) is closed unless the caller holds the `*` universal grant.
-      const required = requiredGrants(ctx);
+      const requiredRaw = requiredGrants(ctx); // @Grant args (may contain `::key`)
+      const domains = requiredDomains(ctx); // @LoggedIn domains
 
-      if (isTrustedOrigin(context, config.internalKey, trustLocalhost)) {
-        return true;
-      }
+      // In-process trust ONLY — no localhost bypass.
+      if (isTrustedOrigin(context, config.internalKey)) return true;
 
       const credential = extractBearer(context.req.header("authorization")) ??
         context.req.query("token");
 
       let resolved: ResolvedCredential | null = null;
       if (credential) {
-        const outcome = await resolveNetworkCredential(credential, {
-          verifier: config.verifier,
-          firebaseVerifier: config.firebaseVerifier,
-          infraClient: config.infraClient,
-          revokeAll: revokeAll(),
-        });
-        if ("error" in outcome) {
-          // Present but unresolvable on a protected route → reject (public routes ignore it).
-          if (!isPublic) throw new UnauthorizedException();
-        } else {
-          resolved = outcome.resolved;
+        resolved = await validateCredential(credential, { verifier: config.verifier });
+        if (resolved) {
           config.logger.setSource(resolved.source);
           const grants = grantsForApp(resolved.claims, config.appName);
           const identity: Identity = {
+            creator: resolved.creator,
             source: resolved.source,
             claims: resolved.claims,
             grants,
           };
-          if (typeof ctx.set === "function") {
-            ctx.set(IDENTITY_CONTEXT_KEY, identity);
-          }
-          if (outcome.freshBearer) {
-            if (typeof ctx.set === "function") {
-              ctx.set(SESSION_BEARER_CONTEXT_KEY, outcome.freshBearer);
-            }
-            if (typeof context.header === "function") {
-              context.header(SESSION_BEARER_HEADER, outcome.freshBearer);
-            }
-          }
+          if (typeof ctx.set === "function") ctx.set(IDENTITY_CONTEXT_KEY, identity);
+        } else if (!isPublic) {
+          // Present but unresolvable on a protected route → reject.
+          throw new UnauthorizedException();
         }
       }
 
-      // Authentication: every non-@Public route needs a verified credential (grants can't be
-      // checked without one). @Public routes allow an absent/ignored credential.
+      // Authentication: every non-@Public route needs a verified credential.
       if (!resolved) {
         if (isPublic) return true;
         throw new UnauthorizedException();
       }
 
-      // Authorization — FAIL-CLOSED. The `*` universal grant opens everything (when honored and
-      // within the 24h cap); a @Public route is open to any resolved identity; otherwise the caller
-      // must hold one of the route's @Grants. A non-@Public route with no @Grants and no `*` is
-      // closed — there is no "any authenticated identity" allowance.
+      // Break glass: a cached infra bearer can't be live-checked — reject until re-auth at infra.
+      if (revokeAll()) throw new UnauthorizedException();
+
+      // Authorization — FAIL-CLOSED.
       const grants = grantsForApp(resolved.claims, config.appName);
-      if (
-        honorSkeleton && grants.includes("*") &&
-        skeletonFresh(resolved.mintedAt, skeletonMaxAge)
-      ) {
-        return true;
-      }
+      // `*` universal grant: app-scoped (`app:*` → value "*") OR global bare (`*` → its own claim key).
+      if (honorSkeleton && (grants.includes("*") || "*" in resolved.claims)) return true;
       if (isPublic) return true;
-      if (required.length > 0 && required.some((g) => grants.includes(g))) {
-        return true;
+
+      // @LoggedIn AND @Grant — both enforced when present; neither present (non-@Public, no `*`) = closed.
+      const hasConstraint = domains.length > 0 || requiredRaw.length > 0;
+      if (domains.length > 0 && !creatorInDomains(resolved.creator, domains)) {
+        throw new ForbiddenException();
       }
+      if (requiredRaw.length > 0) {
+        const needed = await resolveGrantArgs(requiredRaw, context);
+        if (!needed.some((g) => g !== null && grants.includes(g))) {
+          throw new ForbiddenException();
+        }
+      }
+      if (hasConstraint) return true;
       throw new ForbiddenException();
     },
   };
 }
 
-/**
- * Whether a `*` token is fresh enough to honor. The cap needs the original mint time (carried as a
- * claim in the session bearer). If it is absent we **fail closed** — an undatable `*` is not honored.
- */
-function skeletonFresh(
-  mintedAt: number | undefined,
-  maxAgeSeconds: number,
-  now: number = Math.floor(Date.now() / 1000),
-): boolean {
-  if (typeof mintedAt !== "number") return false;
-  return now - mintedAt <= maxAgeSeconds;
-}
-
-/** The caller identity resolved from a verified credential. */
-export interface Identity {
-  source: string;
-  /** The verified claim map — the authorization surface. */
-  claims: Record<string, string>;
-  /** Convenience: this app's grants, from `claims[appName]` (the strings infra assigned). */
-  grants: string[];
-}
-
-/** A resolved credential before it becomes an {@link Identity} (carries the credential kind). */
-export interface ResolvedCredential {
-  source: string;
-  claims: Record<string, string>;
-  /** Original mint time (Unix seconds), when carried — gates the `*` 24h cap. */
-  mintedAt?: number;
-  /** How the credential authenticated. */
-  kind: "session" | "firebase";
+/** True when `creator` is an email whose domain is one of `domains` (case-insensitive). */
+function creatorInDomains(creator: string, domains: string[]): boolean {
+  const at = creator.lastIndexOf("@");
+  if (at < 0) return false; // a non-email creator (machine token) is never "logged in"
+  const domain = creator.slice(at + 1).toLowerCase();
+  return domains.some((d) => d.trim().toLowerCase() === domain);
 }
 
 /**
- * Validates a bearer credential OFFLINE as either an infra session bearer (JWKS) or a Firebase ID
- * token. Does NOT exchange opaque tokens — that is `resolveNetworkCredential`'s job. Used by the
- * gated docs `/json` endpoint and internally by the guard/middleware.
+ * Resolve `@Grant` args to the concrete grants a caller must hold: a static arg is itself; a dynamic
+ * `::key` arg is the request's value at `key` (path param → query → header → body), or `null` when
+ * the key is absent (so it can never satisfy the any-of, i.e. an absent `::key` → deny).
  */
-export async function validateCredential(
-  credential: string,
-  opts: {
-    verifier?: SessionVerifier;
-    firebaseVerifier?: FirebaseVerifier;
-    now?: number;
-  },
-): Promise<ResolvedCredential | null> {
-  if (opts.verifier) {
-    try {
-      const p = await verifyToken(credential, opts.verifier, opts.now);
-      return {
-        source: p.source,
-        claims: p.claims,
-        mintedAt: p.mintedAt,
-        kind: "session",
-      };
-    } catch {
-      // try Firebase next
+async function resolveGrantArgs(
+  args: string[],
+  context: Context,
+): Promise<Array<string | null>> {
+  const out: Array<string | null> = [];
+  for (const a of args) {
+    if (a.startsWith(DYNAMIC_GRANT_PREFIX)) {
+      out.push(await lookupRequestValue(context, a.slice(DYNAMIC_GRANT_PREFIX.length)));
+    } else {
+      out.push(a);
     }
   }
-  if (opts.firebaseVerifier) {
-    try {
-      const claims = await opts.firebaseVerifier.verify(credential);
-      return {
-        // Fall back to a fixed label so attribution is never blank.
-        source: claims.email ?? claims.uid ?? "firebase-user",
-        // Unify onto the claim surface: roles become the comma-separated `role` claim.
-        claims: { role: claims.roles.join(",") },
-        kind: "firebase",
-      };
-    } catch {
-      // neither validated
+  return out;
+}
+
+/** Find a request value by key: path param → query → header → JSON body. `null` when absent. */
+async function lookupRequestValue(
+  context: Context,
+  key: string,
+): Promise<string | null> {
+  // deno-lint-ignore no-explicit-any
+  const req = context.req as any;
+  const param = typeof req?.param === "function" ? req.param(key) : undefined;
+  if (typeof param === "string" && param.length > 0) return param;
+  const q = typeof req?.query === "function" ? req.query(key) : undefined;
+  if (typeof q === "string" && q.length > 0) return q;
+  const h = typeof req?.header === "function" ? req.header(key) : undefined;
+  if (typeof h === "string" && h.length > 0) return h;
+  try {
+    // Hono memoizes json()/parseBody(), so reading it here doesn't consume it for the handler.
+    const body = typeof req?.json === "function" ? await req.json() : undefined;
+    if (body && typeof body === "object") {
+      const v = (body as Record<string, unknown>)[key];
+      if (typeof v === "string" && v.length > 0) return v;
+      if (v !== undefined && v !== null) return String(v);
     }
-  }
+  } catch { /* no/invalid body */ }
   return null;
 }
 
+/** The caller identity resolved from a verified infra bearer. */
+export interface Identity {
+  /** The identity the bearer authenticates as — a Firebase email, or a token's creator. */
+  creator: string;
+  /** Attribution label recorded in this app's logs. */
+  source: string;
+  /** The verified claim map — the authorization surface. */
+  claims: Record<string, string>;
+  /** Convenience: this app's grants, from `claims[appName]`. */
+  grants: string[];
+}
+
+/** A resolved credential before it becomes an {@link Identity}. */
+export interface ResolvedCredential {
+  creator: string;
+  source: string;
+  claims: Record<string, string>;
+}
+
 /**
- * Resolves a network credential of any kind, performing the live exchange for opaque tokens.
- * Returns the resolved identity (and, for an opaque token, the fresh bearer to hand back), or an
- * `error` discriminating the failure for the 401 message.
+ * Validates a bearer credential OFFLINE as an infra session bearer (JWKS). Returns `null` when it
+ * does not verify. There is no Firebase or opaque path — those are resolved at infra, not keep.
+ */
+export async function validateCredential(
+  credential: string,
+  opts: { verifier?: SessionVerifier; now?: number },
+): Promise<ResolvedCredential | null> {
+  if (!opts.verifier) return null;
+  try {
+    const p = await verifyToken(credential, opts.verifier, opts.now);
+    return { creator: p.creator, source: p.source, claims: p.claims };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolves a network credential (an infra session bearer). Returns the resolved identity, or an
+ * `error`: `invalid` (unverifiable) or `revoked-bearer` (break-glass revoke-all is on).
  */
 export async function resolveNetworkCredential(
   credential: string,
-  opts: {
-    verifier?: SessionVerifier;
-    firebaseVerifier?: FirebaseVerifier;
-    infraClient?: InfraClient;
-    revokeAll: boolean;
-    now?: number;
-  },
+  opts: { verifier?: SessionVerifier; revokeAll: boolean; now?: number },
 ): Promise<
-  | { resolved: ResolvedCredential; freshBearer?: string }
-  | { error: "exchange" | "invalid" | "revoked-bearer" }
+  { resolved: ResolvedCredential } | { error: "invalid" | "revoked-bearer" }
 > {
-  if (isOpaqueToken(credential)) {
-    if (!opts.infraClient) return { error: "invalid" };
-    let freshBearer: string;
-    try {
-      // Always a live infra call — so opaque tokens satisfy revokeAll mode by construction.
-      freshBearer = await opts.infraClient.exchange(credential);
-    } catch (err) {
-      // 404 (revoked/unknown) / 410 (expired) / unreachable → 401 to the client.
-      if (err instanceof InfraError) return { error: "exchange" };
-      return { error: "exchange" };
-    }
-    const resolved = await validateCredential(freshBearer, {
-      verifier: opts.verifier,
-      now: opts.now,
-    });
-    if (!resolved) return { error: "invalid" };
-    return { resolved, freshBearer };
-  }
-
   const resolved = await validateCredential(credential, {
     verifier: opts.verifier,
-    firebaseVerifier: opts.firebaseVerifier,
     now: opts.now,
   });
   if (!resolved) return { error: "invalid" };
-  // Break glass: a cached infra session bearer can't be live-checked — force a re-exchange.
-  // (Firebase tokens are a separate, independently-verified source and stay trusted.)
-  if (opts.revokeAll && resolved.kind === "session") {
-    return { error: "revoked-bearer" };
-  }
+  if (opts.revokeAll) return { error: "revoked-bearer" };
   return { resolved };
 }
 
-function messageFor(error: "exchange" | "invalid" | "revoked-bearer"): string {
+function messageFor(error: "invalid" | "revoked-bearer"): string {
   switch (error) {
-    case "exchange":
-      return "Token exchange failed (revoked, unknown, or expired).";
     case "revoked-bearer":
-      return "Session bearer not trusted (revoke-all active) — re-exchange your token.";
+      return "Session bearer not trusted (revoke-all active) — re-authenticate at infra.";
     default:
       return "Invalid or expired credentials.";
   }
@@ -398,41 +327,17 @@ export function getIdentity(context: any): Identity | undefined {
 }
 
 /**
- * In-process requests (carrying the matching internal key) and localhost callers (loopback peer)
- * are trusted. A network request neither knows the internal key nor reports a loopback peer.
+ * The ONLY trusted origin: an in-process request carrying the matching internal key (SSR /
+ * BackendClient), which never crosses the network. A network request cannot know the key.
  */
-export function isTrustedOrigin(
-  c: Context,
-  internalKey: string,
-  trustLocalhost = true,
-): boolean {
+export function isTrustedOrigin(c: Context, internalKey: string): boolean {
   const stamped = c.req.header(INTERNAL_REQUEST_HEADER);
-  if (stamped !== undefined && safeEqual(stamped, internalKey)) return true;
-
-  // ⚠️ FOOTGUN: with trustLocalhost (default true) ANY loopback peer is trusted with no token.
-  // Behind a SAME-HOST reverse proxy every forwarded request arrives over loopback and is thus
-  // auth-exempt. Expose the app directly, or set TRUST_LOCALHOST=false when fronted by a local proxy.
-  return trustLocalhost && isLoopbackRequest(c);
-}
-
-/**
- * True only when the connecting socket is a loopback address. Unlike the in-process key (a header),
- * this comes from the real TCP peer and cannot be set by a network client.
- */
-export function isLoopbackRequest(c: Context): boolean {
-  const peer = remoteHostname(c);
-  return peer !== undefined && LOOPBACK_HOSTS.has(peer);
+  return stamped !== undefined && safeEqual(stamped, internalKey);
 }
 
 /**
  * A path is public when it equals a prefix or sits under it (`/docs` ⇒ `/docs`, `/docs/x`).
- *
- * Hardening: empty / whitespace-only entries are dropped — an `""` prefix would otherwise make
- * `path.startsWith("/")` true for EVERY route and open the whole app (a real footgun for an
- * integrator doing `publicPaths: env.split(",")` with an accidental empty entry). A single trailing
- * slash is normalized so a mis-typed `"/docs/"` matches like the documented `"/docs"` (a lone `"/"`
- * is preserved so a root-only public entry behaves exactly as before). Matching for every legitimate
- * non-empty prefix is otherwise unchanged.
+ * Empty / whitespace-only entries are dropped so an `""` prefix can't open the whole app.
  */
 function isPublicPath(path: string, prefixes: string[]): boolean {
   return prefixes.some((raw) => {
@@ -441,12 +346,6 @@ function isPublicPath(path: string, prefixes: string[]): boolean {
     const p = stripped.length > 0 ? stripped : raw;
     return path === p || path.startsWith(`${p}/`);
   });
-}
-
-function remoteHostname(c: Context): string | undefined {
-  // Deno.serve passes conn info as Hono's `env`; it is absent for in-process dispatch.
-  const env = c.env as { remoteAddr?: { hostname?: string } } | undefined;
-  return env?.remoteAddr?.hostname;
 }
 
 function bearer(header: string | undefined): string | undefined {

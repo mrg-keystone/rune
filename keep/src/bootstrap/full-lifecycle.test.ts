@@ -12,6 +12,7 @@ import {
   InjectFactory,
   InjectClass,
   log,
+  Public,
 } from "./mod.ts";
 import { Body, Controller, Get, Module, Post } from "#danet/core";
 
@@ -51,6 +52,7 @@ Deno.test("e2e: all public exports are defined", () => {
 // -- Full lifecycle: bootstrap, serve, swagger, teardown --
 
 @SwaggerDescription("Health API - system health checks")
+@Public() // health/echo/log are exercised over the network; no auth in the lifecycle tests
 @Controller("health")
 class HealthController {
   @Get()
@@ -75,7 +77,9 @@ class HealthController {
 })
 class TestAppModule {}
 
-let port = 9100;
+// Base port for the over-the-wire lifecycle tests. Kept off the common 9100/3000 dev ports so a
+// stray local `deno serve` can't squat it and make these fetches hit the wrong server.
+let port = 9410;
 
 Deno.test("e2e: bootstrap server with swagger, hit endpoints, teardown", async () => {
   const p = port++;

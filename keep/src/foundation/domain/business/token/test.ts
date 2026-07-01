@@ -47,12 +47,6 @@ Deno.test("rejects a bearer whose kid is not in the JWKS", async () => {
   );
 });
 
-Deno.test("rejects a bearer with the wrong issuer", async () => {
-  const { verifier } = makeVerifier();
-  const bearer = await signer.sign({ iss: "evil" });
-  await assertRejects(() => verifyToken(bearer, verifier), TokenError);
-});
-
 Deno.test("rejects a bearer signed by a different key", async () => {
   const other = await createTestSigner("infra-test-2026"); // same kid, different key
   const { verifier } = makeVerifier();
@@ -75,40 +69,6 @@ Deno.test("surfaces a missing-creator bearer as a TokenError", async () => {
     TokenError,
     "creator",
   );
-});
-
-Deno.test("carries mintedAt when present (for the * 24h cap)", async () => {
-  const { verifier } = makeVerifier();
-  const mintedAt = Math.floor(Date.now() / 1000) - 100;
-  const bearer = await signer.sign({ mintedAt });
-  const payload = await verifyToken(bearer, verifier);
-  assertEquals(payload.mintedAt, mintedAt);
-});
-
-Deno.test("derives mintedAt from a short all-digit epoch-seconds claim (not a calendar year)", async () => {
-  // When the bearer carries no numeric `mintedAt`, toSessionPayload derives it from the
-  // string `claims.mintedAt` via isoToEpochSeconds, documented to accept an "epoch-seconds string".
-  // A short all-digit string must be read as epoch seconds, NOT misparsed by Date.parse as a year.
-  const { verifier } = makeVerifier();
-  const bearer = await signer.sign({ claims: { mintedAt: "3600" } });
-  const payload = await verifyToken(bearer, verifier);
-  assertEquals(payload.mintedAt, 3600, "epoch-seconds string read literally");
-});
-
-Deno.test("derives mintedAt from a 10-digit epoch-seconds claim", async () => {
-  const { verifier } = makeVerifier();
-  const bearer = await signer.sign({ claims: { mintedAt: "315532800" } });
-  const payload = await verifyToken(bearer, verifier);
-  assertEquals(payload.mintedAt, 315532800);
-});
-
-Deno.test("derives mintedAt from a real ISO-8601 claim (preserved behavior)", async () => {
-  const { verifier } = makeVerifier();
-  const bearer = await signer.sign({
-    claims: { mintedAt: "2025-01-01T00:00:00Z" },
-  });
-  const payload = await verifyToken(bearer, verifier);
-  assertEquals(payload.mintedAt, Math.floor(Date.parse("2025-01-01T00:00:00Z") / 1000));
 });
 
 Deno.test("caches the JWKS across verifications within the TTL", async () => {

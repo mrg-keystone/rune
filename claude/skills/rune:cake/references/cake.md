@@ -125,8 +125,10 @@ JSON meant to be committed, so a process's required setup and contract travel
 with the repo. On load the cake fetches it and applies it as the baseline —
 restoring setup + expectations + persisted variables even in a fresh browser with
 empty `localStorage` (the saved config wins for the keys it carries). The door is
-`GET`/`POST /docs/_fixtures`, **localhost-only** (same posture as `/docs/_run` and
-`/_mint`); the file defaults to `<cwd>/spec/misc/cake.json` when the project has a
+`GET`/`POST /docs/_fixtures`, on the **`/docs/_*` control-plane gate** (same
+posture as `/docs/_run`): **in-process OR an infra bearer whose app-grants
+include `dev`** — no localhost trust; the file defaults to
+`<cwd>/spec/misc/cake.json` when the project has a
 `spec/` dir (else the legacy `<cwd>/fixtures/cake.json`), and `KEEP_FIXTURES_DIR`
 overrides the directory. The server needs `--allow-write`; without it, **Save
 fixtures** reports a 500 with the reason.
@@ -136,8 +138,9 @@ fixtures** reports a 500 with the reason.
 The Scenarios rail card freezes the whole walk (active flow, every step's body
 text + params with refs intact, skips) under a name — one committable file per
 scenario. **load** applies one over the page (overwrites editor state); **run** is
-load + Run all. Saved/listed through the localhost-only `GET`/`POST
-/docs/_scenarios` (same-name saves overwrite — that's updating). CI replays one
+load + Run all. Saved/listed through the control-plane-gated `GET`/`POST
+/docs/_scenarios` (in-process or a `dev`-grant bearer; same-name saves overwrite
+— that's updating). CI replays one
 headlessly with `POST /docs/_run {"scenario":"<name>"}`: the saved flow runs with
 each step's **literal** body fields as `byEndpoint` overrides; fields holding
 `{{refs}}` are dropped so the runner's own bind machinery (which the refs mirror)
@@ -145,9 +148,12 @@ fills them.
 
 ## `POST /docs/_run` — driving the walk headlessly
 
-`POST /docs/_run` is the localhost-only HTTP door to `exerciseEndpoints` — how the
-map's **Run all** and a headless agent/CI ask a *running* server "does the whole
-composed process work right now?" without importing the app. The two uses that matter
+`POST /docs/_run` is the control-plane-gated HTTP door to `exerciseEndpoints` —
+**in-process OR an infra bearer whose app-grants include `dev`** (no localhost
+trust) — how the map's **Run all** and a headless agent/CI ask a *running* server
+"does the whole composed process work right now?" without importing the app. A
+headless caller presents the bearer as `Authorization: Bearer <bearer>`. The two
+uses that matter
 for an e2e/fix-cake session:
 
 - **`scenario: "<name>"`** replays a saved `spec/misc/scenarios/` file (above); unknown

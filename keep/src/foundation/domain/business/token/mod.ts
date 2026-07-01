@@ -1,34 +1,45 @@
 /**
  * Session-bearer verification.
  *
- * keep no longer MINTS tokens — infra does. infra holds the private key, mints opaque manual
- * tokens (`mtk_…`), and at each exchange signs a short-lived (~1h) **session bearer**: a compact
- * JWT carrying `{ iss:"infra", creator, source, claims, sessionExp }`, with the signing key's
- * `kid` in the header. keep only ever VERIFIES that bearer, **offline**, against infra's published
- * public keys (JWKS) — no shared secret, no minting, nothing to leak.
+ * keep never MINTS or SIGNS — infra does. infra holds the Ed25519 private key and, at each
+ * `authz.exchange` (opaque token → bearer) or `session.login` (Firebase user → bearer), emits a
+ * short-lived (~1h) **signed session bearer**. That bearer is NOT a JWT — it is infra's canonical
+ * envelope: a JSON object
  *
- * The verification is JWKS-/`alg`-driven: the algorithm is taken from the matched JWK, so keep
- * works whether infra signs with RS256 or EdDSA (Ed25519). Selecting the key by `kid` means infra
- * can rotate its active key with zero downtime — bearers signed by a still-published previous key
- * keep verifying.
+ *   { creator, source, sessionExpiry, claims: [{ key, value }], signature, kid }
+ *
+ * where `signature` is a DETACHED Ed25519 signature over `canonicalize({creator, source,
+ * sessionExpiry, claims})` (claims sorted by key). keep verifies it **offline** against infra's
+ * published public keys (JWKS) — no shared secret, no minting, nothing to leak. `kid` selects the
+ * key; infra can rotate with zero downtime because retired public keys stay published until their
+ * bearers expire.
+ *
+ * The canonicalization here MUST match infra's signer byte-for-byte (see infra
+ * `server/src/core/data/signer/mod.ts` `canonicalize`). Any change is a wire-format break.
  */
 
-import { importJWK, importSPKI, type JWTPayload, jwtVerify } from "#jose";
-
-/** The decoded, verified session bearer — the 1h credential keep authorizes requests from. */
+/** The decoded, verified session bearer — the ~1h credential keep authorizes requests from. */
 export interface SessionBearerPayload {
   /** Always `"infra"` — the issuer keep trusts. */
   iss: string;
-  /** The userId the token authenticates as (replaces the old identity-by-`source`). */
+  /** The identity the bearer authenticates as — a Firebase email, or a token's creator. */
   creator: string;
-  /** Attribution label recorded in this app's logs. */
+  /** Attribution label recorded in this app's logs (e.g. `infra-login`, `my-app`). */
   source: string;
-  /** The verified claim map. The `role` claim is a comma-separated list of `appName:role`. */
+  /** The verified per-app grant map: `{ appName: "grant1,grant2" }` (comma-separated values). */
   claims: Record<string, string>;
-  /** Unix epoch SECONDS after which this offline-valid session bearer lapses (~1h out). */
+  /** Unix epoch SECONDS after which this offline-valid bearer lapses (~1h out). */
   sessionExp: number;
-  /** Unix epoch SECONDS when the original opaque token was minted — gates the `*` 24h skeleton cap. */
-  mintedAt?: number;
+}
+
+/** infra's signed session-bearer envelope, as it arrives on the wire (before verification). */
+interface BearerEnvelope {
+  creator: string;
+  source: string;
+  sessionExpiry: string; // ISO-8601
+  claims: Array<{ key: string; value: string }>;
+  signature: string; // base64url detached Ed25519 signature
+  kid: string; // key-selection hint (NOT signed)
 }
 
 /** Thrown when a session bearer is malformed, mis-signed, expired, or fails its claim checks. */
@@ -39,13 +50,13 @@ export class TokenError extends Error {
   }
 }
 
-/** One public verification key as published by infra's `keys.jwks` (`JwkKeyDto`). */
+/** One public verification key as published by infra's `authz.jwks` (`JwkKeyDto`). */
 export interface InfraJwk {
-  /** Identifier of the signing key — the bearer's header `kid` selects it. */
+  /** Identifier of the signing key — the bearer's `kid` selects it. */
   kid: string;
-  /** Signing algorithm the key material is for (e.g. `RS256`, `EdDSA`). */
+  /** Signing algorithm the key material is for — `"EdDSA"`. */
   alg: string;
-  /** Public key material — SPKI PEM, or a JSON-encoded JWK. */
+  /** Public key material — the raw Ed25519 public key (the JWK `x`), base64url. */
   publicKey: string;
 }
 
@@ -64,8 +75,6 @@ export interface JwksVerifierOptions {
   fetchJwks: () => Promise<InfraJwks>;
   /** How long a fetched JWKS is trusted before refetching. Default 600s (10m). */
   cacheTtlSeconds?: number;
-  /** The expected `iss` claim. Default `"infra"`. */
-  issuer?: string;
   /** Test/extension seam: import a JWK's public key into a `CryptoKey`. */
   importKey?: (jwk: InfraJwk) => Promise<CryptoKey>;
   /** Test seam for the wall clock (ms). Defaults to `Date.now`. */
@@ -73,13 +82,13 @@ export interface JwksVerifierOptions {
 }
 
 const DEFAULT_JWKS_TTL_SECONDS = 600;
+const encoder = new TextEncoder();
 
 /**
  * Builds a JWKS-backed session-bearer verifier. The fetched key set is cached for
  * `cacheTtlSeconds`; an unknown `kid` triggers a single forced refresh (keys may have rotated).
  */
 export function createJwksVerifier(opts: JwksVerifierOptions): SessionVerifier {
-  const issuer = opts.issuer ?? "infra";
   const ttlMs = (opts.cacheTtlSeconds ?? DEFAULT_JWKS_TTL_SECONDS) * 1000;
   const nowMs = opts.now ?? (() => Date.now());
   const importKey = opts.importKey ?? defaultImportKey;
@@ -98,9 +107,7 @@ export function createJwksVerifier(opts: JwksVerifierOptions): SessionVerifier {
         jwks = await opts.fetchJwks();
       } catch (err) {
         throw new TokenError(
-          `Could not fetch infra JWKS: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+          `Could not fetch infra JWKS: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
       const keys = new Map<string, InfraJwk>();
@@ -134,31 +141,44 @@ export function createJwksVerifier(opts: JwksVerifierOptions): SessionVerifier {
       bearer: string,
       now: number = Math.floor(nowMs() / 1000),
     ): Promise<SessionBearerPayload> {
-      let payload: JWTPayload;
+      const env = parseEnvelope(bearer);
+      const key = await keyFor(env.kid);
+
+      let ok: boolean;
       try {
-        const verified = await jwtVerify(
-          bearer,
-          (header) => {
-            if (!header.kid) throw new TokenError("Token has no key id.");
-            return keyFor(header.kid);
-          },
-          { issuer },
+        ok = await crypto.subtle.verify(
+          "Ed25519",
+          key,
+          fromBase64url(env.signature),
+          encoder.encode(canonicalize(env)),
         );
-        payload = verified.payload;
       } catch (err) {
-        if (err instanceof TokenError) throw err;
         throw new TokenError(
-          err instanceof Error ? err.message : "Invalid session bearer.",
+          err instanceof Error ? err.message : "Invalid session bearer signature.",
         );
       }
-      return toSessionPayload(payload, now);
+      if (!ok) throw new TokenError("Session bearer signature does not verify.");
+
+      const sessionExp = isoToEpochSeconds(env.sessionExpiry);
+      if (sessionExp === undefined) {
+        throw new TokenError("Session bearer has an invalid `sessionExpiry`.");
+      }
+      if (sessionExp <= now) throw new TokenError("Session bearer expired.");
+
+      return {
+        iss: "infra",
+        creator: env.creator,
+        source: env.source,
+        claims: claimsToMap(env.claims),
+        sessionExp,
+      };
     },
   };
 }
 
 /**
  * Verifies a session bearer with a {@link SessionVerifier} (offline, against infra's JWKS).
- * Re-keyed from the old HS256 `verifyToken(token, key)`: there is no shared secret in keep now.
+ * There is no shared secret in keep — infra signs, keep only verifies.
  */
 export function verifyToken(
   bearer: string,
@@ -168,61 +188,85 @@ export function verifyToken(
   return verifier.verify(bearer, now);
 }
 
-/** Validates and narrows a verified JWT payload into a {@link SessionBearerPayload}. */
-function toSessionPayload(
-  payload: JWTPayload,
-  now: number,
-): SessionBearerPayload {
-  const creator = payload.creator;
-  const source = payload.source;
-  if (typeof creator !== "string" || creator === "") {
-    throw new TokenError("Session bearer missing `creator`.");
+/**
+ * Parse the wire bearer into infra's envelope. Accepts either the raw JSON envelope or a
+ * base64url(JSON) encoding of it (header-safe transport), then validates every field is present
+ * and well-typed — a bearer missing a field is rejected before any crypto runs.
+ */
+function parseEnvelope(bearer: string): BearerEnvelope {
+  const trimmed = (bearer ?? "").trim();
+  if (!trimmed) throw new TokenError("Empty session bearer.");
+  let raw: unknown;
+  try {
+    raw = JSON.parse(trimmed);
+  } catch {
+    try {
+      raw = JSON.parse(new TextDecoder().decode(fromBase64url(trimmed)));
+    } catch {
+      throw new TokenError("Session bearer is not a valid infra envelope.");
+    }
   }
-  if (typeof source !== "string" || source === "") {
-    throw new TokenError("Session bearer missing `source`.");
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new TokenError("Session bearer is not an object.");
   }
-  // `sessionExp` is keep's own lifetime field (Unix seconds); `exp` (which jose already enforced)
-  // may mirror it. Accept either, prefer the explicit `sessionExp`.
-  const rawExp = typeof payload.sessionExp === "number"
-    ? payload.sessionExp
-    : payload.exp;
-  if (typeof rawExp !== "number") {
-    throw new TokenError("Session bearer missing `sessionExp`.");
+  const o = raw as Record<string, unknown>;
+  const str = (k: string): string => {
+    const v = o[k];
+    if (typeof v !== "string" || v === "") {
+      throw new TokenError(`Session bearer missing \`${k}\`.`);
+    }
+    return v;
+  };
+  const claims = o.claims;
+  if (!Array.isArray(claims)) {
+    throw new TokenError("Session bearer `claims` must be an array.");
   }
-  if (rawExp <= now) throw new TokenError("Session bearer expired.");
-
-  const claims = normalizeClaims(payload.claims);
-  const mintedAt = typeof payload.mintedAt === "number"
-    ? payload.mintedAt
-    : isoToEpochSeconds(claims.mintedAt ?? claims.createdAt);
-
+  const parsedClaims = claims.map((c, i) => {
+    if (!c || typeof c !== "object") {
+      throw new TokenError(`Session bearer claim[${i}] is malformed.`);
+    }
+    const cc = c as Record<string, unknown>;
+    if (typeof cc.key !== "string") {
+      throw new TokenError(`Session bearer claim[${i}] has no \`key\`.`);
+    }
+    return { key: cc.key, value: typeof cc.value === "string" ? cc.value : String(cc.value ?? "") };
+  });
   return {
-    iss: typeof payload.iss === "string" ? payload.iss : "infra",
-    creator,
-    source,
-    claims,
-    sessionExp: rawExp,
-    ...(mintedAt !== undefined ? { mintedAt } : {}),
+    creator: str("creator"),
+    source: str("source"),
+    sessionExpiry: str("sessionExpiry"),
+    claims: parsedClaims,
+    signature: str("signature"),
+    kid: str("kid"),
   };
 }
 
-/** Coerces the bearer's `claims` to a string→string map (claim values are string-encoded). */
-function normalizeClaims(raw: unknown): Record<string, string> {
+/**
+ * Reconstruct the EXACT bytes infra signed: a stable JSON serialization of
+ * `{ creator, source, sessionExpiry, claims }` with claims sorted by key. This MUST match infra's
+ * signer `canonicalize` byte-for-byte — top-level key order and the claim sort are load-bearing.
+ */
+function canonicalize(env: BearerEnvelope): string {
+  const claims = env.claims
+    .map((c) => ({ key: c.key, value: c.value }))
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  return JSON.stringify({
+    creator: env.creator,
+    source: env.source,
+    sessionExpiry: env.sessionExpiry,
+    claims,
+  });
+}
+
+/** Project the verified claim array into a per-app map: `[{key,value}]` → `{ key: value }`. */
+function claimsToMap(claims: Array<{ key: string; value: string }>): Record<string, string> {
   const out: Record<string, string> = {};
-  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-      if (v === null || v === undefined) continue;
-      out[k] = typeof v === "string" ? v : String(v);
-    }
-  }
+  for (const c of claims) out[c.key] = c.value;
   return out;
 }
 
-/** Parses an ISO-8601 (or epoch-seconds string) into Unix seconds, or undefined. */
-function isoToEpochSeconds(value: string | undefined): number | undefined {
-  if (!value) return undefined;
-  // An all-digit (optionally negative) string IS epoch seconds, not an ISO date — try the numeric
-  // reading first. Date.parse would otherwise read a short value like "3600" as the year 3600.
+/** Parse an ISO-8601 (or epoch-seconds string) into Unix seconds, or undefined. */
+function isoToEpochSeconds(value: string): number | undefined {
   if (/^-?\d+$/.test(value)) {
     const n = Number(value);
     return Number.isFinite(n) ? Math.floor(n) : undefined;
@@ -231,17 +275,21 @@ function isoToEpochSeconds(value: string | undefined): number | undefined {
   return Number.isNaN(ms) ? undefined : Math.floor(ms / 1000);
 }
 
-/** Imports a JWK's `publicKey` — SPKI PEM first, then a JSON-encoded JWK — for its `alg`. */
-async function defaultImportKey(jwk: InfraJwk): Promise<CryptoKey> {
-  const material = jwk.publicKey?.trim() ?? "";
-  if (material.startsWith("-----BEGIN")) {
-    return await importSPKI(material, jwk.alg) as CryptoKey;
-  }
-  try {
-    const parsed = JSON.parse(material);
-    return await importJWK(parsed, jwk.alg) as CryptoKey;
-  } catch {
-    // Not JSON — fall back to treating it as bare SPKI material.
-    return await importSPKI(material, jwk.alg) as CryptoKey;
-  }
+/** Import infra's published public key (raw base64url Ed25519 `x`) as a verify-only CryptoKey. */
+function defaultImportKey(jwk: InfraJwk): Promise<CryptoKey> {
+  return crypto.subtle.importKey(
+    "jwk",
+    { kty: "OKP", crv: "Ed25519", x: jwk.publicKey?.trim() ?? "" },
+    { name: "Ed25519" },
+    false,
+    ["verify"],
+  ) as Promise<CryptoKey>;
+}
+
+function fromBase64url(s: string): Uint8Array<ArrayBuffer> {
+  const pad = s.length % 4 === 0 ? "" : "=".repeat(4 - (s.length % 4));
+  const bin = atob(s.replaceAll("-", "+").replaceAll("_", "/") + pad);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
 }

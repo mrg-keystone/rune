@@ -12,16 +12,19 @@ import { PostmarkAlerter } from "@foundation/domain/data/postmark/mod.ts";
 import { createRequestLoggingMiddleware } from "@foundation/domain/business/request-logger/mod.ts";
 import { GLOBAL_GUARD, type HttpContext } from "#danet/core";
 import { createCredentialGuard } from "@foundation/domain/business/token-auth/mod.ts";
-import { isLocalRequest } from "@foundation/domain/business/localhost/mod.ts";
 import {
   createInfraClient,
   type InfraClient,
 } from "@foundation/domain/business/infra-client/mod.ts";
-import { createJwksVerifier } from "@foundation/domain/business/token/mod.ts";
+import {
+  createJwksVerifier,
+  type SessionVerifier,
+} from "@foundation/domain/business/token/mod.ts";
 import {
   extractBearer,
-  isOpaqueToken,
-  resolveNetworkCredential,
+  grantsForApp,
+  isTrustedOrigin,
+  validateCredential,
 } from "@foundation/domain/business/token-auth/mod.ts";
 import type { Context } from "#hono";
 import {
@@ -93,6 +96,28 @@ function warnOnce(message: string) {
 function isTruthy(value: string | undefined): boolean {
   if (!value) return false;
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+}
+
+/**
+ * Gate for the framework's own `/docs/_*` control-plane routes (traces, run, heal, fixtures,
+ * scenarios, heal-rules). There is NO localhost bypass: a caller is allowed only when it is the
+ * **in-process client** (matching internal key) or presents an **infra bearer whose app-grants
+ * include `dev` or `*`**. Everything else is denied.
+ */
+async function controlPlaneAllowed(
+  c: Context,
+  internalKey: string,
+  verifier: SessionVerifier | undefined,
+  appName: string,
+): Promise<boolean> {
+  if (isTrustedOrigin(c, internalKey)) return true;
+  const cred = extractBearer(c.req.header("authorization")) ??
+    c.req.query("token");
+  if (!cred || !verifier) return false;
+  const r = await validateCredential(cred, { verifier });
+  if (!r) return false;
+  const g = grantsForApp(r.claims, appName);
+  return g.includes("dev") || g.includes("*");
 }
 
 // Dev-mode boot identity (`rune dev`): minted once per process so the emulator pages' reload
@@ -338,11 +363,6 @@ export class BootstrapServer {
     // shared only between the in-process client and the auth middleware; never leaves the process.
     const internalKey = crypto.randomUUID();
 
-    // Localhost callers are trusted (no token) by default. Set TRUST_LOCALHOST=false to require
-    // a token even from localhost — e.g. behind a same-host reverse proxy, or to test the gate.
-    const trustLocalhost =
-      (Deno.env.get("TRUST_LOCALHOST") ?? "true").toLowerCase() !== "false";
-
     const server = Server.create();
     server.registerModule(rootModule);
 
@@ -351,60 +371,10 @@ export class BootstrapServer {
     adapter.app.use(createRequestLoggingMiddleware(log));
     // Credential auth is enforced as a Danet GLOBAL guard (registered after init below) rather
     // than a Hono middleware, so it can honor the per-route `@Public()` decorator. Controllers
-    // are deny-by-default; the framework's own direct routes (`/_token`, `/docs`, docs `/json`)
-    // aren't controllers, so they self-gate (docs json token check).
+    // are deny-by-default; the framework's own direct routes (`/docs`, docs `/json`, `/docs/_*`)
+    // aren't controllers, so they self-gate. Clients exchange opaque tokens for a session bearer
+    // at infra directly and present the bearer to keep — keep never mints or exchanges.
     type RouteHandler = (...args: unknown[]) => unknown;
-
-    // OAuth-style exchange: a client POSTs its opaque manual token (`mtk_…`) and gets back the
-    // signed ~1h session bearer to cache and re-send as `Authorization: Bearer`, re-exchanging when
-    // it lapses. Cleaner than smuggling the bearer back in a response header on every request.
-    adapter.registerRoute(
-      "post",
-      "/_token",
-      (async (c: Context) => {
-        if (!infraClient) {
-          return c.json({
-            error: "Token exchange unavailable — INFRA_URL is not set.",
-          }, 503);
-        }
-        let body: Record<string, unknown> = {};
-        try {
-          body = (await c.req.json()) as Record<string, unknown>;
-        } catch {
-          body = {};
-        }
-        // Accept the opaque token in the body, the Authorization header, or `?token=`.
-        const token = (typeof body.token === "string" && body.token) ||
-          extractBearer(c.req.header("authorization")) ||
-          c.req.query("token") ||
-          "";
-        if (!token) {
-          return c.json({ error: "Missing `token`." }, 400);
-        }
-        if (!isOpaqueToken(token)) {
-          return c.json({
-            error: "Expected an opaque manual token (mtk_…) to exchange.",
-          }, 400);
-        }
-        const outcome = await resolveNetworkCredential(token, {
-          verifier,
-          infraClient,
-          revokeAll: revokeAllState.value,
-        });
-        if ("error" in outcome) {
-          return c.json({
-            error: "unauthorized",
-            message: "Token exchange failed (revoked, unknown, or expired).",
-          }, 401);
-        }
-        log.setSource(outcome.resolved.source);
-        // The bearer itself carries `sessionExp`; the client decodes it to know when to re-exchange.
-        return c.json({
-          bearer: outcome.freshBearer,
-          source: outcome.resolved.source,
-        });
-      }) as RouteHandler,
-    );
 
     // Dev mode (`rune dev` sets KEEP_DEV to a status-file path): serve `/docs/_dev` so the
     // emulator pages can poll for restarts (bootId change) and spec-check errors, and inject
@@ -529,17 +499,17 @@ export class BootstrapServer {
           `/docs${path}/swagger`,
           () => html(swaggerShellHtml(title)),
         );
-        // Gated spec: trusted origins (localhost / in-process) need no token; network callers
-        // must present a valid signed/Firebase token (Authorization header or ?token).
+        // Gated spec: the in-process client needs no token; every other caller must present an
+        // infra bearer whose app-grants include `dev` or `*` (Authorization header or ?token).
         adapter.registerRoute(
           "get",
           `/docs${path}/json`,
           createDocsJsonHandler({
             specJson: JSON.stringify(doc),
             verifier,
-            infraClient,
+            appName,
+            internalKey,
             logger: log,
-            trustLocalhost,
           }) as RouteHandler,
         );
       }
@@ -575,7 +545,7 @@ export class BootstrapServer {
         "get",
         "/docs/_traces",
         (async (c: Context) => {
-          if (!isLocalRequest(c)) {
+          if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
             return c.json(
               {
                 error:
@@ -608,7 +578,7 @@ export class BootstrapServer {
         "post",
         "/docs/_traces",
         (async (c: Context) => {
-          if (!isLocalRequest(c)) {
+          if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
             return c.json(
               {
                 error:
@@ -636,7 +606,7 @@ export class BootstrapServer {
         "post",
         "/docs/_run",
         (async (c: Context) => {
-          if (!isLocalRequest(c)) {
+          if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
             return c.json(
               {
                 error: "Forbidden: /docs/_run is available on localhost only.",
@@ -796,7 +766,7 @@ export class BootstrapServer {
         "post",
         "/docs/_heal",
         (async (c: Context) => {
-          if (!isLocalRequest(c)) {
+          if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
             return new Response(
               "Forbidden: /docs/_heal is available on localhost only.",
               { status: 403 },
@@ -845,7 +815,7 @@ export class BootstrapServer {
         "get",
         "/docs/_fixtures",
         (async (c: Context) => {
-          if (!isLocalRequest(c)) {
+          if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
             return c.json(
               {
                 error:
@@ -861,7 +831,7 @@ export class BootstrapServer {
         "post",
         "/docs/_fixtures",
         (async (c: Context) => {
-          if (!isLocalRequest(c)) {
+          if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
             return c.json(
               {
                 error:
@@ -898,7 +868,7 @@ export class BootstrapServer {
         "get",
         "/docs/_heal-rules",
         (async (c: Context) => {
-          if (!isLocalRequest(c)) {
+          if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
             return c.json(
               {
                 error:
@@ -917,7 +887,7 @@ export class BootstrapServer {
         "get",
         "/docs/_scenarios",
         (async (c: Context) => {
-          if (!isLocalRequest(c)) {
+          if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
             return c.json(
               {
                 error:
@@ -933,7 +903,7 @@ export class BootstrapServer {
         "post",
         "/docs/_scenarios",
         (async (c: Context) => {
-          if (!isLocalRequest(c)) {
+          if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
             return c.json(
               {
                 error:
@@ -1018,11 +988,9 @@ export class BootstrapServer {
       appName,
       verifier,
       internalKey,
-      infraClient,
       revokeAll: () => revokeAllState.value,
       honorSkeleton,
       logger: log,
-      trustLocalhost,
     });
     // deno-lint-ignore no-explicit-any
     await (adapter.app as any).injector.registerInjectables([{

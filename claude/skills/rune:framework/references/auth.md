@@ -1,31 +1,28 @@
-# Auth: the trust model, tokens, roles, and docs access
+# Auth: the trust model, the infra bearer, grants, and docs access
 
 Read this before changing anything auth-related in a keep app. The model is
-deny-by-default with two trusted origins; everything else is credential-based.
+**deny-by-default, infra-only trust**: keep itself mints nothing and calls no
+per-request authority — it recognizes exactly two things, and denies everything
+else.
 
-## Who needs a credential
+## Who is trusted
 
 | Caller | Recognized by | Credential |
 | ------ | ------------- | ---------- |
-| In-process (`backend.fetch`) | a process-private key stamped on the request (`x-danet-internal`) | **No** |
-| `localhost` | the connection's real TCP peer address (`remoteAddr`) — never `X-Forwarded-For` | **No** (unless `TRUST_LOCALHOST=false`) |
-| Network | neither of the above | **Yes** — 401 without one |
+| In-process (`backend.fetch` / SSR `inject(Backend)`) | a process-private key stamped on the request (`x-danet-internal`) | **No** — fully trusted |
+| A network caller with an **infra-signed session bearer** | the bearer verifies **offline** against infra's published JWKS | **Yes** — the bearer |
+| Anything else | neither of the above | **Denied** (401) |
 
-The in-process key is minted at boot (`crypto.randomUUID()`), never leaves
-the process, is redacted from logs, compared in constant time, regenerated
-every boot. A network client cannot forge it.
-
-**Localhost caveat:** a reverse proxy on the same host connects over
-loopback, so its remote clients would ride in on a genuinely-local
-connection. Don't front the app with a same-host loopback proxy while relying
-on localhost trust — expose `api.handler` directly, or set
-`TRUST_LOCALHOST=false` (in-process trust stays, so SSR keeps working).
+The in-process key is minted at boot (`crypto.randomUUID()`), never leaves the
+process, is redacted from logs, compared in constant time, regenerated every
+boot. A network client cannot forge it. **A request from `127.0.0.1` with no
+bearer is denied like any other** — keep grants no trust to localhost.
 
 ## The footgun and the safe mount
 
 `backend.fetch(...)` is the trusted channel — anything dispatched through it
-skips auth. Correct for *originating* your own calls (SSR, tests); a footgun
-if you use it to **proxy inbound traffic** (external requests would be served
+skips auth. Correct for *originating* your own calls (SSR, tests); a footgun if
+you use it to **proxy inbound traffic** (external requests would be served
 auth-exempt). **Never route inbound requests through `backend.fetch`.**
 
 The safe path is safe by construction:
@@ -33,132 +30,152 @@ The safe path is safe by construction:
 - `api.handler` **strips the in-process trust header** from every inbound
   request — no network request can impersonate an in-process call, however
   mounted or proxied.
-- Swagger docs **don't honor the in-process bypass at all**: the spec
-  (`/docs/<module>/json`) is served only to a genuine loopback caller or a
-  valid token.
+- The OpenAPI spec (`/docs/<module>/json`) and the `/docs/_*` control plane are
+  **gated to in-process OR an infra bearer carrying the `dev` grant** (see
+  "Control plane & docs access") — a network caller without that grant can't
+  read the API surface even if you mis-mount.
 
-## Credentials — two kinds, either authorizes
+## How a caller gets a credential — all at INFRA, not keep
 
-Send via `Authorization: Bearer <credential>` (preferred) or `?token=`
-(for plain links / first navigations / WebSocket upgrades; redacted from
-request logs — prefer the header where possible). A `[ENT:ws]` socket can't set
-an `Authorization` header on the handshake, so its token rides `?token=` (bind it
+keep never mints or exchanges anything. A client obtains an infra-signed bearer
+**at infra**, then presents it to keep:
+
+- A **Firebase user** signs in at infra — `POST /session/login` (Google
+  sign-in) — and infra returns an infra-signed session bearer carrying the
+  user's per-app grants.
+- An **opaque infra token** is exchanged at infra — `POST /authz/exchange`
+  (public) — for an infra-signed session bearer with grants.
+
+Either way the client presents that bearer to keep. keep only **verifies** it —
+it never mints, exchanges, or calls infra per-request.
+
+## The bearer and offline verification
+
+The bearer is **not a JWT**. It is infra's Ed25519-signed envelope:
+
+```ts
+{ creator, source, sessionExpiry, claims: [{ key, value }], signature, kid }
+```
+
+where `signature` is a **detached Ed25519 signature** over a canonical
+serialization of `{ creator, source, sessionExpiry, claims }` (claims sorted by
+key). keep accepts the bearer as raw JSON **or** base64url(JSON) on the wire.
+
+- `creator` — the identity the bearer authenticates as (a Firebase email, or a
+  machine token's creator).
+- `source` — a log-attribution label (tags every log line of the request).
+- `claims` — the per-app grant map: each `key` is an app name, its `value` is
+  that app's comma-separated grants.
+- `sessionExpiry` — ISO-8601; the bearer is short-lived (~1h) and rejected once
+  passed.
+- `kid` — selects the infra signing key (lets infra rotate keys with zero
+  downtime).
+
+keep verifies **offline** against infra's JWKS — no shared secret, nothing to
+leak:
+
+- `GET <INFRA_URL>/authz/jwks` → `{ JwkKeyDtos: [{ kid, alg: "EdDSA", publicKey }] }`,
+  fetched and cached (kid-selected; an unknown `kid` forces one refresh).
+- `GET <INFRA_URL>/authz/status` → `{ revokeAll }`, **polled ~every 60s** as the
+  global break-glass flag (see "Revoke-all").
+
+**Config:** keep needs `INFRA_URL` (e.g. `https://infra.mrg-keystone.deno.net`)
+to reach JWKS + status. With no `INFRA_URL`, session-bearer verification is off
+and only in-process callers authorize.
+
+## Presenting the credential
+
+Send via `Authorization: Bearer <bearer>` (preferred) or `?token=<bearer>` (for
+plain links / first navigations / WebSocket upgrades; redacted from request
+logs — prefer the header where possible). A `[ENT:ws]` socket can't set an
+`Authorization` header on the handshake, so its bearer rides `?token=` (bind it
 with `[TYP:from=query]`) and is read **once at connect** — the credential guard
 gates the handshake, and per-message frames inherit that decision.
 
-1. **Signed access token** (HS256, keyed by `MANUAL_KEY`) — for
-   service-to-service callers.
-2. **Firebase Auth ID token** — for browser/frontend callers, when
-   `FIREBASE_PROJECT_ID` is set (verified against Google's public certs:
-   RS256 + `aud`/`iss`/`exp`; only the project id is needed — no service
-   account).
+## Authorization decorators
 
-The resolved identity tags every log line of the request (`source` for a
-signed token; the user's email/uid for Firebase).
+Authorization is a **global guard**, enforced **after** authentication and
+**fail-closed**. `getIdentity(ctx)` → `{ creator, source, claims, grants }`
+reads the resolved caller in a handler (`grants` = this app's grants).
 
-## Token shape
+- **`@Public()`** — open to anyone, no credential required. Class-level exempts
+  every route on the controller; method-level exempts one. A valid bearer on a
+  `@Public` route is still verified and attributed for logging; an invalid one
+  is ignored, not rejected. `grep @Public` enumerates every unauthenticated
+  route.
+- **`@LoggedIn("monsterrg.com", …)`** — the caller's identity (`creator`, a
+  Firebase email) must be under one of the listed email domains. A **machine
+  token** (non-email creator) never satisfies `@LoggedIn`.
+- **`@Grant("developer", …)`** — the caller must hold **at least one** of the
+  listed grants (**any-of**), scoped to **this app** (a bare name `developer` is
+  checked against the app's grants). The **dynamic** form `@Grant("::key")`
+  looks up `key` in the request (path param → query → header → JSON body) and
+  requires the **found value** to be a grant the caller holds (an absent key →
+  deny).
 
-```ts
-interface TokenPayload {
-  source: string;   // who the token was minted for — log attribution
-  expiry?: number;  // Unix epoch SECONDS; OMIT for never-expires
-  appName: string;  // the app this token grants access to
-  roles?: string[]; // namespaced `appName:role` entries, checked by @Roles
-}
-```
+Stacked decorators combine with **AND**: `@LoggedIn(...)` + `@Grant(...)`
+requires both. A controller route with **neither** (and not `@Public`) is
+**closed to everyone** but the `*` universal ("skeleton") grant.
 
-A token with no `expiry` never expires and is only invalidated by rotating
-`MANUAL_KEY` (which invalidates ALL signed tokens) — mint sparingly.
+> `@Grants` (plural) is a **deprecated alias** of `@Grant`, kept only so existing
+> call sites keep working — teach `@Grant`/`@LoggedIn`/`@Public`.
 
-## Minting
+## Grants
 
-- **Localhost UI**: `GET /_mint` — works on localhost only (403 from the
-  network, unconditionally). Fill source/appName/expiry; the result page also
-  gives a ready-to-share `…/docs?token=…` link. The key is read from
-  `MANUAL_KEY` server-side; unset → minting fails closed.
-- **Programmatic**:
+infra assigns **app-scoped grants**, namespaced `owner/repo:grant` (e.g.
+`mrg-keystone/rune:admin`). In the verified bearer they arrive per app under the
+`claims` map; keep checks **bare names** against **this app's** grants
+(`claims[appName]`). `*` is the **skeleton key** — a caller holding `*` holds all
+grants and opens every route (honored by default; infra's own control plane runs
+with the skeleton disabled).
 
-```ts
-import { signToken, TokenError, verifyToken } from "@mrg-keystone/rune";
-const token = await signToken(
-  { source: "ci", appName: "my-api", expiry: Math.floor(Date.now() / 1000) + 3600 },
-  Deno.env.get("MANUAL_KEY")!,
-);
-const payload = await verifyToken(token, key); // throws TokenError otherwise
-```
+## Revoke-all — break glass
 
-- **Firebase, standalone**: `createFirebaseVerifier({ projectId })` →
-  `verify(idToken)` → `{ uid, email? }` or throws `FirebaseAuthError`.
-  (`bootstrapServer` wires this automatically when `FIREBASE_PROJECT_ID` is
-  set.)
+keep polls `GET <INFRA_URL>/authz/status` for `revokeAll`. When it flips **on**,
+keep stops trusting **every cached session bearer** and rejects it (401) until
+the client re-authenticates at infra. A cached bearer can't be live-checked
+offline, so revoke-all is how an operator instantly invalidates all outstanding
+bearers.
 
-## `@Public()` — auth-optional
+## Control plane & docs access
 
-Auth is a **global guard** (deny-by-default on every controller route).
-`@Public()` on a controller exempts all its routes; on a method, just that
-one.
+The framework's own **`/docs/_*` control surfaces** — `_run`, `_heal`,
+`_traces`, `_fixtures`, `_scenarios` (and the docs `GET /docs/<module>/json`) —
+are gated to **in-process OR an infra bearer whose app-grants include `dev` (or
+`*`)**. There is **no localhost trust** on any of them.
 
-- Public means auth-**optional**, not ignored: a valid credential is still
-  verified and attributed for logging; an invalid one is ignored, not
-  rejected.
-- Only covers controllers. The framework's direct routes (`/docs`, `/_mint`)
-  self-gate.
-- `grep @Public` enumerates every unauthenticated route.
+Doc *pages* load publicly; only the OpenAPI *spec* (`/docs/<module>/json`) is
+gated. The pages use a query-param → `localStorage` flow so a browser (which
+can't set an `Authorization` header on a navigation) can still reach the gated
+spec:
 
-## `@Roles()` — role-gated
+1. Open any docs page with `?token=<infra bearer>` — an inline script stores it
+   and strips it from the URL.
+2. Swagger UI / the cake fetch the spec with `Authorization: Bearer <stored
+   bearer>` — persists across same-origin navigation.
+3. A 401 wipes the stored bearer and asks for a fresh `?token=…` link.
 
-`@Roles("admin")` limits a controller/handler to callers holding at least one
-listed role. **Implies authentication** (overrides `@Public`): no credential
-→ 401; valid credential without the role → 403. Method-level overrides
-class-level. Trusted origins bypass it like all auth (`TRUST_LOCALHOST=false`
-to enforce locally).
+So the docs bearer is an ordinary infra session bearer that happens to carry the
+`dev` grant. It works identically when the keep is mounted under a sprig UI
+(`/api/docs/...`).
 
-**Roles are namespaced `appName:role`** (`billing:admin`). The guard scopes
-to its own app: `@Roles("admin")` on the `billing` app matches `billing:admin`
-and ignores `orders:*`. Roles ride in the credential:
+## Browser access to your own API (frontend bearer)
 
-- Firebase: custom claims via the Admin SDK —
-  `admin.auth().setCustomUserClaims(uid, { roles: ["billing:admin"] })`
-  (applies when the client's ID token refreshes).
-- Signed tokens: `signToken({ …, roles: ["billing:admin"] }, key)`.
-
-Read the caller in a handler: `getIdentity(ctx)` → `{ source, roles }`
-(roles scoped/bare for this app).
-
-## Docs access (browser flow)
-
-Doc *pages* load publicly; the OpenAPI *spec* (`/docs/<module>/json`) is
-gated. The pages use a query-param → `localStorage` flow:
-
-1. Open any docs page with `?token=<signed token>` — an inline script stores
-   it and strips it from the URL.
-2. Swagger UI / the cake fetch the spec with
-   `Authorization: Bearer <stored token>` — persists across same-origin
-   navigation.
-3. A 401 wipes the stored token and asks for a fresh `?token=…` link.
-
-Share a `…/docs?token=…` link once (the `/_mint` result page generates it).
-Works identically when the keep is mounted under a sprig UI (`/api/docs/...`).
-
-## Browser access to your own API (frontend token)
-
-Same flow for `/api/*` calls the browser makes. Drop the fetch-wrapper
-snippet from the README ("Browser access to your own API") into a client
-entry: it seeds from `?token=`, auto-attaches `Authorization` on same-origin
-`/api/*` requests, and clears the stored token on a 401. Use a **short-lived**
-token in links (URLs leak via history/Referer); never seed a never-expiring
-token this way. SSR should still read data through the in-process backend
-(`inject(Backend)` in a sprig page's `resolve.ts` or a service — no token at
-all); this browser flow is only for the calls an island makes over the network.
+Same flow for the `/api/*` calls a browser island makes: seed the infra bearer
+from `?token=`, auto-attach `Authorization` on same-origin `/api/*` requests,
+clear it on a 401. Use a **short-lived** bearer in links (URLs leak via
+history/Referer) — infra bearers are already ~1h. SSR should still read data
+through the in-process backend (`inject(Backend)` in a sprig page's `resolve.ts`
+or a service — no bearer at all); this browser flow is only for the calls an
+island makes over the network.
 
 ## Environment summary
 
 | Var | Missing/blank → |
 | --- | --------------- |
-| `MANUAL_KEY` | warns once; minting fails closed, signed tokens can't verify |
-| `FIREBASE_PROJECT_ID` | warns once; Firebase path off |
-| `TRUST_LOCALHOST` | defaults `true`; `false` requires tokens even from localhost |
+| `INFRA_URL` | warns once; session-bearer verification + revoke-all polling are off, so only in-process callers authorize |
 
-If **neither** `MANUAL_KEY` nor `FIREBASE_PROJECT_ID` is set, no network
-request can authorize (localhost/in-process still work). In tests, set
-`MANUAL_KEY=k` (any value) to silence the warning.
+keep needs **no signing secret, no Firebase project id, and no localhost-trust
+flag** — it neither signs tokens, verifies Firebase ID tokens directly, nor
+trusts localhost. keep is a pure offline verifier of infra-signed bearers;
+`INFRA_URL` is the only auth config it needs.
