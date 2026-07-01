@@ -1,6 +1,0 @@
-{
-  "name": "@rune-feedback/native-transport-repro",
-  "tasks": {
-    "repro": "echo 'see README.md — run the three rune check commands'"
-  }
-}

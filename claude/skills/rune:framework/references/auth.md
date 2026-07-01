@@ -49,6 +49,27 @@ keep never mints or exchanges anything. A client obtains an infra-signed bearer
 Either way the client presents that bearer to keep. keep only **verifies** it —
 it never mints, exchanges, or calls infra per-request.
 
+> **The #1 mistake — presenting the raw token to keep.** An opaque infra token
+> (a `mtk_…` or a bare UUID like `0ae394ec-…`) is **not** a bearer. Send it to
+> keep and you get a flat **401** — keep verifies the signed envelope, nothing
+> else. You must **exchange it first**: `POST <INFRA_URL>/authz/exchange` with
+> `{ "token": "<opaque>" }` → present the returned bearer. (An empty body there
+> returns 422 "token must be a string" — that's the route confirming it's live.)
+
+### Migrating from keep 2.x
+
+If you built against keep `2.x`, the credential model changed in `3.0.0`:
+
+| 2.x (gone) | 3.0.0 |
+| ---------- | ----- |
+| keep accepted an opaque `mtk_…` token directly | keep accepts **only** the signed bearer — exchange the opaque token at infra first |
+| `POST /_token` on keep exchanged tokens | **removed** — exchange at infra's `/authz/exchange` instead |
+| localhost / `TRUST_LOCALHOST` was trusted | **removed** — `127.0.0.1` is denied like any network caller; use the in-process client or a bearer |
+| keep verified Firebase ID tokens (`FIREBASE_PROJECT_ID`) | **removed** — Firebase users log in at infra (`session.login`) and present the resulting bearer |
+
+Pin `jsr:@mrg-keystone/rune@^3`, set `INFRA_URL`, and switch to
+exchange-then-present. That's the whole migration.
+
 ## The bearer and offline verification
 
 The bearer is **not a JWT**. It is infra's Ed25519-signed envelope:

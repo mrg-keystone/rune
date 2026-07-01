@@ -1,0 +1,13 @@
+{
+  "creator": "mrg-keystone~alfred",
+  "source": "dev_token",
+  "sessionExpiry": "2026-07-01T20:15:35.711Z",
+  "ClaimDtos": [
+    {
+      "key": "alfred",
+      "value": "*"
+    }
+  ],
+  "signature": "<redacted-ed25519-detached-signature-base64url>",
+  "kid": "HSmt09oM-L-D9NX9"
+}
