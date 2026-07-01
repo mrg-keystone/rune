@@ -11,9 +11,9 @@ import { INTERNAL_REQUEST_HEADER } from "@foundation/domain/business/backend-cli
 import { Controller, Get, Module } from "#danet/core";
 import { endpointModule } from "@foundation/domain/business/endpoint-decorator/mod.ts";
 
-// A test signer stands in for infra; a stub HTTP server publishes its JWKS, exchanges opaque
-// tokens for freshly-signed session bearers, and answers the revocation poll. Pointing keep at it
-// via INFRA_URL exercises the real verify / exchange / poll paths without a live infra.
+// A test signer stands in for infra; a stub HTTP server publishes its JWKS and answers the
+// revocation poll. Pointing keep at it via INFRA_URL exercises the real verify / poll paths
+// without a live infra. keep no longer exchanges tokens — clients present an infra bearer.
 const signer = await createTestSigner();
 // The bootstrap app name is "test-app", so grants for it live under claims["test-app"].
 const sessionBearer = (source = "svc", appGrants?: string) =>
@@ -27,16 +27,11 @@ function startStubInfra(
 ): { url: string; stop: () => Promise<void> } {
   const server = Deno.serve(
     { port: 0, onListen: () => {} },
-    async (req) => {
+    (req) => {
       const { pathname } = new URL(req.url);
-      if (pathname === "/keys/jwks") return Response.json(s.jwks);
-      if (pathname === "/revocation/status") {
+      if (pathname === "/authz/jwks") return Response.json(s.jwks);
+      if (pathname === "/authz/status") {
         return Response.json({ revokeAll: false });
-      }
-      if (pathname === "/manualToken/exchange") {
-        return Response.json({
-          bearer: await s.sign({ source: "exchanged", claims: {} }),
-        });
       }
       return new Response("not found", { status: 404 });
     },
@@ -45,6 +40,7 @@ function startStubInfra(
   return { url: `http://127.0.0.1:${port}`, stop: () => server.shutdown() };
 }
 
+@Public()
 @Controller("health")
 class HealthController {
   @Get()
@@ -137,9 +133,6 @@ Deno.test("global guard: deny-by-default for controllers, @Public exempts", asyn
     const remote = {
       remoteAddr: { transport: "tcp", hostname: "203.0.113.5", port: 1 },
     };
-    const loopback = {
-      remoteAddr: { transport: "tcp", hostname: "127.0.0.1", port: 1 },
-    };
     const net = (path: string, init?: RequestInit) =>
       // deno-lint-ignore no-explicit-any
       server.handler(new Request(`http://app${path}`, init), remote as any);
@@ -176,13 +169,10 @@ Deno.test("global guard: deny-by-default for controllers, @Public exempts", asyn
       403,
     );
 
-    // Localhost is trusted → no credential needed (bypasses grants entirely).
-    const local = await server.handler(
-      new Request("http://app/secret"),
-      // deno-lint-ignore no-explicit-any
-      loopback as any,
-    );
-    assertEquals(local.status, 200);
+    // The in-process client (BackendClient) is trusted → no credential needed (bypasses grants).
+    // There is NO localhost bypass: only the internal-key origin authorizes without a bearer.
+    const inproc = await server.backend.fetch("/secret");
+    assertEquals(inproc.status, 200);
     await server.stop();
   } finally {
     Deno.env.delete("INFRA_URL");
@@ -212,58 +202,6 @@ Deno.test("a forged in-process header on a network request cannot bypass auth (s
   assertEquals(res.status, 401);
 });
 
-Deno.test("/_token: exchanges an opaque manual token for a session bearer", async () => {
-  const infra = startStubInfra(signer);
-  Deno.env.set("INFRA_URL", infra.url);
-  try {
-    const port = portCounter++;
-    const server = await bootstrapServer("test-app", AppModule, {
-      port,
-      swagger: false,
-    });
-    const exchange = (body: unknown) =>
-      server.handler(
-        new Request("http://app/_token", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-        }),
-      );
-
-    // A valid opaque token returns a signed bearer the client can cache.
-    const ok = await exchange({ token: "mtk_abc" });
-    assertEquals(ok.status, 200);
-    const { bearer } = await ok.json();
-    assertEquals(typeof bearer, "string");
-
-    // A non-opaque token is rejected with 400 (only opaque tokens are exchanged).
-    const bad = await exchange({ token: "not-opaque" });
-    assertEquals(bad.status, 400);
-    await server.stop();
-  } finally {
-    Deno.env.delete("INFRA_URL");
-    await infra.stop();
-  }
-});
-
-Deno.test("/_token: 503 when no infra is configured", async () => {
-  const port = portCounter++;
-  const server = await bootstrapServer("test-app", AppModule, {
-    port,
-    swagger: false,
-  });
-  const res = await server.handler(
-    new Request("http://app/_token", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ token: "mtk_abc" }),
-    }),
-  );
-  assertEquals(res.status, 503);
-  await res.body?.cancel();
-  await server.stop();
-});
-
 Deno.test("docs: shell is public, spec /json is token-gated (seeded via ?token)", async () => {
   const infra = startStubInfra(signer);
   Deno.env.set("INFRA_URL", infra.url);
@@ -287,8 +225,12 @@ Deno.test("docs: shell is public, spec /json is token-gated (seeded via ?token)"
     // The spec is gated: no token → 401.
     assertEquals((await call("/docs/app/json")).status, 401);
 
-    // With a valid session bearer in the query, the spec is served.
-    const token = await sessionBearer("docs");
+    // A bearer without a dev/* grant is denied (only the control-plane grant opens the spec).
+    const plain = await sessionBearer("docs");
+    assertEquals((await call(`/docs/app/json?token=${plain}`)).status, 401);
+
+    // With a dev-grant session bearer in the query, the spec is served.
+    const token = await sessionBearer("docs", "dev");
     const ok = await call(`/docs/app/json?token=${token}`);
     assertEquals(ok.status, 200);
     assertEquals((await ok.json()).openapi !== undefined || true, true);
@@ -528,15 +470,10 @@ function startSlowRevokeInfra(
     { port: 0, onListen: () => {} },
     async (req) => {
       const { pathname } = new URL(req.url);
-      if (pathname === "/keys/jwks") return Response.json(s.jwks);
-      if (pathname === "/revocation/status") {
+      if (pathname === "/authz/jwks") return Response.json(s.jwks);
+      if (pathname === "/authz/status") {
         await new Promise((r) => setTimeout(r, revocationDelayMs));
         return Response.json({ revokeAll: true });
-      }
-      if (pathname === "/manualToken/exchange") {
-        return Response.json({
-          bearer: await s.sign({ source: "exchanged", claims: {} }),
-        });
       }
       return new Response("not found", { status: 404 });
     },

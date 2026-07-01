@@ -8,10 +8,10 @@ import {
 } from "@foundation/domain/business/endpoint-decorator/mod.ts";
 import { bootstrapServer } from "./mod.ts";
 
-// Same loopback/off-host conn shapes as the other bootstrap-server int tests.
-const loopback = {
-  remoteAddr: { transport: "tcp", hostname: "127.0.0.1", port: 1 },
-};
+// The /docs/_* control plane trusts ONLY the in-process client (internal key) or an infra bearer
+// with a dev/* grant — no localhost bypass. `server.backend.fetch` dispatches in-process (stamps
+// the internal key); `server.handler` is the network dispatcher (strips it), so off-host and
+// no-conn network calls are denied.
 const offhost = {
   remoteAddr: { transport: "tcp", hostname: "203.0.113.5", port: 1 },
 };
@@ -53,18 +53,17 @@ Deno.test("/docs/_scenarios - POST saves a file, GET lists it back; bad payloads
   const server = await bootstrapServer("scen-app", ThingsModule);
   try {
     assertEquals(
-      (await (await server.handler(jsonReq("/docs/_scenarios"), conn(loopback)))
+      (await (await server.backend.fetch(jsonReq("/docs/_scenarios")))
         .json()).scenarios,
       [],
     );
-    const saved = await server.handler(
+    const saved = await server.backend.fetch(
       jsonReq("/docs/_scenarios", {
         name: "Happy Path",
         module: "things",
         flow: "card",
         steps: [{ id: "create", body: '{"name":"from-scenario"}' }],
       }),
-      conn(loopback),
     );
     assertEquals(saved.status, 200);
     // The file lands under fixtures/scenarios/<slug>.json.
@@ -74,16 +73,15 @@ Deno.test("/docs/_scenarios - POST saves a file, GET lists it back; bad payloads
     assertEquals(onDisk.module, "things");
 
     const list =
-      (await (await server.handler(jsonReq("/docs/_scenarios"), conn(loopback)))
+      (await (await server.backend.fetch(jsonReq("/docs/_scenarios")))
         .json()).scenarios;
     assertEquals(list.length, 1);
     assertEquals(list[0].name, "Happy Path");
 
     // A scenario without identity fields is rejected.
     assertEquals(
-      (await server.handler(
+      (await server.backend.fetch(
         jsonReq("/docs/_scenarios", { steps: [] }),
-        conn(loopback),
       ))
         .status,
       400,
@@ -100,7 +98,7 @@ Deno.test("/docs/_run - scenario param replays a saved scenario's literal bodies
   Deno.env.set("KEEP_FIXTURES_DIR", dir);
   const server = await bootstrapServer("scen-app", ThingsModule);
   try {
-    await server.handler(
+    await server.backend.fetch(
       jsonReq("/docs/_scenarios", {
         name: "named run",
         module: "things",
@@ -111,11 +109,9 @@ Deno.test("/docs/_run - scenario param replays a saved scenario's literal bodies
           body: '{"name":"from-scenario","other":"{{create.id}}"}',
         }],
       }),
-      conn(loopback),
     );
-    const res = await server.handler(
+    const res = await server.backend.fetch(
       jsonReq("/docs/_run", { scenario: "Named Run" }),
-      conn(loopback),
     );
     assertEquals(res.status, 200);
     const report = await res.json();
@@ -127,9 +123,8 @@ Deno.test("/docs/_run - scenario param replays a saved scenario's literal bodies
 
     // An unknown scenario is a clear 404.
     assertEquals(
-      (await server.handler(
+      (await server.backend.fetch(
         jsonReq("/docs/_run", { scenario: "nope" }),
-        conn(loopback),
       ))
         .status,
       404,
@@ -169,7 +164,7 @@ Deno.test("/docs/_heal-rules - serves the normalized project rules file", async 
   try {
     // No file yet → the empty rule set.
     assertEquals(
-      await (await server.handler(jsonReq("/docs/_heal-rules"), conn(loopback)))
+      await (await server.backend.fetch(jsonReq("/docs/_heal-rules")))
         .json(),
       { v: 1, slugs: {} },
     );
@@ -190,9 +185,8 @@ Deno.test("/docs/_heal-rules - serves the normalized project rules file", async 
         },
       }),
     );
-    const rules = await (await server.handler(
+    const rules = await (await server.backend.fetch(
       jsonReq("/docs/_heal-rules"),
-      conn(loopback),
     )).json();
     assertEquals(rules.slugs["not-enabled"][0].match, "/enable/i");
     assertEquals(rules.slugs["not-enabled"][0].todo, true);
@@ -206,9 +200,8 @@ Deno.test("/docs/_heal-rules - serves the normalized project rules file", async 
 Deno.test("/docs/_run - stream:true emits ndjson result lines then a done summary", async () => {
   const server = await bootstrapServer("scen-app", ThingsModule);
   try {
-    const res = await server.handler(
+    const res = await server.backend.fetch(
       jsonReq("/docs/_run", { stream: true, orderBy: "module" }),
-      conn(loopback),
     );
     assertEquals(res.status, 200);
     assertEquals(res.headers.get("content-type"), "application/x-ndjson");
@@ -269,9 +262,8 @@ Deno.test("/docs/_run - a slug the heal rules mark retryable is re-attempted, no
   LeaseController.failures = 2;
   const server = await bootstrapServer("lease-app", LeaseModule);
   try {
-    const res = await server.handler(
+    const res = await server.backend.fetch(
       jsonReq("/docs/_run", {}),
-      conn(loopback),
     );
     const report = await res.json();
     assertEquals(report.ok, true);

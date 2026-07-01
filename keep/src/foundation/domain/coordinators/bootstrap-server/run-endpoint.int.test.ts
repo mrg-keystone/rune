@@ -8,11 +8,10 @@ import {
 } from "@foundation/domain/business/endpoint-decorator/mod.ts";
 import { bootstrapServer } from "./mod.ts";
 
-// `server.handler(req, connInfo)` is the standalone dispatcher; the localhost gate reads the
-// socket peer from connInfo (spoof-proof). Mirror int.test's loopback/off-host shapes.
-const loopback = {
-  remoteAddr: { transport: "tcp", hostname: "127.0.0.1", port: 1 },
-};
+// The /docs/_* control plane trusts ONLY the in-process client (internal key) or an infra bearer
+// with a dev/* grant — there is NO localhost bypass. `server.backend.fetch` dispatches in-process
+// (stamps the internal key); `server.handler` is the network dispatcher (strips it), so off-host
+// and no-conn network calls are denied.
 const offhost = {
   remoteAddr: { transport: "tcp", hostname: "203.0.113.5", port: 1 },
 };
@@ -91,13 +90,13 @@ class CycleController {
 const CycleModule = endpointModule("Cycle", [CycleController]);
 
 // ── acceptance ───────────────────────────────────────────────────────────────
-Deno.test("POST /docs/_run - localhost walks the composed process, ok:true", async () => {
+Deno.test("POST /docs/_run - in-process walks the composed process, ok:true", async () => {
   const server = await bootstrapServer("run-app", [
     ProducerModule,
     ConsumerModule,
   ]);
   try {
-    const res = await server.handler(runReq({}), conn(loopback));
+    const res = await server.backend.fetch(runReq({}));
     assertEquals(res.status, 200);
     const report = await res.json();
     assertEquals(report.ok, true);
@@ -123,7 +122,7 @@ Deno.test("POST /docs/_run - non-localhost and missing conn info are denied (403
   ]);
   try {
     assertEquals((await server.handler(runReq({}), conn(offhost))).status, 403);
-    // In-process dispatch carries no conn info ⇒ fail closed.
+    // The network handler strips the internal key ⇒ a no-conn network call fails closed.
     assertEquals((await server.handler(runReq({}))).status, 403);
   } finally {
     await server.stop();
@@ -133,9 +132,8 @@ Deno.test("POST /docs/_run - non-localhost and missing conn info are denied (403
 Deno.test("POST /docs/_run - seeds in the body satisfy an input with no producer", async () => {
   const server = await bootstrapServer("run-app", ConsumerModule);
   try {
-    const res = await server.handler(
+    const res = await server.backend.fetch(
       runReq({ seeds: { token: "seed-9" } }),
-      conn(loopback),
     );
     assertEquals(res.status, 200);
     const report = await res.json();
@@ -149,7 +147,7 @@ Deno.test("POST /docs/_run - seeds in the body satisfy an input with no producer
 Deno.test("POST /docs/_run - a forced cycle returns ok:false with the cycle named", async () => {
   const server = await bootstrapServer("run-app", CycleModule);
   try {
-    const res = await server.handler(runReq({}), conn(loopback));
+    const res = await server.backend.fetch(runReq({}));
     assertEquals(res.status, 200);
     const report = await res.json();
     assertEquals(report.ok, false);
@@ -163,7 +161,7 @@ Deno.test("POST /docs/_run - a forced cycle returns ok:false with the cycle name
 Deno.test("POST /docs/_run - dryRun reports unresolved inputs without executing", async () => {
   const server = await bootstrapServer("run-app", ConsumerModule);
   try {
-    const res = await server.handler(runReq({ dryRun: true }), conn(loopback));
+    const res = await server.backend.fetch(runReq({ dryRun: true }));
     assertEquals(res.status, 200);
     const report = await res.json();
     // $token has no producer and no seed here ⇒ flagged; nothing ran.
@@ -175,7 +173,7 @@ Deno.test("POST /docs/_run - dryRun reports unresolved inputs without executing"
   }
 });
 
-Deno.test("POST /docs/_heal - localhost-only, 503 when no healer is configured", async () => {
+Deno.test("POST /docs/_heal - control-plane gated, 503 when no healer is configured", async () => {
   const savedUrl = Deno.env.get("PRIVATE_CLAUDE_URL");
   Deno.env.delete("PRIVATE_CLAUDE_URL");
   const server = await bootstrapServer("run-app", ConsumerModule);
@@ -186,11 +184,11 @@ Deno.test("POST /docs/_heal - localhost-only, 503 when no healer is configured",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ endpoint: { id: "use" } }),
       });
-    // deny-by-default: non-loopback and missing conn info both 403
+    // deny-by-default: off-host and missing conn info (network handler) both 403
     assertEquals((await server.handler(req(), conn(offhost))).status, 403);
     assertEquals((await server.handler(req())).status, 403);
-    // loopback but unconfigured → explicit 503 naming the env var
-    const res = await server.handler(req(), conn(loopback));
+    // in-process (trusted) but unconfigured → explicit 503 naming the env var
+    const res = await server.backend.fetch(req());
     assertEquals(res.status, 503);
     const body = await res.json();
     assertEquals(body.error.includes("PRIVATE_CLAUDE_URL"), true);

@@ -34,15 +34,10 @@ Deno.test("served OpenAPI honors class-validator @IsOptional in required", async
     endpointModule("Probe", [ProbeController]),
   );
   try {
-    // the /json endpoint is self-gated on the socket peer — forward loopback
-    // conn info like a real localhost caller (in-process fetch fails closed)
-    const loopback = {
-      remoteAddr: { transport: "tcp", hostname: "127.0.0.1", port: 1 },
-    };
-    const res = await api.handler(
+    // the /json endpoint is self-gated: the in-process client (internal key) is trusted, so
+    // dispatch it via backend.fetch (a plain network handler call fails closed now).
+    const res = await api.backend.fetch(
       new Request("http://app/docs/probe/json"),
-      // deno-lint-ignore no-explicit-any
-      loopback as any,
     );
     assertEquals(res.status, 200);
     const doc = await res.json();

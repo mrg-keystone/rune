@@ -8,13 +8,12 @@
 
 import type { Context } from "#hono";
 import type { Logger } from "@foundation/domain/business/logger/mod.ts";
-import type { FirebaseVerifier } from "@foundation/domain/business/firebase-auth/mod.ts";
 import type { SessionVerifier } from "@foundation/domain/business/token/mod.ts";
-import type { InfraClient } from "@foundation/domain/business/infra-client/mod.ts";
 import {
   extractBearer,
-  isLoopbackRequest,
-  resolveNetworkCredential,
+  grantsForApp,
+  isTrustedOrigin,
+  validateCredential,
 } from "@foundation/domain/business/token-auth/mod.ts";
 
 const STORAGE_KEY = "danet_docs_token";
@@ -25,20 +24,19 @@ export interface DocsJsonHandlerOptions {
   specJson: string;
   /** Offline verifier for infra session bearers (JWKS). */
   verifier?: SessionVerifier;
-  firebaseVerifier?: FirebaseVerifier;
-  /** infra client so a pasted opaque token (`mtk_…`) can be exchanged to view the spec. */
-  infraClient?: InfraClient;
+  /** This app's name — grant claims are namespaced per app. */
+  appName: string;
+  /** Process-private key identifying in-process (BackendClient) callers. */
+  internalKey: string;
   logger: Logger;
-  /** Whether genuine localhost callers are served without a token. Defaults to true. */
-  trustLocalhost?: boolean;
 }
 
 /**
  * Builds the handler for a gated `/docs/<module>/json` endpoint. The OpenAPI spec is the API
- * surface, so this is deliberately strict: only a **genuine loopback** caller (the dev machine)
- * or a valid session/Firebase/opaque credential (`Authorization: Bearer` or `?token`) is served.
- * It does NOT honor the in-process trust marker — so routing docs through `backend.fetch` cannot
- * expose the spec — and the network `handler` strips that marker anyway.
+ * surface, so this is deliberately strict, gated exactly like the control plane: only the
+ * **in-process client** (matching internal key) or an **infra bearer whose app-grants include
+ * `dev` or `*`** (`Authorization: Bearer` or `?token`) is served. There is no localhost bypass and
+ * no keep-side exchange — a Firebase/opaque credential is resolved to a bearer at infra first.
  */
 export function createDocsJsonHandler(
   opts: DocsJsonHandlerOptions,
@@ -48,28 +46,27 @@ export function createDocsJsonHandler(
       headers: { "content-type": "application/json; charset=utf-8" },
     });
 
-  const trustLocalhost = opts.trustLocalhost ?? true;
   return async (c) => {
-    if (trustLocalhost && isLoopbackRequest(c)) return json();
+    if (isTrustedOrigin(c, opts.internalKey)) return json();
 
     const credential = extractBearer(c.req.header("authorization")) ??
       c.req.query("token");
-    const outcome = credential
-      ? await resolveNetworkCredential(credential, {
+    if (credential && opts.verifier) {
+      const resolved = await validateCredential(credential, {
         verifier: opts.verifier,
-        firebaseVerifier: opts.firebaseVerifier,
-        infraClient: opts.infraClient,
-        revokeAll: false,
-      })
-      : { error: "invalid" as const };
-    if ("error" in outcome) {
-      return c.json({
-        error: "unauthorized",
-        message: "Invalid or missing docs token.",
-      }, 401);
+      });
+      if (resolved) {
+        const grants = grantsForApp(resolved.claims, opts.appName);
+        if (grants.includes("dev") || grants.includes("*")) {
+          opts.logger.setSource(resolved.source);
+          return json();
+        }
+      }
     }
-    opts.logger.setSource(outcome.resolved.source);
-    return json();
+    return c.json({
+      error: "unauthorized",
+      message: "Invalid or missing docs token.",
+    }, 401);
   };
 }
 

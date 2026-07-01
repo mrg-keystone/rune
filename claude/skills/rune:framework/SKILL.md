@@ -5,10 +5,12 @@ description: >-
   rune's world. Use when you tune or debug the *running* app rather than the
   `.rune` spec: `bootstrapServer` (the `{ listen, stop, backend, handler }`
   return), the in-process `backend.fetch` client, forwarding conn info to
-  `Deno.serve`, and why a request 401s/403s. Covers the trust model (in-process
-  + localhost trusted, network deny-by-default), `@Public`/`@Roles`, signed
-  tokens + minting (`signToken`/`verifyToken`, `MANUAL_KEY`, `GET /_mint`),
-  Firebase ID tokens (`FIREBASE_PROJECT_ID`), the `#assert`→`RuneAssertError`→HTTP
+  `Deno.serve`, and why a request 401s/403s. Covers the infra-only trust model
+  (in-process trusted, an infra-signed session bearer verified offline against
+  infra's JWKS, everything else deny-by-default — no localhost trust),
+  `@Public`/`@LoggedIn`/`@Grant` (deny-by-default, app-scoped grants, the `*`
+  skeleton), the `INFRA_URL` config keep verifies against
+  (`<INFRA_URL>/authz/jwks` + `/authz/status`), the `#assert`→`RuneAssertError`→HTTP
   422 mapping, the `@Endpoint`/`@EndpointController` option semantics
   (`order`/`dependsOn`/`bind`), the `exerciseEndpoints` headless runner +
   `POST /docs/_run`, the `/docs/_map` system map, and deployment (standalone,
@@ -16,7 +18,7 @@ description: >-
   Deploy, logging). Trigger phrases:
   "why is auth failing / 401 / 403", "forward remoteAddr / conn info",
   "host the backend under a sprig UI", "deploy a sprig+keep app",
-  "deploy to Deno Deploy", "mint a token",
+  "deploy to Deno Deploy", "verify an infra bearer / set INFRA_URL",
   "what does bootstrapServer return", "run exerciseEndpoints in CI". NOT the
   `.rune` language or modeling → use `rune:spec`; NOT generating/filling/testing
   a module → use `rune:build`; NOT the interactive cake walk / `/docs/<m>` UI /
@@ -39,9 +41,10 @@ deploying / hosting under a sprig UI.
 
 ## Specialist roster
 
-- **`rune-framework-auth`** — auth & trust: why a request 401s/403s, the trust
-  model, tokens + minting, `@Public`/`@Roles`, Firebase, the docs/browser token
-  flow. Owns `references/auth.md`.
+- **`rune-framework-auth`** — auth & trust: why a request 401s/403s, the
+  infra-only trust model, verifying the infra session bearer offline against
+  `INFRA_URL`'s JWKS, `@Public`/`@LoggedIn`/`@Grant`, grants + the `*` skeleton,
+  the docs/browser bearer flow. Owns `references/auth.md`.
 - **`rune-framework-runtime`** — the process layer: `bootstrapServer`, in-process
   `backend.fetch`, `@Endpoint`/`@EndpointController` semantics, the
   `exerciseEndpoints` runner + `POST /docs/_run` + `/docs/_map`, `@WsEndpoint`.
@@ -53,7 +56,7 @@ deploying / hosting under a sprig UI.
 ## Flow
 
 1. **Classify the question by domain** (main session):
-   - auth / 401 / 403 / tokens / roles / Firebase / docs-access → `rune-framework-auth`
+   - auth / 401 / 403 / infra bearer / grants / `INFRA_URL` / docs-access → `rune-framework-auth`
    - `bootstrapServer` / `@Endpoint` semantics / `order`·`dependsOn`·`bind` / the
      `exerciseEndpoints`·`/docs/_run`·`/docs/_map` runner surface / WS sockets →
      `rune-framework-runtime`

@@ -2,10 +2,11 @@
 
 An opinionated Deno backend framework built on
 [`@danet/core`](https://jsr.io/@danet/core). It bundles server bootstrapping
-with automatic OpenAPI/Swagger docs, a unified auth/identity layer (signed
-tokens, Firebase, roles), an in-process API client with a private-key trust
-channel, request-scoped structured logging to Datadog, and first-class sprig
-frontend hosting.
+with automatic OpenAPI/Swagger docs, an infra-only auth layer (verifies
+infra-signed session bearers offline against a published JWKS, with app-scoped
+grants), an in-process API client with a private-key trust channel,
+request-scoped structured logging to Datadog, and first-class sprig frontend
+hosting.
 
 > This package is the **runtime layer** of
 > [rune](https://github.com/mrg-keystone/rune) — rune-generated projects target it.
@@ -55,8 +56,8 @@ This starts a server on port 3000 with:
 - `/docs` landing page with links to per-module Swagger specs
 - ingress/egress logging for every request, shipped to Datadog (when
   `DD_API_KEY` is set)
-- access-token authorization on every **network** request (in-process and
-  localhost callers are exempt) — see
+- infra-bearer authorization on every **network** request (in-process callers
+  are exempt) — see
   [Access tokens & authorization](#access-tokens--authorization)
 
 ## API
@@ -99,52 +100,39 @@ The Datadog site is fixed to `us5.datadoghq.com`, and alert emails use a
 
 #### Authorization environment variable
 
-| Variable              | Enables                                                                                 | If missing/blank                                                                              |
-| --------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `MANUAL_KEY`          | the secret that **signs and verifies** signed access tokens                             | warns once; tokens can't be minted (mint UI fails closed) and signed tokens can't be verified |
-| `FIREBASE_PROJECT_ID` | accepting **Firebase Auth** ID tokens as an alternative credential                      | warns once; Firebase path off (signed tokens only)                                            |
-| `TRUST_LOCALHOST`     | set to `false` to require a token even from localhost (in-process key trust unaffected) | defaults to `true` — localhost callers are trusted                                            |
+| Variable    | Enables                                                                                | If missing/blank                                                             |
+| ----------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `INFRA_URL` | verifying infra-signed session bearers offline (JWKS) and polling the revoke-all flag  | warns once; bearer verification is off, so only in-process callers authorize |
 
-`MANUAL_KEY` is the per-app signing secret; `FIREBASE_PROJECT_ID` is your
-Firebase project id (only the project id is needed — ID tokens are verified
-against Google's public certs, so no service-account `FIREBASE_CLIENT_EMAIL` /
-`FIREBASE_PRIVATE_KEY` is required). Both are read from the environment so they
-never live in the (public) package source. If **neither** is set, no network
-request can authorize. See
+`INFRA_URL` is the base URL of the **infra** service (e.g.
+`https://infra.mrg-keystone.deno.net`); keep reaches `<INFRA_URL>/authz/jwks`
+(infra's Ed25519 public keys, which it verifies bearers against) and
+`<INFRA_URL>/authz/status` (the break-glass revoke-all flag it polls). keep signs
+and mints nothing — infra does. If `INFRA_URL` is unset, no network request can
+authorize. See
 [Access tokens & authorization](#access-tokens--authorization).
 
 ### Access tokens & authorization
 
-Every **network** request must present a valid credential; requests from the
-in-process `backend` client and from `localhost` are trusted and need none.
+The model is **deny-by-default, infra-only trust**: keep recognizes exactly two
+things and denies everything else. It mints and signs nothing — infra does.
 
 | Caller                            | How it's recognized                                               | Credential required?                       |
 | --------------------------------- | ----------------------------------------------------------------- | ------------------------------------------ |
 | In-process (`backend.fetch(...)`) | a process-private key stamped on the request (`x-danet-internal`) | **No** — trusted                           |
-| `localhost`                       | loopback peer address                                             | **No** — trusted                           |
-| Network (anything else)           | neither of the above                                              | **Yes** — `401` without a valid credential |
+| Network with an infra session bearer | the bearer verifies **offline** against infra's published JWKS | **Yes** — the bearer                       |
+| Anything else                     | neither of the above                                              | **Denied** — `401`                         |
 
-The Swagger docs are **token-gated** — see [Docs access](#docs-access) for how
-the browser flow works. The localhost `/_mint` UI is always blocked from the
-network.
+There is **no localhost trust** — a request from `127.0.0.1` with no bearer is
+denied like any other. The Swagger docs and the `/docs/_*` control
+plane are gated to in-process **or** an infra bearer carrying the `dev` grant —
+see [Docs access](#docs-access).
 
 The in-process key is a random value minted at boot (`crypto.randomUUID()`),
 shared only between the `backend` client and the auth middleware. It never
 leaves the process — not an env var, not sent over the network, and redacted
 from logs — so a network client cannot forge it. It's compared in constant time,
 and is regenerated every boot.
-
-> **On localhost trust.** The loopback check uses the connection's real TCP peer
-> address (`remoteAddr`), never the spoofable `X-Forwarded-For` header. A remote
-> client cannot make a connection appear to come from `127.0.0.1` (the OS drops
-> loopback-sourced packets from external interfaces, and TCP can't complete a
-> handshake against a spoofed source). The one caveat is a reverse proxy
-> **running on the same host**: it connects over loopback, so its remote clients
-> would ride in on a genuinely-local connection and bypass the token. Don't
-> front the app with a same-host loopback proxy while relying on this — expose
-> it directly, or set **`TRUST_LOCALHOST=false`** to require a token even from
-> localhost (the in-process key trust stays, so SSR / `backend.fetch` keeps
-> working). It's also handy for testing the gated path.
 
 > ### ⚠️ Security: the in-process bypass and how to mount safely
 >
@@ -164,10 +152,12 @@ and is regenerated every boot.
 >   proxied — can **never** impersonate an in-process call. In-process trust is
 >   only granted to `backend.fetch`, which dispatches through a separate
 >   non-stripping path.
-> - **Swagger docs do not honor the in-process bypass at all.** The spec
->   (`/docs/<module>/json`) is served only to a genuine loopback caller or a
->   valid token — so even if you wrongly route docs through `backend.fetch`, the
->   API surface stays gated.
+> - **The OpenAPI spec requires the `dev` grant from the network.** The spec
+>   (`/docs/<module>/json`) and the `/docs/_*` control plane are served to the
+>   in-process client or an infra bearer whose app-grants include `dev` (or
+>   `*`). Because `api.handler` strips the in-process trust header, a network
+>   caller can never pose as in-process — so the API surface stays gated behind
+>   the `dev` grant.
 > - The in-process key is unguessable, never sent to the network, and redacted
 >   from logs.
 >
@@ -175,35 +165,30 @@ and is regenerated every boot.
 > expose the API or the docs. The only way to bypass auth is to deliberately
 > pipe inbound traffic through `backend.fetch` — don't.
 
-A network caller authorizes by sending a credential in the `Authorization`
-header:
+A network caller authorizes by sending its infra session bearer in the
+`Authorization` header:
 
 ```
-Authorization: Bearer <credential>
+Authorization: Bearer <bearer>
 ```
 
-The same credential is also accepted as a **`?token=<credential>`** query param.
-That's for callers that can't set a header — a plain link, a first browser
-navigation, or a WebSocket upgrade. Prefer the header where you can: a token in
-a URL can leak via history and `Referer`, so the query value is **redacted from
-request logs**, and the sprig frontend pattern below seeds it once from
-`?token=` then sends it as a header thereafter.
+The same bearer is also accepted as a **`?token=<bearer>`** query param. That's
+for callers that can't set a header — a plain link, a first browser navigation,
+or a WebSocket upgrade. Prefer the header where you can: a token in a URL can
+leak via history and `Referer`, so the query value is **redacted from request
+logs**, and the sprig frontend pattern below seeds it once from `?token=` then
+sends it as a header thereafter.
 
-The credential may be **either** of two things — whichever validates first
-authorizes the request:
-
-1. **A signed access token** (HS256, keyed by `MANUAL_KEY`) — for
-   service-to-service callers. Mint one with the localhost UI or `signToken`
-   (below).
-2. **A Firebase Auth ID token** — for browser/frontend callers. When
-   `FIREBASE_PROJECT_ID` is set, the backend verifies the ID token against
-   Google's public certs (RS256 + `aud`/`iss`/ `exp` checks). This is what lets
-   a sprig frontend's island/`fetch` calls hit `/api` using the user's Firebase
-   login, with no signed token.
+**How a caller gets a bearer — all at infra.** keep never mints or exchanges
+anything. A **Firebase user** signs in at infra (`POST /session/login`, Google
+sign-in), and an **opaque infra token** is exchanged at infra (`POST
+/authz/exchange`, public); either way infra returns an infra-signed session
+bearer carrying the caller's per-app grants, which the client then presents to
+keep. keep only **verifies** it offline (below).
 
 The resolved identity is attributed to every log emitted during the request (it
-appears as a `source` attribute alongside `requestId`): the token's `source` for
-a signed token, or the user's email (falling back to uid) for a Firebase token.
+appears as a `source` attribute alongside `requestId`): the bearer's `source`,
+whose `creator` is a Firebase email or a machine token's creator.
 
 #### `@Public()` — opt a route out of auth
 
@@ -216,7 +201,7 @@ import { Public } from "@mrg-keystone/rune";
 
 @Controller("inbound")
 class WebhookController {
-  @Public() // gated by its own webhook secret, not a danet token
+  @Public() // gated by its own webhook secret, not an infra bearer
   @Post()
   receive() {/* ... */}
 }
@@ -224,129 +209,125 @@ class WebhookController {
 
 - Class-level `@Public()` exempts every route on the controller; method-level
   exempts one.
-- **Public means auth-optional, not auth-ignored**: a valid credential on a
+- **Public means auth-optional, not auth-ignored**: a valid bearer on a
   `@Public` route is still verified and its `source` attached for logging — it
   just isn't required (an invalid one is ignored rather than rejected).
 - It only covers **controllers** (DI routes). The framework's own direct routes
-  (`/docs`, `/_mint`) aren't controllers — they self-gate, so they don't need
-  `@Public`.
+  (`/docs`, the `/docs/_*` control plane) aren't controllers — they self-gate,
+  so they don't need `@Public`.
 - Grep `@Public` to enumerate every unauthenticated route.
 
 `@Public` is about **authentication** (is a credential required). For
-**authorization** by role, use `@Roles` (below).
+**authorization** by identity domain or grant, use `@LoggedIn` / `@Grant`
+(below).
 
-#### `@Roles()` — restrict a route by role
+#### `@LoggedIn()` and `@Grant()` — authorize by identity domain and grant
 
-Limit a controller or handler to callers holding **at least one** of the listed
-roles. The same global guard enforces it right after authentication:
+Authorization runs in the same global guard, right after authentication, and is
+**fail-closed**. Two decorators, which stack with **AND**:
 
 ```ts
-import { Roles } from "@mrg-keystone/rune";
+import { Grant, LoggedIn } from "@mrg-keystone/rune";
 
 @Controller("users")
 class UsersController {
-  @Roles("admin") // only callers with the "admin" role
+  @LoggedIn("monsterrg.com") // identity email must be under this domain
+  @Grant("admin") // AND the caller must hold this app's `admin` grant
   @Delete(":id")
   remove() {}
 }
 ```
 
-- **`@Roles` implies authentication** — a role-gated route always needs a valid
-  credential (it overrides `@Public`). No credential → `401`; valid credential
-  without a listed role → `403`.
-- Method-level `@Roles` overrides class-level; trusted origins (in-process /
-  localhost) bypass it like all auth (use `TRUST_LOCALHOST=false` to enforce
-  roles locally too).
+- **`@LoggedIn("monsterrg.com", …)`** — the caller's identity (`creator`, a
+  Firebase email) must be under one of the listed email domains. A **machine
+  token** (a non-email `creator`) never satisfies `@LoggedIn`.
+- **`@Grant("developer", …)`** — the caller must hold **at least one** of the
+  listed grants (**any-of**), scoped to **this app**. The dynamic form
+  `@Grant("::key")` looks up `key` in the request (path param → query → header →
+  JSON body) and requires the **found value** to be a grant the caller holds (an
+  absent key → deny).
+- Both **imply authentication** and override `@Public`: no bearer → `401`; a
+  valid bearer that fails the domain/grant check → `403`. Method-level overrides
+  class-level; the in-process client bypasses them like all auth.
+- A controller route with **neither** `@LoggedIn` nor `@Grant` (and not
+  `@Public`) is **closed to everyone** but the `*` universal ("skeleton") grant.
 
-**Roles are namespaced `appName:role`.** A single user can hold roles across
-several apps, so each role is stored prefixed with the app it belongs to (e.g.
-`billing:admin`, `orders:editor`). The guard knows its own `appName` and
-**scopes** to it: `@Roles("admin")` on the `billing` app matches the claim
-`billing:admin` and ignores `orders:*`. `getIdentity(ctx)` returns the scoped
-(bare) roles for this app.
+> `@Grants` (plural) is a **deprecated alias** of `@Grant`, kept only so existing
+> `@Grants(...)` call sites keep working. Teach `@Grant`.
 
-**Where roles come from** — they ride _in_ the verified credential, no extra
-lookup:
-
-- **Firebase**: set them as **custom claims** with the Admin SDK (from your
-  admin tooling / Cloud Function — verifying needs only `FIREBASE_PROJECT_ID`,
-  setting needs the service account):
-  ```ts
-  admin.auth().setCustomUserClaims(uid, {
-    roles: ["billing:admin", "orders:viewer"],
-  });
-  ```
-  The backend reads `roles` (array) and/or `role` (string) from the ID token.
-  Note custom-claim changes only apply once the client's ID token refreshes.
-- **Signed tokens**: include namespaced `roles` in the payload —
-  `signToken({ source, appName, expiry, roles: ["billing:admin"] }, key)`.
+**Grants are app-scoped, namespaced `owner/repo:grant`** (e.g.
+`mrg-keystone/rune:admin`). infra carries a user's per-app grants in the verified
+bearer's `claims` map; the guard knows its own `appName` and checks **bare
+names** against **this app's** grants (`claims[appName]`, a comma-separated
+value). `*` is the skeleton key — a caller holding `*` holds all grants.
 
 The resolved caller is attached to the request; read it in a handler with
-`getIdentity(ctx)` → `{ source, roles }` (roles scoped to this app).
+`getIdentity(ctx)` → `{ creator, source, claims, grants }` (`grants` = this
+app's grants).
 
-#### Token shape
+#### The session bearer and offline verification
 
-A token is a compact JWT (`HS256`) signing these claims:
+The bearer is **not a JWT** — it is infra's Ed25519-signed envelope:
 
 ```ts
-interface TokenPayload {
-  source: string; // who the token was minted for — used for log attribution
-  expiry?: number; // Unix epoch in SECONDS; the token is rejected once passed.
-  // OMIT for a token that never expires.
-  appName: string; // the app the token grants access to
-  roles?: string[]; // namespaced `appName:role` entries, checked by @Roles
+interface BearerEnvelope {
+  creator: string; // the identity — a Firebase email, or a machine token's creator
+  source: string; // log-attribution label for this request
+  sessionExpiry: string; // ISO-8601; short-lived (~1h), rejected once passed
+  claims: Array<{ key: string; value: string }>; // per-app grants: key = app, value = "grant1,grant2"
+  signature: string; // detached Ed25519 signature over canonicalize({creator, source, sessionExpiry, claims})
+  kid: string; // selects infra's signing key (enables zero-downtime rotation)
 }
 ```
 
-> A token with no `expiry` **never expires** and can only be invalidated by
-> rotating `MANUAL_KEY` (which invalidates all signed tokens). Mint these
-> sparingly.
+keep accepts the bearer as raw JSON **or** base64url(JSON) on the wire, and
+verifies it **offline** against infra's published JWKS — no shared secret,
+nothing to leak:
 
-The signature is keyed by `MANUAL_KEY`, so neither the expiry nor any claim can
-be altered without invalidating the token. `verifyToken` rejects a token that is
-malformed, mis-signed, or expired.
+- `GET <INFRA_URL>/authz/jwks` → `{ JwkKeyDtos: [{ kid, alg: "EdDSA", publicKey }] }`,
+  fetched and cached; an unknown `kid` forces one refresh.
+- `GET <INFRA_URL>/authz/status` → `{ revokeAll }`, polled ~every 60s.
 
-#### Minting tokens — the localhost UI
+`verifyToken(bearer, verifier)` rejects a bearer that is malformed, mis-signed,
+or expired.
 
-`bootstrapServer` mounts a token-minting UI at **`GET /_mint`** that works on
-`localhost` only (any non-loopback request gets `403`). Open it in a browser,
-fill in `source`, `appName`, and `expires in` (seconds from now — with a live
-Eastern-time preview of the expiry, or tick **never expires**), and submit to
-receive a token (auto-copied to your clipboard). The result page also shows a
-ready-to-share **`…/docs?token=…` link** (with copy buttons) — derived from the
-page's own location, so it's correct whether the app runs standalone or mounted
-under a sprig UI at `/api`. The signing key is read from `MANUAL_KEY` on the server —
-it is never entered into or returned by the form. If `MANUAL_KEY` is unset,
-minting fails closed.
+#### Revoke-all — break glass
+
+When infra's polled `revokeAll` flag flips **on**, keep stops trusting **every
+cached session bearer** and rejects it (`401`) until the client re-authenticates
+at infra. A cached bearer can't be live-checked offline, so revoke-all is how an
+operator instantly invalidates all outstanding bearers.
 
 #### Docs access
 
-The Swagger docs are gated, but a browser navigating to `/docs` can't send an
+The OpenAPI spec is gated to in-process **or** an infra bearer whose app-grants
+include `dev` (or `*`), but a browser navigating to `/docs` can't send an
 `Authorization` header — so docs use a **query-param → localStorage** flow:
 
 - The doc pages (`/docs` and the per-module Swagger UI shells) are served
   **publicly** so they always load. The actual OpenAPI spec lives at a **gated**
   `/docs/<module>/json` endpoint.
-- Open any doc page with `?token=<signed token>`. A small inline script saves
-  the token to `localStorage` and strips it from the URL.
-- Swagger UI then fetches the spec over XHR with `Authorization: Bearer <token>`
+- Open any doc page with `?token=<infra bearer>` (one carrying the `dev` grant).
+  A small inline script saves the bearer to `localStorage` and strips it from
+  the URL.
+- Swagger UI then fetches the spec over XHR with `Authorization: Bearer <bearer>`
   from `localStorage` — which **persists across same-origin navigation**, so
   once seeded you can move between modules without re-supplying it.
-- If the spec request returns `401` (token missing, invalid, or expired), the
-  script **wipes** the stored token and shows a message to reopen with a fresh
-  `?token=…` link.
+- If the spec request returns `401` (bearer missing, invalid, expired, or
+  lacking `dev`), the script **wipes** the stored bearer and shows a message to
+  reopen with a fresh `?token=…` link.
 
-So you share a `…/docs?token=…` link once; the token is reused from
+So you share a `…/docs?token=…` link once; the bearer is reused from
 `localStorage` until it stops working. This also works mounted under a sprig UI — the
 shell derives the spec URL from its own path, so `/api/docs/<module>` fetches
 `/api/docs/<module>/json`.
 
-#### Browser access to your own API (frontend token)
+#### Browser access to your own API (frontend bearer)
 
 The same query-param → `localStorage` flow works for your app's `/api`, so a
-browser/island can call the gated API without you wiring a token into every
+browser/island can call the gated API without you wiring a bearer into every
 `fetch`. Drop this in a client entry (e.g. a sprig island or client bundle) — it seeds the
-token from `?token=`, attaches it to same-origin `/api/*` requests, and drops it
+bearer from `?token=`, attaches it to same-origin `/api/*` requests, and drops it
 when one comes back `401`:
 
 ```ts
@@ -381,64 +362,43 @@ globalThis.fetch = async (input, init) => {
 
 You hand someone a `…/probe?token=…` link once; the browser remembers it and
 authorizes every subsequent API call until it stops working. (Server-side
-rendering should still prefer `api.backend.fetch(...)` — in-process, no token.
+rendering should still prefer `api.backend.fetch(...)` — in-process, no bearer.
 This is only for calls the browser itself makes over the network.)
 
-> **Use a short-lived token in the link.** A token in a URL can be
-> shoulder-surfed, kept in history, or forwarded in a `Referer`. Mint link
-> tokens with a **short expiry** (`signToken({ …, expiry })`, minutes/hours) —
-> they're moved to a header and stripped from the URL immediately, and a stale
-> one is dropped on the next `401`. Don't seed a **never-expiring** token this
-> way.
+> **A bearer in a URL can leak.** It can be shoulder-surfed, kept in history, or
+> forwarded in a `Referer`. Infra session bearers are already short-lived (~1h),
+> and this snippet moves the bearer to a header and strips it from the URL
+> immediately, dropping a stale one on the next `401`. Still prefer the header
+> where a caller can set it.
 
-#### Programmatic sign / verify
+#### Programmatic verification (offline)
 
-The primitives are exported for use outside the UI:
+`bootstrapServer` wires bearer verification automatically from `INFRA_URL`. The
+primitives are also exported if you need them standalone — keep only ever
+**verifies** (infra signs):
 
 ```ts
-import { signToken, TokenError, verifyToken } from "@mrg-keystone/rune";
+import {
+  createInfraClient,
+  createJwksVerifier,
+  TokenError,
+  verifyToken,
+} from "@mrg-keystone/rune";
 
-const token = await signToken(
-  {
-    source: "ci-runner",
-    appName: "my-api",
-    expiry: Math.floor(Date.now() / 1000) + 3600,
-  },
-  Deno.env.get("MANUAL_KEY")!,
-);
+const infra = createInfraClient({ baseUrl: Deno.env.get("INFRA_URL")! });
+const verifier = createJwksVerifier({ fetchJwks: () => infra.jwks() });
 
 try {
-  const payload = await verifyToken(token, Deno.env.get("MANUAL_KEY")!);
-  // payload: { source, appName, expiry }
+  const payload = await verifyToken(bearerFromClient, verifier);
+  // payload: { iss, creator, source, claims, sessionExp }
 } catch (err) {
-  if (err instanceof TokenError) { /* malformed, mis-signed, or expired */ }
+  if (err instanceof TokenError) {/* malformed, mis-signed, or expired */}
 }
 ```
 
-#### Verifying Firebase ID tokens directly
-
-`bootstrapServer` wires Firebase verification automatically when
-`FIREBASE_PROJECT_ID` is set. The verifier is also exported if you need it
-standalone:
-
-```ts
-import { createFirebaseVerifier, FirebaseAuthError } from "@mrg-keystone/rune";
-
-const firebase = createFirebaseVerifier({
-  projectId: Deno.env.get("FIREBASE_PROJECT_ID")!,
-});
-
-try {
-  const { uid, email } = await firebase.verify(idTokenFromClient);
-} catch (err) {
-  if (
-    err instanceof FirebaseAuthError
-  ) { /* missing, malformed, mis-signed, or expired */ }
-}
-```
-
-Signing keys are fetched from Google and cached (honoring the certs'
-`Cache-Control`).
+The JWKS is fetched from `<INFRA_URL>/authz/jwks` and cached (kid-selected; an
+unknown `kid` triggers one refresh). `infra.revocationStatus()` reads the
+break-glass `revokeAll` flag from `<INFRA_URL>/authz/status`.
 
 ### `backend` — in-process HTTP client
 
@@ -573,13 +533,16 @@ directly when composing the handler into another host. (Hosting the backend
 under a sprig UI is done with `serveSprig`/`sprigUi` from the separate
 `@sprig/keep` package — see [Deployment](#deployment).)
 
-### `createFirebaseVerifier({ projectId })`
+### `createInfraClient({ baseUrl })` / `createJwksVerifier({ fetchJwks })`
 
-Returns a verifier whose `verify(idToken)` validates a Firebase Auth ID token
-(RS256 against Google's public certs, plus `aud`/`iss`/`exp`) and resolves
-`{ uid, email? }`, or throws `FirebaseAuthError`. `bootstrapServer` uses it
-automatically when `FIREBASE_PROJECT_ID` is set; exported for standalone use.
-See [Access tokens & authorization](#access-tokens--authorization).
+The infra-verification primitives. `createInfraClient` returns a client for
+infra's two public endpoints — `jwks()` (`GET <baseUrl>/authz/jwks`) and
+`revocationStatus()` (`GET <baseUrl>/authz/status`). `createJwksVerifier`
+returns a `verify(bearer)` that validates an infra session bearer **offline**
+against that JWKS (Ed25519, kid-selected, cached), or throws `TokenError`.
+`bootstrapServer` wires both automatically from `INFRA_URL`; exported for
+standalone use. See
+[Access tokens & authorization](#access-tokens--authorization).
 
 ### `setupWithSwagger(server)`
 
@@ -748,8 +711,9 @@ The **Scenarios** rail card freezes the entire walk — the active flow, every
 step's body text and params (refs intact), and skips — under a name, one JSON
 file per scenario in **`spec/misc/scenarios/`** (`happy-path.json`,
 `refund-flow.json`, …). **load** applies one over the page; **run** loads it
-and runs all. They're served and saved through the localhost-only
-`GET`/`POST /docs/_scenarios`, and CI can replay one headlessly:
+and runs all. They're served and saved through the control-plane-gated (in-process
+or a `dev`-grant infra bearer) `GET`/`POST /docs/_scenarios`, and CI can replay
+one headlessly:
 `POST /docs/_run {"scenario": "happy-path"}` runs the saved flow with each
 step's **literal** body fields as overrides (fields holding `{{refs}}` are left
 to the runner's own bind machinery, which the refs mirror).
@@ -800,7 +764,8 @@ Variables card). The file is plain JSON you can commit, so the setup and the
 contract a process needs travel with the repo. On load, the cake reads it
 back — even in a fresh browser with no `localStorage` — restoring setup,
 expectations, and persisted variables as the baseline. The read/write door is
-`POST`/`GET /docs/_fixtures`, **localhost-only** like `/_run` and `/_mint`;
+`POST`/`GET /docs/_fixtures`, on the **`/docs/_*` control-plane gate** like
+`/docs/_run` (**in-process OR a `dev`-grant infra bearer** — no localhost trust);
 the default path is `<cwd>/spec/misc/cake.json` when the project has a `spec/`
 dir, else the legacy `<cwd>/fixtures/cake.json` (`KEEP_FIXTURES_DIR` overrides
 the directory).
@@ -812,8 +777,8 @@ of the cake's heal panel: a declarative map from your API's **error slugs**
 (missing inputs, validation shapes, transient retries) and executes your
 rules for everything domain-specific; rune generates a starter file from the
 spec's declared fault slugs. Served read-only at `GET /docs/_heal-rules`
-(localhost-only); unknown rule kinds and extra fields are ignored, so the
-file is forward-compatible.
+(control-plane-gated: in-process or a `dev`-grant bearer); unknown rule kinds and
+extra fields are ignored, so the file is forward-compatible.
 
 ### The system map — `/docs/_map`
 
@@ -826,7 +791,7 @@ its consumer. Flows tint their edges, and optional/stub endpoints carry chips.
 The map is **live**: each node's status dot recolors from the cake
 sessions in `localStorage` — run a step on any docs page (any tab) and the map
 updates. A **Run all** button runs the whole composed process server-side (the
-localhost-only `/docs/_run` walk) **module by module, endpoint by endpoint**,
+control-plane-gated `/docs/_run` walk) **module by module, endpoint by endpoint**,
 in the order the lanes draw — and it runs under the cake's own defaults: the
 untagged-only walk (destructive flow branches never auto-run), your typed
 environment variables as seeds, and each module's per-step skips honored.
@@ -899,8 +864,9 @@ waterfall — every span positioned by start time, sized by duration, coloured b
 kind (request / backend / your function), with a ✖ on the span that crashed.
 A filter bar narrows by **route**, **method**, **status** (ok / crashed) and
 **user** (selecting a user re-queries server-side); each row carries a clickable
-user chip. The page polls the **localhost-only** `/docs/_traces` JSON route
-(traces carry route paths and error messages, so the data is never exposed to
+user chip. The page polls the **control-plane-gated** `/docs/_traces` JSON route
+(in-process or a `dev`-grant bearer; traces carry route paths and error messages,
+so the data is never exposed to
 the network; the page shell loads publicly like the other docs pages).
 
 #### Storage — in-memory ring or Deno KV
@@ -977,8 +943,9 @@ await exerciseEndpoints({ api, flow: "card", overrides: { seeds: { memberId: "m-
   server) it uses **Playwright's `APIRequestContext`** over real HTTP.
 - **`overrides`.** `seeds` (literal values by field name), `byEndpoint`
   (per-endpoint overrides by id — win over `bind`), and `auth`
-  (`{kind:"in-process"}` default, or `{kind:"token"|"mint", …}` using
-  [`signToken`](#programmatic-sign--verify) for network/`baseUrl` runs).
+  (`{kind:"in-process"}` default, or a ready infra session bearer as
+  `{kind:"token", token}` / `{kind:"bearer", bearer}` for network/`baseUrl`
+  runs — keep mints nothing; obtain the bearer from infra).
 - **`$`-input resolution order.** A `"$name"` bind resolves from
   `overrides.seeds[name]` first — a seed always wins. With no seed,
   **composition fulfills the contract**: the value falls back to the first
@@ -1008,7 +975,8 @@ await exerciseEndpoints({ api, flow: "card", overrides: { seeds: { memberId: "m-
   (CI, the system map's write-back) can show or replay outcomes, not just
   pass/fail.
 
-Against a **running** server, `POST /docs/_run` (localhost-only) is the HTTP
+Against a **running** server, `POST /docs/_run` (control-plane-gated: in-process
+or a `dev`-grant bearer) is the HTTP
 door to the same walk: `{ flow?, seeds?, byEndpoint?, rateLimit?,
 maxIterations?, dryRun?, scenario?, orderBy?, skip?, stream? }` —
 `scenario: "happy-path"` replays a saved `spec/misc/scenarios/` file (its flow
@@ -1034,8 +1002,8 @@ Both are driven by two things `bootstrapServer` returns:
 
 - `handler` — the raw `(Request) => Response` dispatcher (the same pipeline
   `listen()` serves).
-- `backend` — the in-process client (`backend.fetch(...)`), which bypasses token
-  auth.
+- `backend` — the in-process client (`backend.fetch(...)`), which bypasses auth
+  (trusted in-process).
 
 Bootstrap once in a shared module (init only — it does **not** `listen()`):
 
@@ -1058,19 +1026,18 @@ Serve the handler directly — works locally and on Deno Deploy:
 // server.ts
 import { api } from "./backend.ts";
 
-// Forward Deno's conn info so localhost/loopback detection keeps working.
+// Forward Deno's conn info so request logging/tracing can attribute the caller.
 Deno.serve((req, info) => api.handler(req, info)); // or: await api.listen();
 ```
 
 > **Forward `info`.** `api.handler` takes `(req, info?)`. When you dispatch
 > through it from your own `Deno.serve`, pass the second `info` argument — it
-> carries `remoteAddr`, which the localhost trust, the token-auth localhost
-> exemption, and the `/_mint` guard all rely on. Drop it
-> (`Deno.serve((req) => api.handler(req))`) and every request looks origin-less,
-> so localhost is no longer recognized and `/_mint` becomes unreachable.
+> carries `remoteAddr`, which request logging and tracing attribute the caller
+> with. Auth doesn't depend on it (trust is the in-process key or an infra
+> bearer), but keep forwarding it so logs stay attributable.
 
-Network clients must send a token (`Authorization: Bearer <token>`); see
-[Access tokens & authorization](#access-tokens--authorization).
+Network clients must send an infra session bearer (`Authorization: Bearer
+<bearer>`); see [Access tokens & authorization](#access-tokens--authorization).
 
 ### Hosted under a sprig frontend
 
@@ -1088,11 +1055,11 @@ import { api } from "./backend.ts";
 export default serveSprig({ keep: api, app });
 ```
 
-`serveSprig` routes `/api/*` and `/docs*` to the keep's token-gated `handler`
-(forwarding conn info, so loopback detection — localhost trust, `/_mint` — keeps
-working) and everything else to the sprig SSR app, with the keep's in-process
-`backend.fetch` bound to sprig's `Backend` DI token. SSR pages read data through
-that in-process channel, with no network hop and no token:
+`serveSprig` routes `/api/*` and `/docs*` to the keep's `handler` (forwarding
+conn info for request attribution) and everything else to the sprig SSR app,
+with the keep's in-process `backend.fetch` bound to sprig's `Backend` DI token.
+SSR pages read data through that in-process channel, with no network hop and no
+bearer:
 
 ```ts
 // a sprig page's resolve.ts (or a service)
@@ -1100,7 +1067,7 @@ import { inject } from "@sprig/core";
 import { Backend } from "@sprig/keep";
 
 export async function resolve() {
-  const res = await inject(Backend).fetch("/users"); // in-process; bypasses token auth
+  const res = await inject(Backend).fetch("/users"); // in-process; no bearer needed
   return { users: await res.json() };
 }
 ```
@@ -1126,25 +1093,22 @@ mount the keep's `handler` under a prefix in any host, reach for the lower-level
 [`withBasePath(prefix, handler)`](#withbasepathprefix-handler) directly.
 
 Browser islands can't make in-process calls, so for browser-side calls that go
-over the network to `/api` (an island's `fetch`), attach a credential — either a
-**signed token** seeded from `?token=` and auto-injected from `localStorage`
-(see
-[Browser access to your own API](#browser-access-to-your-own-api-frontend-token)),
-or the user's **Firebase ID token** as `Authorization: Bearer <idToken>` (with
-`FIREBASE_PROJECT_ID` set). Server-side rendering should always prefer the
-in-process `inject(Backend)` path, which needs no credential.
+over the network to `/api` (an island's `fetch`), attach an **infra session
+bearer** — seeded from `?token=` and auto-injected from `localStorage` (see
+[Browser access to your own API](#browser-access-to-your-own-api-frontend-bearer)).
+Server-side rendering should always prefer the in-process `inject(Backend)`
+path, which needs no credential.
 
 **Deno Deploy notes**
 
-- Set env vars in the Deploy project: `MANUAL_KEY` (signed tokens) and/or
-  `FIREBASE_PROJECT_ID` (Firebase Auth), plus `DD_API_KEY` / `POSTMARK_*` as
-  needed.
+- Set env vars in the Deploy project: `INFRA_URL` (so keep can verify infra
+  session bearers against its JWKS and poll revoke-all), plus `DD_API_KEY` /
+  `POSTMARK_*` as needed.
 - The start command is `deno serve serve.ts` — `serveSprig` returns the
   `{ fetch }` export `deno serve` expects, and the backend singleton runs in the
   same process as the UI.
-- The localhost `/_mint` UI is unreachable in production (it `403`s
-  off-localhost). Mint tokens locally, or programmatically with `signToken` (see
-  above).
+- keep mints nothing — clients obtain their bearer from infra
+  (`session.login` / `authz.exchange`) and present it (see above).
 
 ## Testing
 

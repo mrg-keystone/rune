@@ -1,5 +1,5 @@
-import { assertEquals, assertRejects } from "#assert";
-import { createInfraClient, InfraError } from "./mod.ts";
+import { assertEquals } from "#assert";
+import { createInfraClient } from "./mod.ts";
 
 /** A stub fetch routing by URL to canned responses. */
 function stubFetch(
@@ -21,69 +21,36 @@ function stubFetch(
 
 const BASE = "https://infra.test";
 
-Deno.test("exchange returns the session bearer from a JSON {bearer} field", async () => {
+Deno.test("jwks fetches the default /authz/jwks URL and reads {JwkKeyDtos}", async () => {
   const client = createInfraClient({
     baseUrl: BASE,
     fetchImpl: stubFetch({
-      [`${BASE}/manualToken/exchange`]: () =>
-        Response.json({ bearer: "eyJ.session.jwt" }),
-    }),
-  });
-  assertEquals(await client.exchange("mtk_abc"), "eyJ.session.jwt");
-});
-
-Deno.test("exchange accepts a raw JWT text body", async () => {
-  const client = createInfraClient({
-    baseUrl: BASE,
-    fetchImpl: stubFetch({
-      [`${BASE}/manualToken/exchange`]: () =>
-        new Response("eyJ.raw.jwt", {
-          headers: { "content-type": "text/plain" },
-        }),
-    }),
-  });
-  assertEquals(await client.exchange("mtk_abc"), "eyJ.raw.jwt");
-});
-
-Deno.test("exchange surfaces a 404 (revoked/unknown) as InfraError with status", async () => {
-  const client = createInfraClient({
-    baseUrl: BASE,
-    fetchImpl: stubFetch({
-      [`${BASE}/manualToken/exchange`]: () =>
-        new Response("not found", { status: 404 }),
-    }),
-  });
-  const err = await assertRejects(
-    () => client.exchange("mtk_gone"),
-    InfraError,
-  );
-  assertEquals(err.status, 404);
-});
-
-Deno.test("exchange surfaces a 410 (expired lifetime) as InfraError", async () => {
-  const client = createInfraClient({
-    baseUrl: BASE,
-    fetchImpl: stubFetch({
-      [`${BASE}/manualToken/exchange`]: () => new Response("", { status: 410 }),
-    }),
-  });
-  const err = await assertRejects(() => client.exchange("mtk_old"), InfraError);
-  assertEquals(err.status, 410);
-});
-
-Deno.test("jwks fetches the default /keys/jwks URL", async () => {
-  const client = createInfraClient({
-    baseUrl: BASE,
-    fetchImpl: stubFetch({
-      [`${BASE}/keys/jwks`]: () =>
+      [`${BASE}/authz/jwks`]: () =>
         Response.json({
-          keys: [{ kid: "k1", alg: "RS256", publicKey: "pem" }],
+          JwkKeyDtos: [{ kid: "k1", alg: "EdDSA", publicKey: "x-material" }],
         }),
     }),
   });
   const jwks = await client.jwks();
   assertEquals(jwks.keys.length, 1);
   assertEquals(jwks.keys[0].kid, "k1");
+  assertEquals(jwks.keys[0].alg, "EdDSA");
+  assertEquals(jwks.keys[0].publicKey, "x-material");
+});
+
+Deno.test("jwks also accepts the plain {keys} shape", async () => {
+  const client = createInfraClient({
+    baseUrl: BASE,
+    fetchImpl: stubFetch({
+      [`${BASE}/authz/jwks`]: () =>
+        Response.json({
+          keys: [{ kid: "k2", alg: "EdDSA", publicKey: "y" }],
+        }),
+    }),
+  });
+  const jwks = await client.jwks();
+  assertEquals(jwks.keys.length, 1);
+  assertEquals(jwks.keys[0].kid, "k2");
 });
 
 Deno.test("jwks honors an explicit jwksUrl override", async () => {
@@ -91,17 +58,17 @@ Deno.test("jwks honors an explicit jwksUrl override", async () => {
     baseUrl: BASE,
     jwksUrl: "https://cdn.test/jwks.json",
     fetchImpl: stubFetch({
-      "https://cdn.test/jwks.json": () => Response.json({ keys: [] }),
+      "https://cdn.test/jwks.json": () => Response.json({ JwkKeyDtos: [] }),
     }),
   });
   assertEquals((await client.jwks()).keys, []);
 });
 
-Deno.test("revocationStatus reads the revokeAll flag", async () => {
+Deno.test("revocationStatus reads the revokeAll flag from /authz/status", async () => {
   const client = createInfraClient({
     baseUrl: BASE,
     fetchImpl: stubFetch({
-      [`${BASE}/revocation/status`]: () =>
+      [`${BASE}/authz/status`]: () =>
         Response.json({ revokeAll: true, polledAt: "2026-06-14T00:00:00Z" }),
     }),
   });
@@ -110,11 +77,22 @@ Deno.test("revocationStatus reads the revokeAll flag", async () => {
   assertEquals(status.polledAt, "2026-06-14T00:00:00Z");
 });
 
+Deno.test("revocationStatus honors an explicit revocationPath override", async () => {
+  const client = createInfraClient({
+    baseUrl: BASE,
+    revocationPath: "/custom/status",
+    fetchImpl: stubFetch({
+      [`${BASE}/custom/status`]: () => Response.json({ revokeAll: true }),
+    }),
+  });
+  assertEquals((await client.revocationStatus()).revokeAll, true);
+});
+
 Deno.test("a trailing slash on baseUrl is trimmed", async () => {
   const client = createInfraClient({
     baseUrl: `${BASE}/`,
     fetchImpl: stubFetch({
-      [`${BASE}/revocation/status`]: () => Response.json({ revokeAll: false }),
+      [`${BASE}/authz/status`]: () => Response.json({ revokeAll: false }),
     }),
   });
   assertEquals((await client.revocationStatus()).revokeAll, false);

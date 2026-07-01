@@ -64,7 +64,6 @@ export type {
 } from "@foundation/domain/business/infra-client/mod.ts";
 export { createTokenAuthMiddleware } from "@foundation/domain/business/token-auth/mod.ts";
 export type { TokenAuthConfig } from "@foundation/domain/business/token-auth/mod.ts";
-export { isLocalRequest } from "@foundation/domain/business/localhost/mod.ts";
 export { withBasePath } from "@foundation/domain/business/mount/mod.ts";
 export type { FetchHandler } from "@types";
 export {
@@ -73,18 +72,17 @@ export {
   PUBLIC_METADATA_KEY,
 } from "@foundation/domain/business/public-route/mod.ts";
 export {
+  Grant,
   Grants,
   GRANTS_METADATA_KEY,
+  LoggedIn,
   requiredGrants,
 } from "@foundation/domain/business/grants/mod.ts";
 export {
   createCredentialGuard,
-  DEFAULT_SKELETON_MAX_AGE_SECONDS,
   getIdentity,
   grantsForApp,
   IDENTITY_CONTEXT_KEY,
-  isLoopbackRequest,
-  isOpaqueToken,
   resolveNetworkCredential,
   SESSION_BEARER_CONTEXT_KEY,
   SESSION_BEARER_HEADER,
@@ -96,15 +94,6 @@ export type {
   Identity,
   ResolvedCredential,
 } from "@foundation/domain/business/token-auth/mod.ts";
-export {
-  createFirebaseVerifier,
-  FirebaseAuthError,
-} from "@foundation/domain/business/firebase-auth/mod.ts";
-export type {
-  FirebaseClaims,
-  FirebaseVerifier,
-  FirebaseVerifierOptions,
-} from "@foundation/domain/business/firebase-auth/mod.ts";
 export {
   createDocsJsonHandler,
   docsSeedScript,

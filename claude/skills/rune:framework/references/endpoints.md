@@ -111,9 +111,10 @@ Options:
   source for both plain fields and `$inputs`. A seed always wins.
 - `overrides.byEndpoint` — per-endpoint body overrides by id; win over
   `bind`.
-- `overrides.auth` — `{ kind: "in-process" }` (default), or
-  `{ kind: "token" | "mint", … }` for network runs (mint uses `signToken`
-  with `MANUAL_KEY`).
+- `overrides.auth` — `{ kind: "in-process" }` (default), or, for network
+  (`baseUrl`) runs, a ready **infra session bearer** sent as `Authorization`:
+  `{ kind: "token", token }` / `{ kind: "bearer", bearer }`. keep mints nothing
+  — obtain the bearer from infra (see `references/auth.md`).
 - `rateLimit` — `{ requestsPerSecond?, maxConcurrency? }`.
 - `maxIterations` — default 5.
 - `retry` — `{ slugs, delayMs?, attempts? }`: a failed response whose
@@ -161,8 +162,9 @@ module lanes, columns by dependency depth. Solid edges = intra-module binds;
 an unproduced `$name` renders as an amber badge on its consumer. Flow edges
 are tinted; optional/stub endpoints carry chips. The map is **live** — node
 dots recolor from cake sessions in `localStorage`, any tab. A **Run all**
-button runs the whole composed process server-side via the localhost-only
-`POST /docs/_run` walk, **module by module, endpoint by endpoint** (lane
+button runs the whole composed process server-side via the control-plane-gated
+`POST /docs/_run` walk (in-process or a `dev`-grant bearer), **module by module,
+endpoint by endpoint** (lane
 order), under the cake's own defaults: `flow: "__main"` (untagged steps only —
 destructive branches never auto-run), the user's typed environment variables
 as `seeds`, and each module's per-step skips as `skip`. The run **streams**:
@@ -175,11 +177,11 @@ sessions and lights the heal panel when steps fail is the **`rune:cake`** skill.
 
 ## Headless run over HTTP — `POST /docs/_run`
 
-The localhost-only HTTP door to `exerciseEndpoints` — so an agent, CI, a smoke
-check, or the map UI can ask a *running* server "does the whole composed process
-work right now?" without importing the app. Same trust posture as `/_mint`:
-loopback socket only; in-process dispatch (no conn info) is denied; `503` until
-the in-process backend exists.
+The HTTP door to `exerciseEndpoints` — so an agent, CI, a smoke check, or the
+map UI can ask a *running* server "does the whole composed process work right
+now?" without importing the app. Same trust posture as the rest of the `/docs/_*`
+control plane: **in-process OR an infra bearer whose app-grants include `dev`
+(or `*`)** — no localhost trust; `503` until the in-process backend exists.
 
 - Body (all optional): `{ flow?, seeds?, byEndpoint?, rateLimit?, maxIterations?, dryRun?, scenario?, orderBy?, skip?, stream? }`.
 - `orderBy: "module"` walks lane-by-lane (modules in docs order, topological

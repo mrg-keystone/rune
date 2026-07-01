@@ -23,8 +23,8 @@ Every *structured* failure shape becomes one-click fixes with **Apply** buttons:
 
 Slug diagnosis is **project vocabulary, not framework knowledge** (which endpoint
 un-blocks `not-enabled` is *this app's* business), so keep ships no domain slugs.
-The project declares them in a committed file keep loads through the localhost-only
-`GET /docs/_heal-rules`:
+The project declares them in a committed file keep loads through the
+control-plane-gated `GET /docs/_heal-rules` (in-process or a `dev`-grant bearer):
 
 ```json
 {
@@ -107,10 +107,11 @@ Claude is prompted to find root causes the rules can't — **cross-module causal
 (a teardown step wiped state a later module reads), **real implementation bugs** —
 and **never** to propose destructive steps as runnable.
 
-**Trust posture** mirrors `/_mint` and `/docs/_run`: **localhost-only** (403
-otherwise), `503` until `PRIVATE_CLAUDE_URL` is configured on the server, `502`
-wraps upstream errors. The upstream call can take minutes (180 s timeout) and spends
-the operator's Claude plan — another reason rules run first.
+**Trust posture** mirrors the rest of the `/docs/_*` control plane: **in-process
+OR an infra bearer whose app-grants include `dev` (or `*`)** — no localhost trust
+(403 otherwise), `503` until `PRIVATE_CLAUDE_URL` is configured on the server,
+`502` wraps upstream errors. The upstream call can take minutes (180 s timeout)
+and spends the operator's Claude plan — another reason rules run first.
 
 ## How `/docs/_run` reuses the rules for retry
 
