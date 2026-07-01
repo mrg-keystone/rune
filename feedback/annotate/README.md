@@ -44,3 +44,6 @@ naming-only are in [`proposal.md`](./proposal.md).
 - [`rune-data-local-blob/`](./rune-data-local-blob/) — the `rune:data` skill's `blobs[]` construct
   is S3-only; a local binary file (the annotate screenshot PNG) has no honest representation. The
   third local-vs-remote closed-set gap, after `NATIVE` (this one) and `fs_json`.
+- [`rune-fmt-ent-corruption/`](./rune-fmt-ent-corruption/) — `rune fmt` (2.0.6) inverts the
+  indentation of a `[ENT]` block, turning a `rune check`-clean spec into an "ambiguous endpoint"
+  error. A correctness regression (format breaks a passing spec), not a missing feature.

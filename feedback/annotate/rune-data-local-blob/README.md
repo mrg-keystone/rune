@@ -4,6 +4,11 @@
 **Target:** the `rune:data` skill — `scripts/validate_data.ts` + `scripts/render_review.ts`.
 **Type:** missing local kind in a closed set · **Severity:** papercut (workaround exists)
 
+> ✅ **RESOLVED in rune 2.0.6.** `validate_data.ts` now accepts `blobs[].store: "fs"` (a local
+> file), and `render_review.ts` renders `fs` blobs as "local sidecar files" under the local panel
+> (a `localfile` badge), not S3. `annotate`'s screenshot is now modeled as a proper local `fs`
+> blob. Kept as the record of the request + repro.
+
 ## The short version
 
 `data.json`'s `blobs[]` construct is hardwired to S3. A **local binary file** — e.g. a screenshot

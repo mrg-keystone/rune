@@ -1,0 +1,24 @@
+[MOD] demo
+
+// Minimal repro: a single [ENT] dispatching to a [REQ]. `rune check` is clean.
+// `rune fmt` INVERTS the indentation of the [ENT] block — it indents [ENT] by 4
+// and dedents the body [REQ] to column 0 — which demotes the dispatch target to a
+// duplicate top-level [REQ], and the next `rune check` then fails with
+// "[ENT] ... is ambiguous — 2 [REQ]s share that signature".
+
+[REQ] note.get(RefDto): NoteDto
+    [NEW] note
+    note.toDto(): NoteDto
+
+[ENT] http.getNote(RefDto): NoteDto
+    [REQ] note.get(RefDto): NoteDto
+
+[TYP] id: string
+    a unique id
+[DTO] RefDto: id
+    a reference to a note
+[DTO] NoteDto: id
+    a note record
+
+[NON] note
+    a single note

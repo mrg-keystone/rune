@@ -35,6 +35,17 @@ fn format_content(content: &str) -> String {
     // block (shallow) — otherwise the REQ's terminal step gets folded into the
     // last [CSE], silently changing meaning.
     let mut in_poly = false;
+    // Are we inside an `[ENT]`/`[ENT:ws]` block? The entrypoint header sits at column 0
+    // and its body — the dispatched `[REQ]` (a regular `[ENT]`) or the indented
+    // `verb(In): Out` topic lines (`[ENT:ws]`) — is indented 4. We track this as state
+    // because a body `[REQ]` is indistinguishable from a top-level `[REQ]` by content
+    // alone; the AUTHOR'S indent (orig_indent > 0) tells a body line from a new
+    // top-level declaration, exactly like the in_poly handling. Without this, fmt
+    // mistakes the header for a `surface.action(...)` step and indents it to 4 while
+    // pulling the body `[REQ]` to column 0 — inverting the block, which demotes the
+    // dispatch target to a duplicate top-level `[REQ]` and makes the next `rune check`
+    // fail as "[ENT] ... is ambiguous — 2 [REQ]s share that signature".
+    let mut in_ent = false;
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -58,6 +69,23 @@ fn format_content(content: &str) -> String {
 
         consecutive_empty = 0;
 
+        // [ENT] body dispatch. A `[REQ]` (regular `[ENT]`) or a `verb(In): Out` topic
+        // (`[ENT:ws]`) line the author indented under the entrypoint header stays
+        // indented 4 — it is the dispatch-target reference / ws topic, NOT a new
+        // top-level declaration. A dedent to column 0, or any top-level `[tag]`, closes
+        // the block and falls through to the normal formatting below. Blank lines do
+        // not close it (they may visually group ws topics), mirroring the parser.
+        if in_ent {
+            let is_body_req = orig_indent > 0 && trimmed.starts_with("[REQ]");
+            let is_ws_topic = orig_indent > 0 && !trimmed.starts_with('[');
+            if is_body_req || is_ws_topic {
+                lines.push(format!("    {}", trimmed));
+                after_step = false;
+                continue;
+            }
+            in_ent = false;
+        }
+
         // Normalize line based on content
         if trimmed.starts_with("[REQ]") {
             // REQ at column 0
@@ -65,6 +93,18 @@ fn format_content(content: &str) -> String {
             in_block = true;
             after_step = false;
             in_poly = false;
+        } else if trimmed.starts_with("[ENT]") || trimmed.starts_with("[ENT:") {
+            // [ENT]/[ENT:ws]/[ENT:card]/… entrypoint header at column 0; its body (the
+            // dispatched [REQ], or [ENT:ws] topics) is indented 4 and consumed by the
+            // in_ent block above. This branch MUST precede is_step_line(): the header
+            // carries a `surface.action(...)` signature, so without it fmt mistakes the
+            // header for a step (indent 4) and pulls the body [REQ] to column 0 —
+            // inverting the block and creating a duplicate top-level [REQ].
+            lines.push(trimmed.to_string());
+            in_block = false;
+            after_step = false;
+            in_poly = false;
+            in_ent = true;
         } else if trimmed.starts_with("[DTO]") || trimmed.starts_with("[TYP]") || trimmed.starts_with("[NON]") {
             // Definitions at column 0
             lines.push(trimmed.to_string());
@@ -252,6 +292,58 @@ mod tests {
             out.contains("\n        ex:ch.log(InDto): OutDto"),
             "case step after a blank line must stay at indent 8, got:\n{out}"
         );
+    }
+
+    #[test]
+    fn ent_block_indentation_is_preserved() {
+        // The reported regression: the canonical [ENT] block — header at column 0, the
+        // dispatched [REQ] indented 4 — must round-trip unchanged. Before the fix fmt
+        // inverted it (header -> 4, body [REQ] -> 0), demoting the body to a duplicate
+        // top-level [REQ] that `rune check` rejected as "ambiguous".
+        let input = "[ENT] http.getNote(RefDto): NoteDto\n    [REQ] note.get(RefDto): NoteDto\n";
+        let out = format_content(input);
+        assert_eq!(out, input, "got:\n{out}");
+    }
+
+    #[test]
+    fn fmt_is_idempotent_on_ent_block() {
+        let canonical = "[ENT] http.getNote(RefDto): NoteDto\n    [REQ] note.get(RefDto): NoteDto\n";
+        let once = format_content(canonical);
+        assert_eq!(once, canonical, "first pass changed a clean spec, got:\n{once}");
+        let twice = format_content(&once);
+        assert_eq!(twice, canonical, "fmt is not idempotent, got:\n{twice}");
+    }
+
+    #[test]
+    fn top_level_req_after_ent_header_stays_at_column_zero() {
+        // entrypoint.rune shape: bare [ENT] headers, then a blank, then a TOP-LEVEL
+        // [REQ]. The post-blank [REQ] (orig_indent 0) must NOT be sucked into the [ENT]
+        // body — it stays at column 0; only an INDENTED [REQ] is a dispatch reference.
+        let input = "[ENT] http.createOrder(NewOrderDto): OrderDto\n[ENT] http.payOrder(PayDto): ReceiptDto\n\n[REQ] order.create(NewOrderDto): OrderDto\n    db:order.save(OrderDto): void\n";
+        let out = format_content(input);
+        assert_eq!(out, input, "got:\n{out}");
+    }
+
+    #[test]
+    fn ent_ws_socket_topics_indent_to_four() {
+        // [ENT:ws] header at column 0; its `verb(In): Out` topics (no leading bracket,
+        // no `.`) normalize to indent 4 — they would otherwise be left untouched.
+        let input = "[ENT:ws] chat @ /rooms/{room}\n    join(JoinDto): JoinedDto\n    leave(LeaveDto): void\n";
+        let out = format_content(input);
+        assert_eq!(out, input, "got:\n{out}");
+        // and a mis-indented topic is pulled back to 4
+        let messy = "[ENT:ws] chat @ /rooms/{room}\n        join(JoinDto): JoinedDto\n";
+        let fixed = format_content(messy);
+        assert_eq!(fixed, "[ENT:ws] chat @ /rooms/{room}\n    join(JoinDto): JoinedDto\n", "got:\n{fixed}");
+    }
+
+    #[test]
+    fn ent_route_template_header_stays_at_column_zero() {
+        // The `@ METHOD /template(...)` route-template header also carries a
+        // `surface.action(...)` signature; it must stay at column 0, not be indented.
+        let input = "[ENT] http.proxy @ POST /proxy/{target}/{path*}(ProxyReqDto): ProxyResDto\n\n[REQ] proxy.run(ProxyReqDto): ProxyResDto\n    noop::run(): void\n";
+        let out = format_content(input);
+        assert_eq!(out, input, "got:\n{out}");
     }
 
     #[test]

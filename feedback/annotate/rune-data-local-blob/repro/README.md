@@ -1,6 +1,11 @@
 # Repro: `blobs[]` cannot represent a local file
 
-Self-contained. Needs only Deno + the `rune:data` skill scripts. Verified on rune 2.0.5.
+Self-contained. Needs only Deno + the `rune:data` skill scripts.
+
+> ✅ **Resolved in rune 2.0.6:** a `"fs"` (local file) blob kind was added. A blob with
+> `store: "fs"` now validates clean and renders as a local sidecar file (not S3). The captured
+> output below is the original pre-fix run; `cases/local-blob-rejected.json` used `store: "fs_json"`
+> (still rejected — blobs use `"fs"`, not `"fs_json"`), so it documents the gap as filed.
 
 ## Run
 

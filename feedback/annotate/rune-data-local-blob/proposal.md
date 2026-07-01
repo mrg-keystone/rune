@@ -1,6 +1,6 @@
 # Proposal: a local-file blob kind for `data.json` (`blobs[]` is S3-only)
 
-**Status:** proposal · **Affects:** the `rune:data` skill — `scripts/validate_data.ts` (blob rule),
+**Status:** ✅ shipped in rune 2.0.6 — a `"fs"` (local file) blob kind (filed as a proposal) · **Affects:** the `rune:data` skill — `scripts/validate_data.ts` (blob rule),
 `scripts/render_review.ts` (S3 bucketing), and the store rubric.
 **Origin:** designing the `annotate` module's data. Self-contained repro in [`./repro/`](./repro/).
 **Verified against:** the installed skill scripts (rune 2.0.5).
