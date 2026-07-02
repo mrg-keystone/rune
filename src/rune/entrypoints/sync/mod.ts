@@ -1,6 +1,7 @@
 import { basename, dirname, join, relative, resolve } from "#std/path";
 import {
   parseBarrelTarget,
+  planCreateOnceGrowth,
   planSync,
   polyBarrelNote,
 } from "@rune/domain/business/rune-sync/mod.ts";
@@ -232,6 +233,29 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
     ? plan.toPrune
     : plan.toPrune.filter((p) => !ownedSet.has(p));
 
+  // Incremental create-once growth: when the spec GREW an existing module, the
+  // preserved files may now owe members the fresh plan predicts — adapter/
+  // business methods the new coordinators call, DTO fields, @Endpoint bindings
+  // (the last invisible even to `deno check`). Append each missing member
+  // exactly as the generator would have emitted it (throwing stubs — red by
+  // design), never touching existing members; when a file has drifted so far
+  // its class can't be located, report the owed members loudly instead.
+  const grown: { path: string; added: string[] }[] = [];
+  const growthOwed: string[] = [];
+  const growthWrites: { path: string; content: string }[] = [];
+  for (const file of plan.toSkip) {
+    const existing = await readMaybe(join(root, file.path));
+    if (existing === null) continue;
+    const result = planCreateOnceGrowth(file.path, existing, file.content);
+    if (result === null) continue;
+    if ("owed" in result) {
+      growthOwed.push(`${file.path} — hand-add: ${result.owed.join(", ")}`);
+    } else {
+      grown.push({ path: file.path, added: result.grown.added });
+      growthWrites.push({ path: file.path, content: result.grown.content });
+    }
+  }
+
   if (parsed.dryRun) {
     created.push(...plan.toCreate.map((f) => f.path));
     regenerated.push(...plan.toRegenerate.map((f) => f.path));
@@ -248,6 +272,10 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
       if (await write(root, file.path, file.content, ioErrors, written)) {
         regenerated.push(file.path);
       }
+    }
+    // Create-once files extended with the members the grown spec now owes them.
+    for (const file of growthWrites) {
+      await write(root, file.path, file.content, ioErrors, written);
     }
     for (const target of deletable) {
       const abs = join(root, target);
@@ -341,6 +369,8 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
     pruned,
     blocked,
     ioErrors,
+    grown,
+    growthOwed,
   );
 
   // The run-all gate: execute the composed app's walk and print the verdict
@@ -1181,6 +1211,8 @@ function report(
   pruned: string[],
   blocked: string[],
   ioErrors: string[],
+  grown: { path: string; added: string[] }[] = [],
+  growthOwed: string[] = [],
 ): void {
   console.log(
     `${BOLD}sync ${relRune} (module: ${module})${
@@ -1196,6 +1228,22 @@ function report(
       `\n  ${CYAN}Regenerated ${regenerated.length} signature(s):${RESET}`,
     );
     for (const p of regenerated) console.log(`    ${CYAN}~ ${p}${RESET}`);
+  }
+  if (grown.length > 0) {
+    console.log(
+      `\n  ${GREEN}Extended ${grown.length} create-once file(s) — the spec grew, new members appended (bodies still yours):${RESET}`,
+    );
+    for (const g of grown) {
+      console.log(
+        `    ${GREEN}~ ${g.path} (+${g.added.join(", +")})${RESET}`,
+      );
+    }
+  }
+  if (growthOwed.length > 0) {
+    console.log(
+      `\n  ${YELLOW}create-once drift — these files must be hand-edited (sync preserved them, and could not safely append):${RESET}`,
+    );
+    for (const o of growthOwed) console.log(`    ${YELLOW}! ${o}${RESET}`);
   }
   if (preserved > 0) {
     console.log(
@@ -1217,8 +1265,8 @@ function report(
     for (const e of ioErrors) console.log(`    ${RED}! ${e}${RESET}`);
   }
   if (
-    created.length === 0 && pruned.length === 0 && blocked.length === 0 &&
-    ioErrors.length === 0
+    created.length === 0 && grown.length === 0 && growthOwed.length === 0 &&
+    pruned.length === 0 && blocked.length === 0 && ioErrors.length === 0
   ) {
     console.log(`\n  ${CYAN}In sync — nothing to create or prune.${RESET}`);
   }

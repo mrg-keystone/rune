@@ -19,7 +19,8 @@ export async function create(input: NewOrderDto): Promise<OrderDto> {
   // core — pure business logic, no I/O
   const out = createCore(validInput);
 
-  // writes — side effects through the data adapters (validated before they leave)
+  // after the core — boundary calls in spec order (validated at the seam)
+  // (guards run in the core above: a throw there prevents every call below)
   await orderData.save(assert(OrderDto, out.save, "order.save input"));
 
   return assert(OrderDto, out.result, "order.create output");

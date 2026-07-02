@@ -1013,7 +1013,7 @@ Deno.test("planManifest — coordinator weave: input/read/write/output asserts",
     '  const taskLoad = assert(TaskDto, await taskData.load(validInput.id), "task.load");',
   );
   assertStringIncludes(c, "  const out = createCore(validInput, taskLoad);");
-  assertStringIncludes(c, "  // writes — side effects through the data adapters (validated before they leave)");
+  assertStringIncludes(c, "  // after the core — boundary calls in spec order (validated at the seam)");
   assertStringIncludes(
     c,
     '  await taskData.save(assert(TaskDto, out.save, "task.save input"));',
@@ -1288,7 +1288,7 @@ Deno.test("planManifest — coordinator weave: empty-output boundary is a write 
   // the proven invalid-TS shape is gone…
   assertEquals(c.includes("as ;"), false);
   // …replaced by a fire-and-forget write fed from the validated input.
-  assertStringIncludes(c, "  // writes — side effects through the data adapters (validated before they leave)");
+  assertStringIncludes(c, "  // after the core — boundary calls in spec order (validated at the seam)");
   assertStringIncludes(c, "  await logData.append(validInput.message);");
   // it contributes no read variable and no core-output field.
   assertEquals(c.includes("logAppend"), false);
@@ -1300,7 +1300,7 @@ Deno.test("planManifest — coordinator weave: primitive and opaque read seams",
   const rune = `[MOD] geo
 
 [REQ] place.find(FindDto): PlaceDto
-    db:counter.next(): id
+    db:counter.peek(): id
     ex:geo.lookup(query): GeoPoint
 
 [DTO] FindDto: query
@@ -1314,14 +1314,148 @@ Deno.test("planManifest — coordinator weave: primitive and opaque read seams",
   const plan = planManifest("specs/geo.rune", rune, new Set());
   const c = plan.toCreate.find((f) => f.path.endsWith("place-find/mod.ts"))!.content;
   // [TYP] alias to a primitive: assert.<prim>, no cast — the alias IS the primitive.
-  assertStringIncludes(c, '  const counterNext = assert.string(await counterData.next(), "counter.next");');
+  assertStringIncludes(c, '  const counterPeek = assert.string(await counterData.peek(), "counter.peek");');
   // unresolvable named type keeps the cast, flagged as unvalidated.
   assertStringIncludes(
     c,
     '  const geoLookup = await geoData.lookup(validInput.query) as GeoPoint; // unvalidated: GeoPoint has no runtime contract',
   );
   // the core signature collapses the alias to its primitive.
-  assertStringIncludes(c, "counterNext: string, geoLookup: GeoPoint");
+  assertStringIncludes(c, "counterPeek: string, geoLookup: GeoPoint");
+});
+
+// Bug report 2026-07-01 (infra) #1: a multi-arg kv WRITE seam (`kv:role.set(roleId,
+// RoleDto): void`) generated the adapter with the 2-arg signature but the
+// coordinator call site with ONE arg (the DTO only) — TS2554, the tree failed
+// `deno check` before a single red test could run. Every declared param must be
+// bound, in order, from the shared resolution table: a core-minted scalar
+// resolves to `out.<p>` (and the core returns it), an input field to
+// `validInput.<p>`.
+Deno.test("planManifest — multi-arg write seam binds every declared param (TS2554 fix)", () => {
+  const rune = `[MOD] widgets
+
+[REQ] widget.define(DefineWidgetDto): WidgetDto
+    widget::newId(): widgetId
+    widget::build(DefineWidgetDto, widgetId): WidgetDto
+    kv:widget.set(widgetId, WidgetDto): void
+      timeout
+    [RET] WidgetDto
+
+[DTO] WidgetDto: widgetId, name
+    a stored widget
+[DTO] DefineWidgetDto: name
+    input to define a widget
+[TYP] widgetId: string
+    widget id
+[TYP] name: string
+    widget name
+[NON] widget
+    builds widgets`;
+  const plan = planManifest("widgets.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const c = plan.toCreate.find((f) => f.path.endsWith("widget-define/mod.ts"))!.content;
+  // BOTH args, in declared order: the core-minted scalar id, then the asserted DTO.
+  assertStringIncludes(
+    c,
+    '  await widgetData.set(out.widgetId, assert(WidgetDto, out.set, "widget.set input"));',
+  );
+  // the core returns the minted scalar alongside the write DTO.
+  assertStringIncludes(c, "): { set: WidgetDto; widgetId: string; result: WidgetDto } {");
+  // the adapter side of the same seam declares the same two params.
+  const adapter = plan.toCreate.find((f) => f.path.endsWith("domain/data/widget/mod.ts"))!.content;
+  assertStringIncludes(adapter, "set(widgetId: string, widgetDto: WidgetDto): Promise<void>");
+});
+
+// Bug report 2026-07-01 (infra) #3: an allow/attach-shaped recipe emitted the
+// mid-recipe kv MUTATION (`kv:widget.addPart(...): WidgetDto`) inside the reads
+// block, ABOVE the core — no position existed where authority guards could run
+// before the escalating write landed. Mutation verbs now run AFTER the core
+// (the guard position), and a write consuming the mutation's output chains the
+// real result instead of a core-fabricated copy.
+Deno.test("planManifest — value-returning mutation runs post-core, after the guard position", () => {
+  const rune = `[MOD] widgets
+
+[REQ] widget.attach(WidgetPartDto): WidgetDto
+    kv:widget.get(widgetId): WidgetDto
+      not-found
+    kv:part.get(partId): PartDto
+      not-found
+    kv:widget.addPart(widgetId, partId): WidgetDto
+      timeout
+    log:audit.widgetPartAttached(WidgetDto): void
+    [RET] WidgetDto
+
+[DTO] WidgetDto: widgetId, name
+    a stored widget
+[DTO] PartDto: partId, name
+    a stored part
+[DTO] WidgetPartDto: widgetId, partId
+    attach input
+[TYP] widgetId: string
+    widget id
+[TYP] partId: string
+    part id
+[TYP] name: string
+    a name`;
+  const plan = planManifest("widgets.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const c = plan.toCreate.find((f) => f.path.endsWith("widget-attach/mod.ts"))!.content;
+  // the loads stay pre-core…
+  assertStringIncludes(c, '  const widgetGet = assert(WidgetDto, await widgetData.get(validInput.widgetId), "widget.get");');
+  // …the mutation runs AFTER the core, with BOTH scalar args, under the guard note.
+  const coreIdx = c.indexOf("// core — pure business logic");
+  const mutIdx = c.indexOf(".addPart(");
+  assert(coreIdx !== -1 && mutIdx !== -1 && coreIdx < mutIdx, "mutation must follow the core");
+  assertStringIncludes(c, "  // (guards run in the core above: a throw there prevents every call below)");
+  assertStringIncludes(
+    c,
+    '  const widgetAddPart = assert(WidgetDto, await widgetData.addPart(validInput.widgetId, validInput.partId), "widget.addPart");',
+  );
+  // the audit write consumes the mutation's REAL result (chained), not a core copy…
+  assertStringIncludes(c, "  await auditData.widgetPartAttached(widgetAddPart);");
+  // …and the mutation is the result source; the guard-only core returns void.
+  assertStringIncludes(c, "  return widgetAddPart;");
+  assertStringIncludes(c, "): void {");
+});
+
+// The authorize→record shape: both are mutation verbs, both post-core in spec
+// order; record consumes authorize's asserted local (the core runs first, so it
+// can never fabricate a boundary result), and record's output is the [RET].
+Deno.test("planManifest — chained post-core mutations feed each other's results", () => {
+  const rune = `[MOD] pay
+
+[REQ] payment.charge(ChargeDto): ChargeResultDto
+    card.validate(ChargeDto): ChargeDto
+    ex:gateway.authorize(ChargeDto): AuthDto
+      declined
+    db:ledger.record(AuthDto): ChargeResultDto
+      timeout
+    [RET] ChargeResultDto
+
+[NON] card
+    a payment card
+[DTO] ChargeDto: amount
+    a charge request
+[DTO] AuthDto: token
+    a gateway authorization
+[DTO] ChargeResultDto: token, amount
+    the settled charge
+[TYP] amount: number
+    the amount
+[TYP] token: string
+    the token`;
+  const plan = planManifest("pay.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const c = plan.toCreate.find((f) => f.path.endsWith("payment-charge/mod.ts"))!.content;
+  // guard-only core: called unbound, typed void — card.validate + guards live there.
+  assertStringIncludes(c, "  chargeCore(validInput);");
+  assertStringIncludes(c, "function chargeCore(input: ChargeDto): void {");
+  // authorize consumes the validated input; record chains authorize's result.
+  assertStringIncludes(c, '  const gatewayAuthorize = assert(AuthDto, await gatewayData.authorize(validInput), "gateway.authorize");');
+  assertStringIncludes(c, '  const ledgerRecord = assert(ChargeResultDto, await ledgerData.record(gatewayAuthorize), "ledger.record");');
+  assertStringIncludes(c, "  return ledgerRecord;");
+  // the core-fabricated echo of a boundary result is gone.
+  assertEquals(c.includes("out."), false);
 });
 
 // Bug report 2026-06-14 (Datrix) #2: a [REQ] whose noun has no instance steps

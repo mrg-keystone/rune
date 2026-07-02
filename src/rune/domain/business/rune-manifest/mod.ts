@@ -1359,6 +1359,18 @@ function stepRecipe(steps: StepLike[] | CseNode["steps"]): string[] {
 // returns and feeds them to the data adapters that produce side effects
 // (boundary steps returning `void` — validated before they leave), and
 // validates the result. Scaffolded straight from the rune.
+// Boundary verbs that READ state — safe to run before the core's guards. Any
+// OTHER value-returning boundary verb (set/add/save/assign/charge/…) is a
+// value-returning MUTATION: it must run AFTER the core, so the core's guards
+// (authority checks, cross-app forbidden escalations) throw before the write
+// lands. Prefix-matched on the camelCase word boundary (getRecording reads;
+// getaway/checkout do not match get/check).
+function isReadVerb(verb: string): boolean {
+  return /^(get|list|load|read|fetch|find|lookup|query|search|download|count|peek|check|exists)($|[A-Z_0-9])/
+    .test(verb) ||
+    /^(is|has|can|assert)[A-Z_0-9]/.test(verb);
+}
+
 function renderCoordinator(
   req: ReqNode,
   module: string,
@@ -1368,11 +1380,16 @@ function renderCoordinator(
   const { typMap } = types;
   const isBoundary = (s: StepLike): s is BoundaryStepNode => s.kind === "boundary";
   const boundaries = req.steps.filter(isBoundary);
-  const reads = boundaries.filter((s) => s.output !== "void" && s.output !== "");
-  const writes = boundaries.filter((s) => s.output === "void");
+  const valueSteps = boundaries.filter((s) => s.output !== "void" && s.output !== "");
+  // Value-returning boundaries split by verb: read verbs may load pre-core;
+  // mutation verbs (role.addGrant, invoice.save, gateway.authorize) are
+  // emitted post-core even when their args are all input-fed — emitting a
+  // privilege-granting mutation in the reads block put it ABOVE every position
+  // where the core's guards could reject it first (the emission-order hazard).
+  const readSteps = valueSteps.filter((s) => isReadVerb(s.verb));
   // A boundary with NO declared output is a fire-and-forget side effect: it
   // joins the writes (nothing to bind — the old read path rendered `as ;`),
-  // args straight off the validated input.
+  // args resolved through the same post-core table.
   const sends = boundaries.filter((s) => s.output === "");
   // A read whose param is a DTO produced mid-flow (not the request input) can't
   // load before the core — it consumes a value the core builds. Such reads run
@@ -1382,8 +1399,8 @@ function renderCoordinator(
   // input fields).
   const isInputRead = (r: BoundaryStepNode): boolean =>
     r.params.every((p) => !/Dto$/.test(p) || p === req.input);
-  const inputReads = reads.filter(isInputRead);
-  const coreReads = reads.filter((r) => !isInputRead(r));
+  const inputReads = readSteps.filter(isInputRead);
+  const coreReads = readSteps.filter((r) => !isInputRead(r));
   const boundaryNouns = [...new Set(boundaries.map((s) => s.noun))];
 
   // Business classes are generated ONLY for nouns that appear as untagged
@@ -1423,40 +1440,56 @@ function renderCoordinator(
     verb: r.verb,
     params: r.params,
   }));
-  // Reads consuming a core-built DTO: each needs that DTO produced by the core
-  // (a `coreField` in its return), then runs post-core fed from `out.<coreField>`.
-  const coreReadVars = coreReads.map((r) => {
-    const dtoParam = r.params.find((p) => /Dto$/.test(p) && p !== req.input);
-    return {
-      name: camel(`${r.noun}-${r.verb}`),
-      type: r.output,
-      noun: r.noun,
-      verb: r.verb,
-      params: r.params,
-      dtoParam,
-      coreField: dtoParam ? camel(dtoParam) : camel(`${r.noun}-${r.verb}-arg`),
-      coreType: dtoParam ? seamTs(dtoParam, typMap) : "unknown",
+  // Every boundary step that runs AFTER the core, in SPEC ORDER — the recipe's
+  // declared order is the execution contract (a mutation declared before the
+  // audit write must land before it). "produce" steps (value-returning
+  // mutations + reads consuming core output) bind a seam-asserted local.
+  type PostAction =
+    | { kind: "write"; step: BoundaryStepNode; field: string }
+    | { kind: "send"; step: BoundaryStepNode }
+    | {
+      kind: "produce";
+      step: BoundaryStepNode;
+      name: string;
+      type: string;
+      mutation: boolean;
     };
-  });
-  // When a core-read produces the REQ's own output, IT is the result source —
-  // the core no longer returns `result` (it can't build the output a boundary
-  // produces); the coordinator returns that read's (already-asserted) value.
-  const resultRead = [...coreReadVars].reverse().find((r) => r.type === req.output) ??
-    null;
   const usedFields = new Set<string>();
-  const writeFields = writes.map((w) => {
-    let f = camel(w.verb);
+  const writeFieldFor = (verb: string): string => {
+    let f = camel(verb);
     while (usedFields.has(f)) f += "X";
     usedFields.add(f);
-    // The value the core must produce for this write: the DTO param if there
-    // is one, else the first param. Its type mirrors the typed adapter stub's
-    // param (rune-sig resolves the same way), so the core return type and the
-    // adapter signature agree; opaque params stay `unknown` on both sides.
-    const param = w.params.find((p) => /Dto$/.test(p)) ?? w.params[0];
-    const seam: Seam = param ? seamFor(param, typMap) : { kind: "opaque" };
-    const type = seam.kind === "opaque" ? "unknown" : seamTs(param, typMap);
-    return { field: f, type, seam, noun: w.noun, verb: w.verb };
-  });
+    return f;
+  };
+  const usedLocals = new Set(readVars.map((r) => r.name));
+  const produceLocalFor = (noun: string, verb: string): string => {
+    let n = camel(`${noun}-${verb}`);
+    while (usedLocals.has(n)) n += "X";
+    usedLocals.add(n);
+    return n;
+  };
+  const postActions: PostAction[] = [];
+  for (const s of boundaries) {
+    if (s.output === "void") {
+      postActions.push({ kind: "write", step: s, field: writeFieldFor(s.verb) });
+    } else if (s.output === "") {
+      postActions.push({ kind: "send", step: s });
+    } else if (!isReadVerb(s.verb) || !isInputRead(s)) {
+      postActions.push({
+        kind: "produce",
+        step: s,
+        name: produceLocalFor(s.noun, s.verb),
+        type: s.output,
+        mutation: !isReadVerb(s.verb),
+      });
+    }
+  }
+  const produces = postActions.filter((a) => a.kind === "produce");
+  // When a post-core step produces the REQ's own output, IT is the result
+  // source — the core no longer returns `result` (it can't build the output a
+  // boundary produces); the coordinator returns that step's asserted value.
+  const resultRead = [...produces].reverse().find((r) => r.type === req.output) ??
+    null;
 
   const inputSeam = seamFor(req.input, typMap);
   const outputSeam = seamFor(req.output, typMap);
@@ -1501,36 +1534,286 @@ function renderCoordinator(
     params
       .map((p) => /Dto$/.test(p) ? inputRef : scalarRef(p))
       .join(", ");
-  // Args for a post-core read: a core-built DTO comes from `out.<field>`
-  // (asserted at the seam), the request input DTO stays `inputRef`, scalar params
-  // are input fields or hoisted producer locals.
-  const coreReadArgs = (r: { noun: string; verb: string; params: string[] }): string =>
-    r.params
-      .map((p) => {
-        if (!/Dto$/.test(p)) return scalarRef(p);
-        if (p === req.input) return inputRef;
-        return `assert(${p}, out.${camel(p)}, "${r.noun}.${r.verb} ${camel(p)}")`;
-      })
+  // ---- post-core argument resolution (the shared name-resolution table) ----
+  //
+  // Every post-core call site binds EVERY parameter the step declares, in
+  // order, from one table — the same declarations the adapter signature is
+  // built from — so the call-site arity always equals the adapter's arity.
+  //
+  // The locals bound by post-core steps already emitted, so a later step can
+  // chain an earlier step's result (ledger.record(AuthDto) consumes the
+  // gateway.authorize local — the core runs BEFORE the mutations, so it can
+  // never fabricate their results).
+  const postLocals: { output: string; local: string }[] = [];
+  const lastPostLocal = (name: string): string | null => {
+    for (let i = postLocals.length - 1; i >= 0; i--) {
+      if (postLocals[i].output === name) return postLocals[i].local;
+    }
+    return null;
+  };
+  // Values the core must additionally return because a post-core call site
+  // consumes them and nothing else produces them. Registered in emission order;
+  // the same key resolves to the same field across call sites.
+  const extraOut = new Map<string, { field: string; type: string }>();
+  const extraFieldFor = (key: string, type: string): string => {
+    const existing = extraOut.get(key);
+    if (existing) return existing.field;
+    let f = key;
+    while (usedFields.has(f)) f += "X";
+    usedFields.add(f);
+    extraOut.set(key, { field: f, type });
+    return f;
+  };
+  // A scalar param of a post-core step: an input field, a hoisted producer
+  // local, a chained post-core result, a pre-core read's output — else the core
+  // must mint it (`out.<p>`, typed via its [TYP] seam; red by design).
+  const postScalar = (p: string): string => {
+    if (inputFields.has(p)) return `${inputRef}.${p}`;
+    if (hoisted.has(p)) return p;
+    const chained = lastPostLocal(p);
+    if (chained) return chained;
+    const readLocal = readVars.find((r) => r.type === p);
+    if (readLocal) return readLocal.name;
+    return `out.${extraFieldFor(p, seamTs(p, typMap))}`;
+  };
+  // A DTO param of a post-core step: the validated request input, a chained
+  // post-core result (already asserted), else a core-built DTO asserted at the
+  // seam (`out.<camel(dto)>` — the core returns it).
+  const postDto = (p: string, ctx: string): string => {
+    if (p === req.input) return inputRef;
+    const chained = lastPostLocal(p);
+    if (chained) return chained;
+    const f = extraFieldFor(camel(p), seamTs(p, typMap));
+    return `assert(${p}, out.${f}, ${ctx})`;
+  };
+  const postArgs = (step: BoundaryStepNode): string =>
+    step.params
+      .map((p) =>
+        /Dto$/.test(p)
+          ? postDto(p, `"${step.noun}.${step.verb} ${camel(p)}"`)
+          : postScalar(p)
+      )
       .join(", ");
-  const usesAssert = inputSeam.kind !== "opaque" ||
-    outputSeam.kind !== "opaque" ||
-    readVars.some((r) => seamFor(r.type, typMap).kind !== "opaque") ||
-    coreReadVars.length > 0 ||
-    writeFields.some((w) => w.seam.kind !== "opaque");
 
+  // ---- post-core emission (built FIRST: it decides what the core returns) ----
+  //
+  // One pass over the boundaries in SPEC ORDER. Emitting populates the shared
+  // resolution state (extraOut, coreWriteRet, postLocals), so the core call and
+  // its return type — composed after — reflect exactly what the calls consume.
+  const coreWriteRet: { field: string; type: string }[] = [];
+  const post: string[] = [];
+  for (const a of postActions) {
+    if (a.kind === "write") {
+      const w = a.step;
+      const ctx = `"${w.noun}.${w.verb} input"`;
+      // The write's PRIMARY param (its first DTO param, else its first param)
+      // is the value the core builds for it, returned under the verb-named
+      // field — unless an earlier post-core step already produced that exact
+      // value (then the write consumes the real, already-asserted result).
+      const dtoIdx = w.params.findIndex((p) => /Dto$/.test(p));
+      const primaryIdx = dtoIdx === -1 ? 0 : dtoIdx;
+      const args = w.params.map((p, i) => {
+        if (i !== primaryIdx) {
+          return /Dto$/.test(p)
+            ? postDto(p, `"${w.noun}.${w.verb} ${camel(p)}"`)
+            : postScalar(p);
+        }
+        const chained = lastPostLocal(p);
+        if (chained) return chained;
+        const seam: Seam = seamFor(p, typMap);
+        coreWriteRet.push({
+          field: a.field,
+          type: seam.kind === "opaque" ? "unknown" : seamTs(p, typMap),
+        });
+        return seam.kind === "dto"
+          ? `assert(${seam.cls}, out.${a.field}, ${ctx})`
+          : seam.kind === "primitive"
+          ? `assert.${seam.fn}(out.${a.field}, ${ctx})`
+          : `out.${a.field}`;
+      });
+      post.push(`  await ${camel(w.noun)}Data.${w.verb}(${args.join(", ")});`);
+    } else if (a.kind === "send") {
+      const s = a.step;
+      post.push(`  await ${camel(s.noun)}Data.${s.verb}(${postArgs(s)});`);
+    } else {
+      const r = a.step;
+      const call = `await ${camel(r.noun)}Data.${r.verb}(${postArgs(r)})`;
+      const seam = seamFor(a.type, typMap);
+      const ctx = `"${r.noun}.${r.verb}"`;
+      if (seam.kind === "dto") {
+        post.push(`  const ${a.name} = assert(${seam.cls}, ${call}, ${ctx});`);
+      } else if (seam.kind === "primitive") {
+        post.push(`  const ${a.name} = assert.${seam.fn}(${call}, ${ctx});`);
+      } else {
+        post.push(
+          `  const ${a.name} = ${call} as ${a.type}; // unvalidated: ${a.type} has no runtime contract`,
+        );
+      }
+      postLocals.push({ output: a.type, local: a.name });
+    }
+  }
+
+  // The core's return type: the values the writes consume, the extra values the
+  // post-core calls consume, and the result — unless a post-core step IS the
+  // result source. A core left with nothing to return is the guard-only shape:
+  // it types `void` and the shell calls it unbound.
+  const ret = [
+    ...coreWriteRet.map((w) => `${w.field}: ${w.type}`),
+    ...[...extraOut.values()].map((e) => `${e.field}: ${e.type}`),
+    ...(resultRead ? [] : [`result: ${seamTs(req.output, typMap)}`]),
+  ].join("; ");
+  const coreIsVoid = ret === "";
+
+  const B: string[] = [];
+  // JSDoc: input/output contracts + every fault, attributed to the step that
+  // raises it (collectFaultRaisers walks steps directly — collectAllFaults
+  // dedups and drops the raiser, which is exactly what @throws needs) (E2).
+  const faultRaisers = collectFaultRaisers(req.steps);
+  B.push("/**");
+  B.push(
+    ` * Coordinator for [REQ] ${req.noun}.${req.verb}(${req.input}): ${req.output}.`,
+  );
+  if (req.input) {
+    const inWord = inputSeam.kind === "opaque"
+      ? "passed through unvalidated (no [TYP] contract)"
+      : "asserted against its contract at the seam";
+    B.push(` * @param input ${req.input} — ${inWord}.`);
+  }
+  const outWord = outputSeam.kind === "opaque"
+    ? "passed through unvalidated (no [TYP] contract)"
+    : "asserted before return";
+  B.push(` * @returns ${req.output} — ${outWord}.`);
+  for (const { fault, raiser } of faultRaisers) {
+    B.push(` * @throws ${fault} — raised by ${raiser}`);
+  }
+  B.push(" */");
+  B.push(
+    `export async function ${req.verb}(input: ${
+      seamTs(req.input, typMap)
+    }): Promise<${seamTs(req.output, typMap)}> {`,
+  );
+  const inputCtx = `"${req.noun}.${req.verb} input"`;
+  if (inputSeam.kind === "dto") {
+    B.push(`  const validInput = assert(${inputSeam.cls}, input, ${inputCtx});`);
+  } else if (inputSeam.kind === "primitive") {
+    B.push(`  const validInput = assert.${inputSeam.fn}(input, ${inputCtx});`);
+  }
+  for (const n of boundaryNouns) {
+    B.push(`  const ${camel(n)}Data = new ${toPascal(n)}Data();`);
+  }
+  // value producers — pure steps whose scalar output a boundary below consumes.
+  // Emitted from the first-wins `producers` map (so a value with two producers
+  // binds once) in spec order — a producer feeding another is declared first —
+  // making each a real local the reads/sends reference instead of a missing
+  // input field. Static steps call the class; instance steps `new` it.
+  if (hoisted.size) {
+    B.push("");
+    B.push("  // value producers — pure steps whose output the boundaries below consume");
+    for (const [name, s] of producers) {
+      if (!hoisted.has(name)) continue;
+      const cls = toPascal(s.noun);
+      const call = s.isStatic
+        ? `${cls}.${s.verb}(${stepArgs(s.params)})`
+        : `new ${cls}().${s.verb}(${stepArgs(s.params)})`;
+      B.push(`  const ${name} = ${call};`);
+    }
+  }
+  if (readVars.length) {
+    B.push("");
+    B.push("  // reads — load inputs through the data adapters (validated at the seam)");
+    for (const r of readVars) {
+      const call = `await ${camel(r.noun)}Data.${r.verb}(${stepArgs(r.params)})`;
+      const seam = seamFor(r.type, typMap);
+      const ctx = `"${r.noun}.${r.verb}"`;
+      if (seam.kind === "dto") {
+        B.push(`  const ${r.name} = assert(${seam.cls}, ${call}, ${ctx});`);
+      } else if (seam.kind === "primitive") {
+        B.push(`  const ${r.name} = assert.${seam.fn}(${call}, ${ctx});`);
+      } else {
+        B.push(
+          `  const ${r.name} = ${call} as ${r.type}; // unvalidated: ${r.type} has no runtime contract`,
+        );
+      }
+    }
+  }
+  B.push("");
+  B.push("  // core — pure business logic, no I/O");
+  const coreCall = `${req.verb}Core(${
+    [inputRef, ...readVars.map((r) => r.name)].join(", ")
+  })`;
+  B.push(coreIsVoid ? `  ${coreCall};` : `  const out = ${coreCall};`);
+  if (post.length > 0) {
+    B.push("");
+    B.push("  // after the core — boundary calls in spec order (validated at the seam)");
+    if (postActions.some((a) => a.kind !== "produce" || a.mutation)) {
+      B.push("  // (guards run in the core above: a throw there prevents every call below)");
+    }
+    B.push(...post);
+  }
+  B.push("");
+  const outputCtx = `"${req.noun}.${req.verb} output"`;
+  if (resultRead) {
+    // The output is produced by a post-core boundary — already asserted above.
+    B.push(`  return ${resultRead.name};`);
+  } else if (outputSeam.kind === "dto") {
+    B.push(`  return assert(${outputSeam.cls}, out.result, ${outputCtx});`);
+  } else if (outputSeam.kind === "primitive") {
+    B.push(`  return assert.${outputSeam.fn}(out.result, ${outputCtx});`);
+  } else {
+    B.push("  return out.result;");
+  }
+  B.push("}");
+  B.push("");
+
+  const coreParams = [
+    `input: ${seamTs(req.input, typMap)}`,
+    ...readVars.map((r) => `${r.name}: ${seamTs(r.type, typMap)}`),
+  ].join(", ");
+  // Describe only the parts this verb actually has, so a no-reads or no-writes
+  // coordinator doesn't carry a misleading "the dtos the reads loaded" boilerplate.
+  const takesReads = readVars.length ? " and the dtos the reads loaded" : "";
+  const returnsClause = [
+    coreWriteRet.length ? "the dtos the writes consume" : "",
+    extraOut.size ? "the values the post-core calls consume" : "",
+    resultRead ? "" : "the result",
+  ].filter(Boolean).join(" plus ") ||
+    "nothing (the post-core boundary calls produce the flow's values)";
+  B.push(`// Pure business logic for ${req.noun}.${req.verb} — no I/O. Takes the`);
+  B.push(`// request input${takesReads}; returns ${returnsClause}.`);
+  B.push(
+    `function ${req.verb}Core(${coreParams}): ${coreIsVoid ? "void" : `{ ${ret} }`} {`,
+  );
+  for (const n of newNouns) {
+    B.push(`  const ${camel(n)} = new ${toPascal(n)}();`);
+  }
+  // E3: the spec's ordered step recipe as a checklist, so the dev implements
+  // exactly what the [REQ] declared. Boundaries are the shell's reads/writes/
+  // sends — only pure steps / [NEW] / [RET] / [PLY] dispatch belong in the core.
+  const recipe = stepRecipe(req.steps).map((l) => `  //   ${l}`);
+  if (recipe.length > 0) {
+    B.push(`  // Recipe from [REQ] ${req.noun}.${req.verb} (run in order):`);
+    B.push(...recipe);
+    B.push("  // TODO: implement the steps above, then build the dtos");
+  } else {
+    const todoNouns = newNouns.length
+      ? newNouns.map((n) => camel(n)).join(", ")
+      : "the inputs";
+    B.push(`  // TODO: run the pure steps on ${todoNouns}, build the dtos`);
+  }
+  B.push(`  throw new Error("not implemented");`);
+  B.push("}");
+  B.push("");
+
+  // ---- compose: header + imports (derived from the finished body) + body ----
   const dtos = dtoImports(
     [
       req.input,
       req.output,
-      ...readVars.map((r) => r.type),
-      ...writeFields.map((w) => w.type),
-      ...coreReadVars.map((r) => r.type),
-      ...coreReadVars.map((r) => r.dtoParam),
+      ...boundaries.flatMap((s) => [s.output, ...s.params]),
     ],
     module,
     types,
   );
-
   const L: string[] = [];
   // req.line is 0-based; +1 points at the [REQ] line in the spec (E1).
   L.push(`// Generated by rune manifest from ${runePath}:${req.line + 1}.`);
@@ -1540,7 +1823,10 @@ function renderCoordinator(
   for (const d of dtos) {
     L.push(`import { ${d.type} } from "@/${d.dir}/${d.file}.ts";`);
   }
-  if (usesAssert) L.push(`import { assert } from "#assert";`);
+  // The assert runtime is imported exactly when the emitted body calls it.
+  if (B.some((l) => /\bassert[.(]/.test(l))) {
+    L.push(`import { assert } from "#assert";`);
+  }
   for (const n of instanceNouns) {
     L.push(
       `import { ${toPascal(n)} } from "@/src/${module}/domain/business/${
@@ -1556,179 +1842,7 @@ function renderCoordinator(
     );
   }
   L.push("");
-
-  // JSDoc: input/output contracts + every fault, attributed to the step that
-  // raises it (collectFaultRaisers walks steps directly — collectAllFaults
-  // dedups and drops the raiser, which is exactly what @throws needs) (E2).
-  const faultRaisers = collectFaultRaisers(req.steps);
-  L.push("/**");
-  L.push(
-    ` * Coordinator for [REQ] ${req.noun}.${req.verb}(${req.input}): ${req.output}.`,
-  );
-  if (req.input) {
-    const inWord = inputSeam.kind === "opaque"
-      ? "passed through unvalidated (no [TYP] contract)"
-      : "asserted against its contract at the seam";
-    L.push(` * @param input ${req.input} — ${inWord}.`);
-  }
-  const outWord = outputSeam.kind === "opaque"
-    ? "passed through unvalidated (no [TYP] contract)"
-    : "asserted before return";
-  L.push(` * @returns ${req.output} — ${outWord}.`);
-  for (const { fault, raiser } of faultRaisers) {
-    L.push(` * @throws ${fault} — raised by ${raiser}`);
-  }
-  L.push(" */");
-  L.push(
-    `export async function ${req.verb}(input: ${
-      seamTs(req.input, typMap)
-    }): Promise<${seamTs(req.output, typMap)}> {`,
-  );
-  const inputCtx = `"${req.noun}.${req.verb} input"`;
-  if (inputSeam.kind === "dto") {
-    L.push(`  const validInput = assert(${inputSeam.cls}, input, ${inputCtx});`);
-  } else if (inputSeam.kind === "primitive") {
-    L.push(`  const validInput = assert.${inputSeam.fn}(input, ${inputCtx});`);
-  }
-  for (const n of boundaryNouns) {
-    L.push(`  const ${camel(n)}Data = new ${toPascal(n)}Data();`);
-  }
-  // value producers — pure steps whose scalar output a boundary below consumes.
-  // Emitted from the first-wins `producers` map (so a value with two producers
-  // binds once) in spec order — a producer feeding another is declared first —
-  // making each a real local the reads/sends reference instead of a missing
-  // input field. Static steps call the class; instance steps `new` it.
-  if (hoisted.size) {
-    L.push("");
-    L.push("  // value producers — pure steps whose output the boundaries below consume");
-    for (const [name, s] of producers) {
-      if (!hoisted.has(name)) continue;
-      const cls = toPascal(s.noun);
-      const call = s.isStatic
-        ? `${cls}.${s.verb}(${stepArgs(s.params)})`
-        : `new ${cls}().${s.verb}(${stepArgs(s.params)})`;
-      L.push(`  const ${name} = ${call};`);
-    }
-  }
-  if (readVars.length) {
-    L.push("");
-    L.push("  // reads — load inputs through the data adapters (validated at the seam)");
-    for (const r of readVars) {
-      const call = `await ${camel(r.noun)}Data.${r.verb}(${stepArgs(r.params)})`;
-      const seam = seamFor(r.type, typMap);
-      const ctx = `"${r.noun}.${r.verb}"`;
-      if (seam.kind === "dto") {
-        L.push(`  const ${r.name} = assert(${seam.cls}, ${call}, ${ctx});`);
-      } else if (seam.kind === "primitive") {
-        L.push(`  const ${r.name} = assert.${seam.fn}(${call}, ${ctx});`);
-      } else {
-        L.push(
-          `  const ${r.name} = ${call} as ${r.type}; // unvalidated: ${r.type} has no runtime contract`,
-        );
-      }
-    }
-  }
-  L.push("");
-  L.push("  // core — pure business logic, no I/O");
-  L.push(
-    `  const out = ${req.verb}Core(${[inputRef, ...readVars.map((r) => r.name)].join(", ")});`,
-  );
-  if (writeFields.length || sends.length) {
-    L.push("");
-    L.push("  // writes — side effects through the data adapters (validated before they leave)");
-    for (const w of writeFields) {
-      const ctx = `"${w.noun}.${w.verb} input"`;
-      const arg = w.seam.kind === "dto"
-        ? `assert(${w.seam.cls}, out.${w.field}, ${ctx})`
-        : w.seam.kind === "primitive"
-        ? `assert.${w.seam.fn}(out.${w.field}, ${ctx})`
-        : `out.${w.field}`;
-      L.push(`  await ${camel(w.noun)}Data.${w.verb}(${arg});`);
-    }
-    for (const s of sends) {
-      L.push(`  await ${camel(s.noun)}Data.${s.verb}(${stepArgs(s.params)});`);
-    }
-  }
-  if (coreReadVars.length) {
-    L.push("");
-    L.push("  // reads consuming core output — run AFTER the core (validated at the seam)");
-    for (const r of coreReadVars) {
-      const call = `await ${camel(r.noun)}Data.${r.verb}(${coreReadArgs(r)})`;
-      const seam = seamFor(r.type, typMap);
-      const ctx = `"${r.noun}.${r.verb}"`;
-      if (seam.kind === "dto") {
-        L.push(`  const ${r.name} = assert(${seam.cls}, ${call}, ${ctx});`);
-      } else if (seam.kind === "primitive") {
-        L.push(`  const ${r.name} = assert.${seam.fn}(${call}, ${ctx});`);
-      } else {
-        L.push(`  const ${r.name} = ${call} as ${r.type}; // unvalidated: ${r.type} has no runtime contract`);
-      }
-    }
-  }
-  L.push("");
-  const outputCtx = `"${req.noun}.${req.verb} output"`;
-  if (resultRead) {
-    // The output is produced by a post-core boundary — already asserted above.
-    L.push(`  return ${resultRead.name};`);
-  } else if (outputSeam.kind === "dto") {
-    L.push(`  return assert(${outputSeam.cls}, out.result, ${outputCtx});`);
-  } else if (outputSeam.kind === "primitive") {
-    L.push(`  return assert.${outputSeam.fn}(out.result, ${outputCtx});`);
-  } else {
-    L.push("  return out.result;");
-  }
-  L.push("}");
-  L.push("");
-
-  const coreParams = [
-    `input: ${seamTs(req.input, typMap)}`,
-    ...readVars.map((r) => `${r.name}: ${seamTs(r.type, typMap)}`),
-  ].join(", ");
-  // The core also produces any DTO a post-core read consumes; and it stops
-  // producing `result` when a post-core read is the output's source.
-  const coreReadRet: string[] = [];
-  const seenCoreField = new Set<string>();
-  for (const r of coreReadVars) {
-    if (seenCoreField.has(r.coreField)) continue;
-    seenCoreField.add(r.coreField);
-    coreReadRet.push(`${r.coreField}: ${r.coreType}`);
-  }
-  const ret = [
-    ...writeFields.map((w) => `${w.field}: ${w.type}`),
-    ...coreReadRet,
-    ...(resultRead ? [] : [`result: ${seamTs(req.output, typMap)}`]),
-  ].join("; ");
-  // Describe only the parts this verb actually has, so a no-reads or no-writes
-  // coordinator doesn't carry a misleading "the dtos the reads loaded" boilerplate.
-  const takesReads = readVars.length ? " and the dtos the reads loaded" : "";
-  const returnsClause = [
-    writeFields.length ? "the dtos the writes consume" : "",
-    coreReadRet.length ? "the dtos the post-core reads consume" : "",
-    resultRead ? "" : "the result",
-  ].filter(Boolean).join(" plus ") || "the result";
-  L.push(`// Pure business logic for ${req.noun}.${req.verb} — no I/O. Takes the`);
-  L.push(`// request input${takesReads}; returns ${returnsClause}.`);
-  L.push(`function ${req.verb}Core(${coreParams}): { ${ret} } {`);
-  for (const n of newNouns) {
-    L.push(`  const ${camel(n)} = new ${toPascal(n)}();`);
-  }
-  // E3: the spec's ordered step recipe as a checklist, so the dev implements
-  // exactly what the [REQ] declared. Boundaries are the shell's reads/writes/
-  // sends — only pure steps / [NEW] / [RET] / [PLY] dispatch belong in the core.
-  const recipe = stepRecipe(req.steps).map((l) => `  //   ${l}`);
-  if (recipe.length > 0) {
-    L.push(`  // Recipe from [REQ] ${req.noun}.${req.verb} (run in order):`);
-    L.push(...recipe);
-    L.push("  // TODO: implement the steps above, then build the dtos");
-  } else {
-    const todoNouns = newNouns.length
-      ? newNouns.map((n) => camel(n)).join(", ")
-      : "the inputs";
-    L.push(`  // TODO: run the pure steps on ${todoNouns}, build the dtos`);
-  }
-  L.push(`  throw new Error("not implemented");`);
-  L.push("}");
-  L.push("");
+  L.push(...B);
   return L.join("\n");
 }
 

@@ -1,0 +1,5 @@
+{
+  "tasks": {
+    "repro": "deno run -A repro.ts"
+  }
+}

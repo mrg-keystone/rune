@@ -16,18 +16,19 @@ export async function issue(input: IssueDto): Promise<InvoiceDto> {
   const validInput = assert(IssueDto, input, "invoice.issue input");
   const invoiceData = new InvoiceData();
 
-  // reads — load inputs through the data adapters (validated at the seam)
+  // core — pure business logic, no I/O
+  issueCore(validInput);
+
+  // after the core — boundary calls in spec order (validated at the seam)
+  // (guards run in the core above: a throw there prevents every call below)
   const invoiceSave = assert(InvoiceDto, await invoiceData.save(validInput), "invoice.save");
 
-  // core — pure business logic, no I/O
-  const out = issueCore(validInput, invoiceSave);
-
-  return assert(InvoiceDto, out.result, "invoice.issue output");
+  return invoiceSave;
 }
 
 // Pure business logic for invoice.issue — no I/O. Takes the
-// request input and the dtos the reads loaded; returns the result.
-function issueCore(input: IssueDto, invoiceSave: InvoiceDto): { result: InvoiceDto } {
+// request input; returns nothing (the post-core boundary calls produce the flow's values).
+function issueCore(input: IssueDto): void {
   // Recipe from [REQ] invoice.issue (run in order):
   //   1. [RET] InvoiceDto
   // TODO: implement the steps above, then build the dtos
