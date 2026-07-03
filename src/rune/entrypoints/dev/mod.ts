@@ -7,6 +7,20 @@ import {
   loadCoreSrvs,
   resolveRoot,
 } from "@rune/entrypoints/spec-root.ts";
+import {
+  attachShared,
+  type DevLockEntry,
+  devLockPath,
+  DevLog,
+  MAX_LOG_FILES,
+  pidAlive,
+  readDevLock,
+  reapOrphanChild,
+  repoKey,
+  runeStateRoot,
+  writeChildPid,
+  writeDevLock,
+} from "@rune/entrypoints/dev/registry.ts";
 
 const RED = "\x1b[31m";
 const GREEN = "\x1b[32m";
@@ -151,6 +165,45 @@ export async function runDev(args: string[]): Promise<number> {
     return 2;
   }
 
+  // ---- shared dev-process registry: ONE `rune dev` per git repo ----
+  // Already an owner for this repo (or any subdir of it — the key is the git root)? ATTACH to its
+  // live log instead of starting a second watcher + app. Ctrl-C in the attached run only detaches.
+  const repo = repoKey(root);
+  const existing = (await readDevLock())[repo];
+  if (existing && await pidAlive(existing.pid)) {
+    await attachShared(repo, existing);
+    return 0;
+  }
+  // OWN it. A stale entry means the previous owner was killed without cleanup — reap the orphaned
+  // app child it left (recorded pid; rune has no deterministic port to kill by) before taking over.
+  const logFolder = join(runeStateRoot(), "logs", repo);
+  await Deno.mkdir(logFolder, { recursive: true });
+  if (existing) await reapOrphanChild(existing["log-folder"]);
+  const log = new DevLog(logFolder, MAX_LOG_FILES);
+  {
+    const map = await readDevLock();
+    map[repo] = { pid: Deno.pid, "log-folder": logFolder };
+    await writeDevLock(map);
+  }
+  // Every line the owner emits — its own `rune dev:` messages AND the app child's stdout/stderr —
+  // is teed to the terminal AND to the rotating log so an attached run sees the same stream.
+  const enc = new TextEncoder();
+  const say = (line: string): void => void log.write(enc.encode(line + "\n"));
+  // Drop our registry entry on exit — sync (safe in the signal path) and only if it's still OURS
+  // (guards a race where a reclaiming run already took the slot).
+  const deregister = (): void => {
+    try {
+      const m = JSON.parse(Deno.readTextFileSync(devLockPath())) as Record<
+        string,
+        DevLockEntry
+      >;
+      if (m[repo]?.pid === Deno.pid) {
+        delete m[repo];
+        Deno.writeTextFileSync(devLockPath(), JSON.stringify(m, null, 2));
+      }
+    } catch { /* nothing to clean */ }
+  };
+
   // The status file keep's /docs/_dev serves: written atomically (tmp + rename)
   // so the app can never read a partial write.
   const tempDir = await Deno.makeTempDir({ prefix: "rune-dev-" });
@@ -174,21 +227,28 @@ export async function runDev(args: string[]): Promise<number> {
     let proc: Deno.ChildProcess;
     try {
       proc = new Deno.Command("deno", {
+        // stdout/stderr are PIPED (not inherited) so the app's output is teed into the shared log
+        // that attached runs stream — DevLog still echoes it to this terminal.
         args: ["run", "-A", "bootstrap/mod.ts"],
         cwd: root,
         env: { KEEP_DEV: statusPath },
-        stdout: "inherit",
-        stderr: "inherit",
+        stdout: "piped",
+        stderr: "piped",
       }).spawn();
     } catch (e) {
-      console.error(`${RED}rune dev: cannot start the app: ${errMessage(e)}${RESET}`);
+      say(`${RED}rune dev: cannot start the app: ${errMessage(e)}${RESET}`);
       return;
     }
     child = proc;
+    void writeChildPid(logFolder, proc.pid); // so a reclaiming run can reap us if we're orphaned
+    const pump = async (r: ReadableStream<Uint8Array>): Promise<void> => {
+      for await (const c of r) await log.write(c);
+    };
+    void Promise.all([pump(proc.stdout), pump(proc.stderr)]).catch(() => {});
     proc.status.then((st) => {
       if (gen !== generation || shuttingDown) return; // replaced by a restart / shutdown
       child = null;
-      console.error(
+      say(
         `${RED}rune dev: app exited (code ${st.code}) — waiting for the next save${RESET}`,
       );
       void writeStatus(false, [`app exited (code ${st.code})`]);
@@ -239,11 +299,13 @@ export async function runDev(args: string[]): Promise<number> {
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`\n${CYAN}rune dev: shutting down…${RESET}`);
+    say(`\n${CYAN}rune dev: shutting down…${RESET}`);
     await stopChild();
     try {
       watcher.close();
     } catch { /* already closed */ }
+    deregister();
+    log.close();
     try {
       await Deno.remove(tempDir, { recursive: true });
     } catch { /* best effort */ }
@@ -314,7 +376,7 @@ export async function runDev(args: string[]): Promise<number> {
         // Nothing left to check/sync. If a spec was removed (moved/deleted), the
         // project changed → restart so the running app reflects it; else noise.
         if (removed) {
-          console.log(`${CYAN}rune dev: spec removed — restarting app${RESET}`);
+          say(`${CYAN}rune dev: spec removed — restarting app${RESET}`);
           await writeStatus(true, []);
           await restartChild();
         }
@@ -325,14 +387,14 @@ export async function runDev(args: string[]): Promise<number> {
       const errors: string[] = [];
       for (const rel of liveSpecs) errors.push(...await checkSpec(root, rel));
       if (errors.length > 0) {
-        console.error(`${BOLD}${RED}rune dev: spec errors — app NOT restarted${RESET}`);
-        for (const e of errors) console.error(`  ${RED}${e}${RESET}`);
+        say(`${BOLD}${RED}rune dev: spec errors — app NOT restarted${RESET}`);
+        for (const e of errors) say(`  ${RED}${e}${RESET}`);
         await writeStatus(false, errors);
         return;
       }
       const written: string[] = [];
       for (const rel of liveSpecs) {
-        console.log(`${BOLD}${CYAN}rune dev: spec saved → sync ${rel}${RESET}`);
+        say(`${BOLD}${CYAN}rune dev: spec saved → sync ${rel}${RESET}`);
         const code = await runSync(["--root", root, join(root, rel)], written);
         if (code !== 0) {
           // S14: even on failure, mute whatever sync already wrote (this spec's
@@ -343,7 +405,9 @@ export async function runDev(args: string[]): Promise<number> {
             written.map((p) => resolve(p)),
             Date.now() + SUPPRESS_TAIL_MS,
           );
-          await writeStatus(false, [`rune sync failed for ${rel} (exit ${code})`]);
+          await writeStatus(false, [
+            `rune sync failed for ${rel} (exit ${code})`,
+          ]);
           return;
         }
       }
@@ -355,23 +419,26 @@ export async function runDev(args: string[]): Promise<number> {
         Date.now() + SUPPRESS_TAIL_MS,
       );
       await writeStatus(true, []);
-      console.log(`${GREEN}rune dev: sync ok — restarting app${RESET}`);
+      say(`${GREEN}rune dev: sync ok — restarting app${RESET}`);
       await restartChild();
       return;
     }
 
     // Non-spec source change → restart only (no sync).
-    console.log(`${CYAN}rune dev: source change — restarting app${RESET}`);
+    say(`${CYAN}rune dev: source change — restarting app${RESET}`);
     await writeStatus(true, []);
     await restartChild();
   }
 
   // ---- boot ----
   await writeStatus(true, []);
-  console.log(
-    `${BOLD}rune dev: ${root}${RESET}\n  watching ${
-      watchTargets.map((t) => relative(root, t) || t).join(", ")
-    }\n  status file ${statusPath}`,
+  say(
+    `${BOLD}rune dev: ${root}${RESET} ${CYAN}(shared process for "${repo}", pid ${Deno.pid})${RESET}\n` +
+      `  re-running \`rune dev\` in this repo attaches here — Ctrl-C there just detaches\n` +
+      `  watching ${
+        watchTargets.map((t) => relative(root, t) || t).join(", ")
+      }\n` +
+      `  status file ${statusPath}\n  logs ${logFolder}`,
   );
   spawnChild();
 
@@ -390,8 +457,35 @@ export async function runDev(args: string[]): Promise<number> {
 
   // The watcher closed without a signal (unusual): clean up like a shutdown.
   await stopChild();
+  deregister();
+  log.close();
   try {
     await Deno.remove(tempDir, { recursive: true });
   } catch { /* best effort */ }
+  return 0;
+}
+
+/** `rune stop [path]` — stop THIS git repo's shared `rune dev` process (from ~/.rune/dev.json) and
+ *  reap its app child. The teardown counterpart of the shared-process registry. */
+export async function runStop(args: string[]): Promise<number> {
+  const target = resolve(args.find((a) => !a.startsWith("-")) ?? ".");
+  const repo = repoKey(target);
+  const map = await readDevLock();
+  const e = map[repo];
+  if (!e) {
+    console.log(
+      `${CYAN}rune stop: no shared dev process registered for "${repo}".${RESET}`,
+    );
+    return 0;
+  }
+  try {
+    Deno.kill(e.pid, "SIGTERM");
+  } catch { /* already gone */ }
+  await reapOrphanChild(e["log-folder"]);
+  delete map[repo];
+  await writeDevLock(map);
+  console.log(
+    `${GREEN}rune stop: stopped the shared dev process for "${repo}" (pid ${e.pid}).${RESET}`,
+  );
   return 0;
 }
