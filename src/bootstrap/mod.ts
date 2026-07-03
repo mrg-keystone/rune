@@ -1,5 +1,21 @@
 import { dirname, fromFileUrl, join, resolve } from "#std/path";
-import { rules, runPipeline, parseArgs, printHeader, printResults, printJson, runManifest, runSync, runInit, runCheck, runDev, runValidate, runUpdate, runVersion } from "@rune/mod-root.ts";
+import {
+  parseArgs,
+  printHeader,
+  printJson,
+  printResults,
+  rules,
+  runCheck,
+  runDev,
+  runInit,
+  runManifest,
+  runPipeline,
+  runStop,
+  runSync,
+  runUpdate,
+  runValidate,
+  runVersion,
+} from "@rune/mod-root.ts";
 import { getIgnoredPaths } from "@rune/domain/data/project/mod.ts";
 import { suggestForResults } from "@rune/domain/data/llm/openai.ts";
 import { canonicalPaths as SHAPE } from "@rune/domain/business/artifact/canonical-paths.ts";
@@ -28,7 +44,10 @@ if (["-v", "--version", "-V", "version"].includes(Deno.args[0] ?? "")) {
 }
 
 // ---- help ---- (bare `rune` with no args shows this too)
-if (["-h", "--help", "help"].includes(Deno.args[0] ?? "") || Deno.args.length === 0) {
+if (
+  ["-h", "--help", "help"].includes(Deno.args[0] ?? "") ||
+  Deno.args.length === 0
+) {
   console.log(`rune — design a spec, generate the code, keep it honest.
 
 USAGE
@@ -36,6 +55,8 @@ USAGE
   rune sync <file.rune>      generate/update a module from its spec
   rune check <file.rune>     check a spec for errors (no codegen)
   rune dev [path]            live loop: save spec → check → sync → app restart → page reload
+                            (one shared process per git repo; re-run to attach to it)
+  rune stop [path]           stop this repo's shared \`rune dev\` process
   rune lint [dir] [--strict] lint a project against the architecture (default: .);
                             --strict promotes strict-gated rules (e.g. un-enriched
                             heal-rules) to failing violations — the CI profile
@@ -84,8 +105,14 @@ async function delegate(name: string, args: string[]): Promise<number> {
     }).spawn();
     return (await child.status).code;
   } catch (e) {
-    console.error(`rune: could not run helper '${name}': ${e instanceof Error ? e.message : e}`);
-    console.error(`(build it with \`cd lang && cargo build\`, or set RUNE_BIN_DIR)`);
+    console.error(
+      `rune: could not run helper '${name}': ${
+        e instanceof Error ? e.message : e
+      }`,
+    );
+    console.error(
+      `(build it with \`cd lang && cargo build\`, or set RUNE_BIN_DIR)`,
+    );
     return 127;
   }
 }
@@ -134,6 +161,11 @@ if (Deno.args[0] === "dev") {
   Deno.exit(code);
 }
 
+if (Deno.args[0] === "stop") {
+  const code = await runStop(Deno.args.slice(1));
+  Deno.exit(code);
+}
+
 if (Deno.args[0] === "validate") {
   const code = await runValidate(Deno.args.slice(1));
   Deno.exit(code);
@@ -158,7 +190,9 @@ if (Deno.args[0] !== "lint") {
   Deno.exit(2);
 }
 
-const { dir, module: moduleName, suggest, json } = parseArgs(Deno.args.slice(1));
+const { dir, module: moduleName, suggest, json } = parseArgs(
+  Deno.args.slice(1),
+);
 
 // `--strict` promotes strict-gated rules (e.g. rune-heal-todo) into failing
 // violations — the CI profile. Surfaced to the rules via RUNE_LINT_STRICT so the
@@ -215,11 +249,16 @@ for (const r of filtered) {
 
   if (r.rule === "import-aliases") {
     const imp = r.violations[0]?.match(/\((.+)\)$/)?.[1];
-    if (imp) r.suggestion = `Replace the relative import "${imp}" with the corresponding @ alias.`;
+    if (imp) {
+      r.suggestion =
+        `Replace the relative import "${imp}" with the corresponding @ alias.`;
+    }
   } else if (r.rule === "external-imports") {
-    r.suggestion = "Use a # alias in the import map instead of bare npm: or jsr: specifiers.";
+    r.suggestion =
+      "Use a # alias in the import map instead of bare npm: or jsr: specifiers.";
   } else if (r.rule === "barrel-discipline") {
-    r.suggestion = "Move re-exports to mod-root.ts or poly-mod.ts — other files should only export their own declarations.";
+    r.suggestion =
+      "Move re-exports to mod-root.ts or poly-mod.ts — other files should only export their own declarations.";
   } else if (r.rule === "dto-validation") {
     r.suggestion = "Add a Zod schema to validate this DTO shape.";
   } else if (r.rule === "layer-restrictions") {
@@ -227,16 +266,23 @@ for (const r of filtered) {
   } else if (r.rule === "module-isolation") {
     r.suggestion = r.violations[0];
   } else if (r.rule === "fixture-promotion") {
-    r.suggestion = "Move this fixture to assets/ since it's imported by production code.";
+    r.suggestion =
+      "Move this fixture to assets/ since it's imported by production code.";
   } else if (r.rule === "structure") {
     const v = r.violations[0] ?? "";
     if (v.includes("Wrong extension")) {
       const match = v.match(/expected (.+?) \(/);
-      if (match) r.suggestion = `Rename this file to use the ${match[1]} extension.`;
+      if (match) {
+        r.suggestion = `Rename this file to use the ${match[1]} extension.`;
+      }
     } else if (v.includes("Missing required file")) {
       const match = v.match(/Missing required file "(.+?)"/);
       const extMatch = v.match(/\((\.[a-z]+(?:\|.[a-z]+)*)\)/);
-      if (match) r.suggestion = `Create ${match[1]}${extMatch ? extMatch[1].split("|")[0] : ".ts"} in this folder.`;
+      if (match) {
+        r.suggestion = `Create ${match[1]}${
+          extMatch ? extMatch[1].split("|")[0] : ".ts"
+        } in this folder.`;
+      }
     }
   }
 }
@@ -245,18 +291,22 @@ if (suggest && filtered.length > 0) {
   const needsLlm = filtered.some(
     (r) =>
       !r.suggestion &&
-      ((r.rule === "structure" && r.violations.some((v) => v.includes("not allowed"))) ||
+      ((r.rule === "structure" &&
+        r.violations.some((v) => v.includes("not allowed"))) ||
         r.rule === "module-fragmentation"),
   );
 
   if (needsLlm) {
     try {
       const specJson = JSON.stringify(SHAPE, null, 2);
-      const readFile = (path: string) => Deno.readTextFile(join(targetDir, path));
+      const readFile = (path: string) =>
+        Deno.readTextFile(join(targetDir, path));
       console.error("  [suggest] Generating suggestions via OpenAI...");
       const t0 = performance.now();
       await suggestForResults(filtered, specJson, readFile);
-      console.error(`  [suggest] Done in ${(performance.now() - t0).toFixed(0)}ms`);
+      console.error(
+        `  [suggest] Done in ${(performance.now() - t0).toFixed(0)}ms`,
+      );
     } catch (e) {
       console.error(`  [suggest] Failed: ${e}`);
     }
