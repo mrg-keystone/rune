@@ -491,6 +491,34 @@ decorator, and the generated coordinator asserts them at every seam.
 - The body of an `[ENT]` references the `[REQ]` it dispatches to
 - The surface name (`http`, `cli`, `queue`, etc.) becomes the entrypoint folder name
 
+### HTTP verb & explicit route (`@ METHOD /template`)
+
+Without a clause, an `[ENT]` is a **`POST`** at a route auto-derived from the action
+name (plus any `[TYP:from=…]` fields). An optional `@ METHOD [/template]` clause
+**between the name and the parens** overrides either or both:
+
+```
+[ENT] http.getTask    @ GET    /tasks/{id}(TaskRefDto): TaskDto
+[ENT] http.listTasks  @ GET(ListTasksDto): TasksDto
+[ENT] http.removeTask @ DELETE /tasks/{id}(TaskRefDto): OkDto
+[ENT] http.proxy      @ POST   /proxy/{target}/{rest*}(ProxyReqDto): ProxyResDto
+```
+
+- Verbs: `GET`, `POST`, `PUT`, `PATCH`, `DELETE` — anything else is an error
+  (`[ENT] HTTP method must be one of GET, POST, PUT, PATCH, DELETE`). Uppercase by
+  convention; matching is case-insensitive.
+- `@ METHOD` alone (no template) sets just the verb — the route is still auto-derived.
+- A template's `{name}` segments (and one trailing `{name*}` catch-all, which may span
+  `/`) bind URL parts to same-named **input DTO fields** — the explicit-template twin
+  of `[TYP:from=path|path*]`. Fields the template doesn't name stay where their
+  `from=` puts them (body by default) — for a `GET`, route every input field via the
+  template, `from=query`, or `from=header` (a GET carries no JSON body).
+- **The verb is part of the contract, not free styling** (the waist rule — sprig's
+  `contract.md`): reads are `GET` **queries** returning current-state DTOs
+  (`<type>.all`, `<type>.get`); writes stay `POST` **command verbs**. `PUT`/`PATCH`
+  exist for edge cases (an upstream contract you don't control) — never to model an
+  "edit-this-record" endpoint.
+
 ### Process flows (branches)
 
 The module's endpoints form a *process* (the cake walks them in order, chaining

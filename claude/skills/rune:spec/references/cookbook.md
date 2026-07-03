@@ -100,6 +100,30 @@ The cake's flow selector lets you exercise `create → use` green, then switch t
 `teardown` to clean up — without `delete` ever blocking or auto-running in the
 main walk.
 
+## GET queries need the explicit verb clause
+
+Every `[ENT]` defaults to `POST`. A read endpoint modeled without a verb clause is a
+POST-shaped query — wrong for caching, for the OpenAPI doc, and for the waist rule
+(reads are queries). Ask for the verb with `@ METHOD [/template]` between the name and
+the parens:
+
+```
+# WRONG — a read that generates POST /http/get-task with the id in the JSON body
+[ENT] http.getTask(TaskRefDto): TaskDto
+
+# RIGHT — a GET at an explicit route; {id} binds the same-named input field
+[ENT] http.getTask @ GET /tasks/{id}(TaskRefDto): TaskDto
+
+# Verb-only override — route stays auto-derived
+[ENT] http.listTasks @ GET(ListTasksDto): TasksDto
+```
+
+Verbs: `GET | POST | PUT | PATCH | DELETE`. On a `GET`, route every input field —
+template `{field}` / trailing `{field*}` catch-all, `[TYP:from=query]`, or
+`[TYP:from=header]` — since a GET carries no JSON body. Commands stay `POST` intent
+verbs; don't reach for `PUT`/`PATCH` to model an "edit-this-record" endpoint (the
+waist rule).
+
 ## A WebSocket socket is a surface of topics
 
 When the surface is a live socket rather than request/response, use `[ENT:ws]`. The

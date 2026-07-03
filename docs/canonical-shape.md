@@ -83,13 +83,14 @@ src/
         │       └── e2e.test.ts  # cypress end-to-end tests for this entry point
         └── dto/
             └── <name>.ts  # class validator and class transformer type definition
-spec/  # rune staging area — authored specs (runes/), data design + cake artifacts (misc/), UI prototype (ui/), founding product docs (product/)
+spec/  # rune staging area — authored specs (runes/), data design + cake artifacts (misc/), UI prototype (ui/), founding product docs (product/), the ratified contract's machine faces (contract/)
     ├── <name>.rune (optional)  # rune spec for a module (legacy flat layout — prefer spec/runes/)
     ├── runes/  # Rune spec files — one per module (the canonical authoring home; core.rune holds shared [SRV]s)
     │   └── <name>.rune  # rune spec for a module
     ├── misc/  # data design (data.json, data.review.html) + keep cake artifacts (cake.json, heal-rules.json, scenarios/)
     ├── ui/  # sprig UI prototype + design system (sprig:prototype / sprig:design output)
-    └── product/  # founding product docs — spec.md + user-stories.md (rune:scope output)
+    ├── product/  # founding product docs — spec.md + user-stories.md (rune:scope output)
+    └── contract/  # the ratified cross-repo contract's machine faces — generated OpenAPI + typed client, the prototype-seeded draft, the breakdown binding (queries + commands; see sprig's contract.md)
 specs/  # Rune spec files — one per module
     └── <name>.rune  # rune spec for a module
 fixtures/  # Legacy cake-artifact home (used when the project has no spec/ dir): cake.json, heal-rules.json

@@ -84,7 +84,10 @@ them itself (a subagent cannot converse with the user). Exactly one job is deleg
   `rune:spec`.
 - **`sprig:prototype` / `sprig:design`** — *what it looks like* (`spec/ui/`: the
   clickable prototype + design system). Your `spec.md` describes the UX in prose and
-  ASCII; sprig makes it real.
+  ASCII; sprig makes it real. The two-seam prototype (`spec/ui/<app>-prototype/`) is
+  born carrying the draft backend contract — `objects/` (the read model) +
+  `commands.json` (intent verbs) — which `rune:spec` ratifies (bridge 1 of sprig's
+  `contract.md`).
 - **`rune:build` / `rune:cake` / `rune:framework` / `rune:docs`** — *making it run*.
   Everything downstream of a finalized `.rune`. Far from here; named only so you know
   where the prose eventually lands.
@@ -285,6 +288,18 @@ means `spec.md` must make four things explicit, because they are exactly what
   `rune:spec`'s `core.rune`. Naming them now means the boundaries are designed, not
   discovered mid-build.
 
+**When a two-seam prototype exists, it IS the seed inventory (bridge 1).** A
+prototype built after this scope (`spec/ui/<app>-prototype/`) carries the draft
+contract pre-extracted: `objects/<type>.json` names the entities + read model, and
+`commands.json` names the write verbs (+ their `kind` immutability hints). Point
+`rune:spec` at those two files (or the snapshot in `spec/contract/draft/` — the
+`contract snapshot` CLI lifts it) as the
+endpoint/entity inventory — it ratifies them into canonical DTOs instead of
+re-deriving them from prose. Your four inventories above still matter: they cover
+what the prototype can't show (cron/queue triggers, external `[SRV]`s, non-UI
+modules). Either way the endpoint surface stays **queries + commands** — never an
+"edit-this-record" endpoint (the waist rule; see sprig's `contract.md`).
+
 You don't write any rune syntax — you write prose and tables that *name these four
 things clearly*. The handoff summary you give at the end (see the procedure) is
 literally this inventory: modules, their endpoints, the entities, the external
@@ -372,7 +387,8 @@ defined before it's scaffolded.
 6. **Hand off to `rune:spec`.** Only after sign-off: summarize the **handoff
    inventory** — the modules (deployable surfaces), each module's endpoints (the
    `[REQ]` inventory), the entities (`[NON]`/`[DTO]`s), and the external services
-   (`[SRV]`s) — and stop. The next step is `rune:spec` turning each module's endpoint
+   (`[SRV]`s) — plus, when a two-seam prototype exists, the paths to its `objects/`
+   + `commands.json` (the bridge-1 seed `rune:spec` ratifies) — and stop. The next step is `rune:spec` turning each module's endpoint
    inventory into a `rune check`-clean `.rune`. Do not write any `.rune`, design a
    data store (`rune:data`), prototype the UI (`sprig`), or build code (`rune:build`).
 

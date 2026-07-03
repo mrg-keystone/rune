@@ -69,6 +69,10 @@ Derived from LSP implementation.
 | `[ENT]` format: `[ENT] surface.action(InputDto): OutputDto` | ERROR |
 | `[ENT]` input must be a DTO or inline `{}`; output must be a DTO | ERROR |
 | `[ENT]` modifier is a flow name or `optional` (`[ENT:card]`, `[ENT:optional]`) | - |
+| An `[ENT]` may carry an explicit route clause between name and parens: `surface.action @ METHOD /path/{field}(InDto): OutDto` | - |
+| `[ENT]` HTTP method must be one of GET, POST, PUT, PATCH, DELETE (case-insensitive; uppercase by convention) | ERROR |
+| No clause ⇒ `POST` at an auto-derived route; `@ METHOD` alone ⇒ verb override, route still auto-derived | - |
+| Template `{field}` segments (and one trailing `{field*}` catch-all) bind URL parts to same-named input-DTO fields — the explicit twin of `[TYP:from=path\|path*]` | - |
 | An `[ENT]` may carry ONE indented `[REQ]` body line naming the coordinator it dispatches to | - |
 | An `[ENT]` body `[REQ]` must reference a defined `[REQ]` | ERROR |
 | An `[ENT]` body `[REQ]` takes no modifier | ERROR |
@@ -209,7 +213,10 @@ exactly as before, so existing specs are unchanged.
 | `header` | a request header | — (read from the headers) |
 
 The route is **derived automatically** from the action plus the path fields in
-declaration order — no path template is written in the spec. Every layer reads
+declaration order — no path template needs to be written in the spec. (When you want
+explicit control of the verb or the route shape, the `[ENT] … @ METHOD /template`
+clause overrides the derivation and composes with `from=query|header` — see the
+Entrypoints section.) Every layer reads
 the same per-field source: the framework binds each field from its source and
 merges them into one validated input DTO (so the coordinator signature is
 unchanged); the docs render path/query/header params (out of the request body);

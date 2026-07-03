@@ -48,7 +48,9 @@ argument-hint: "[module or feature whose data structure to design]"
 The data-design layer of rune. The main session orchestrates three specialists —
 survey → design → reconcile — and owns the **interactive store/retention decisions**
 and the **terminal review gate**. The design comes first (`spec/misc/data.json`), then
-minimal nudges to the existing spec; never the reverse.
+minimal nudges to the existing spec; never the reverse. The whole pass stays **below
+the waist** (the cross-repo contract, sprig's `contract.md`): storage reshaping never
+changes the query DTOs or the command surface the frontend binds to.
 
 ## When this skill applies
 
@@ -82,6 +84,10 @@ Specialists PROPOSE with rationale; the main session CONFIRMS with the user:
   deployment-preference call (use `AskUserQuestion`).
 - **An ambiguous retention window** — "keep forever, or expire after N?" when the
   business window isn't inferable.
+- **Surfacing history upward** — exposing an append-only trail on a read DTO is a
+  PRODUCT decision, not a storage one: it crosses the waist, and only **additively**
+  (did the prototype show a history panel?). Confirm it with the user before the
+  reconciler adds the `(s)` field — never let it arrive as a `rune:data` side effect.
 
 ## The terminal review gate (the orchestrator owns it — fire it EVERY run)
 

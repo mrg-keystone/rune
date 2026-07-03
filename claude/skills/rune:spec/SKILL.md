@@ -46,6 +46,12 @@ user **before** delegating authoring:
 - **One `[REQ]` = one externally-triggerable endpoint** (an HTTP route, cron job, queue/
   webhook). Internal/domain logic is **steps inside** a REQ, never its own REQ. Author
   from the wiring / endpoint inventory, not from prose.
+- **The waist rule (the cross-repo contract):** every endpoint is a **query** (a
+  current-state read DTO: `<type>.all`, `<type>.get`) or a **command** (an intent verb +
+  input DTO) — **never an "edit-this-record" endpoint** (no `PUT`/`PATCH`-a-record CRUD).
+  `rune:data` reshapes storage below this waist without touching the read DTOs or the
+  command surface; history surfaces upward only additively, as a product decision.
+  (Declared in sprig's `contract.md`, sibling to `coms.md`/`coordinate.md`.)
 - **`[MOD]` = one deployable surface**, not one per concept or doc folder.
 - **`[PLY]` = runtime dispatch** (exactly one arm executes per call), NOT a catalog of N
   things that all run.
@@ -55,8 +61,14 @@ user **before** delegating authoring:
 ## Flow
 
 1. **(main session)** Gather the endpoint inventory + entities + external services
-   (often handed over by `rune:scope`); decide granularity per the rules above,
-   clarifying genuine forks with the user.
+   (often handed over by `rune:scope`). When a two-seam prototype exists
+   (`spec/ui/<app>-prototype/` — or its snapshot in `spec/contract/draft/`, lifted by
+   the `contract snapshot` CLI from `@dev-tools/contract`), it IS the
+   seed inventory (bridge 1): ratify each `objects/<type>.json` into a type + read DTO +
+   query endpoints, and each `commands.json` entry into a command verb + input DTO (its
+   `kind` rides along as `rune:data`'s immutability hint); every seam entry is either
+   ratified or explicitly dropped with the user. Then decide granularity per the rules
+   above, clarifying genuine forks with the user.
 2. **Delegate** authoring to `rune-spec-author` (Task tool). Pass: the decided modeling
    brief, the target `spec/runes/<m>.in-prog.rune`, the project root, and the absolute
    paths to `claude/skills/rune:spec/references/` (spec.md, constraints.md, cookbook.md,

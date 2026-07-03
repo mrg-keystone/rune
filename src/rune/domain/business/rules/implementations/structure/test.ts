@@ -102,9 +102,12 @@ Deno.test("check — the spec/ staging layout: runes/ holds specs, misc/ + ui/ a
       "spec/ui/pages/queue.tsx",
       "spec/product/spec.md",
       "spec/product/user-stories.md",
+      "spec/contract/openapi.json",
+      "spec/contract/binding.md",
+      "spec/contract/client/dtos.ts",
       "spec/orders.rune", // legacy flat — still allowed
     ],
-    ["spec", "spec/runes", "spec/misc", "spec/misc/scenarios", "spec/ui", "spec/ui/pages", "spec/product"],
+    ["spec", "spec/runes", "spec/misc", "spec/misc/scenarios", "spec/ui", "spec/ui/pages", "spec/product", "spec/contract", "spec/contract/client"],
   );
   // The three staging folders are recognized.
   assertEquals(await check("spec/runes", "folder", ctx), null);
@@ -125,6 +128,11 @@ Deno.test("check — the spec/ staging layout: runes/ holds specs, misc/ + ui/ a
   assertEquals(await check("spec/product", "folder", ctx), null);
   assertEquals(await check("spec/product/spec.md", "md", ctx), null);
   assertEquals(await check("spec/product/user-stories.md", "md", ctx), null);
+  // spec/contract/ holds the ratified contract's machine faces — an ignore bucket.
+  assertEquals(await check("spec/contract", "folder", ctx), null);
+  assertEquals(await check("spec/contract/openapi.json", "json", ctx), null);
+  assertEquals(await check("spec/contract/binding.md", "md", ctx), null);
+  assertEquals(await check("spec/contract/client/dtos.ts", "ts", ctx), null);
 });
 
 Deno.test("check — dto .ts file is allowed", async () => {

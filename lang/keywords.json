@@ -1346,7 +1346,7 @@
       }
     },
     "spec/": {
-      "$desc": "rune staging area — authored specs (runes/), data design + cake artifacts (misc/), UI prototype (ui/), founding product docs (product/)",
+      "$desc": "rune staging area — authored specs (runes/), data design + cake artifacts (misc/), UI prototype (ui/), founding product docs (product/), the ratified contract's machine faces (contract/)",
       "<name>": {
         "ext": [
           ".rune"
@@ -1373,6 +1373,10 @@
       },
       "product/": {
         "$desc": "founding product docs — spec.md + user-stories.md (rune:scope output)",
+        "$ignore": "*"
+      },
+      "contract/": {
+        "$desc": "the ratified cross-repo contract's machine faces — generated OpenAPI + typed client, the prototype-seeded draft, the breakdown binding (queries + commands; see sprig's contract.md)",
         "$ignore": "*"
       }
     },

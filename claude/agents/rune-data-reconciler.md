@@ -35,7 +35,7 @@ Reason with the sequential-thinking MCP. The governing rule is **minimal diff** 
    - **a projection must be maintained** — a secondary `projection` in `data.json` → add the maintenance step to the `[REQ]` that writes the primary (and its `[SRV]` in `core.rune` if new).
    - **a verb's meaning changed** — a restructured `load→mutate→save` reads as an append → retag the boundary step (a rename, not a re-flow).
    - **a new field needs a type** — any field you introduced needs its `[TYP]`; an unbound required field needs `[TYP:example=…]` or it 422s in the first cake walk.
-2. LEAVE THE SPEC ALONE when: the trail is storage-internal (current state exposed flat — the adapter folds it); the change is a derived `aggregate`; the store/key/index is invisible to the flow; or the nudge would grow into real re-modelling (STOP and hand back to `rune:spec`).
+2. LEAVE THE SPEC ALONE when: the trail is storage-internal (current state exposed flat — the adapter folds it); the change is a derived `aggregate`; the store/key/index is invisible to the flow; or the nudge would grow into real re-modelling (STOP and hand back to `rune:spec`). This is the waist rule working: storage reshaping stays below the contract, and the ONLY upward edit is the additive history-surface of step 1 (a product decision the orchestrator confirmed).
 3. Make the smallest edit; preserve surrounding lines, ordering, and the author's naming style.
 4. Run `rune check` on each touched file — it must stay clean. Do NOT run `rune fmt` (it can mangle indentation); fix errors by hand. (In the repo without an installed binary, prefix with `deno run -A src/bootstrap/mod.ts`.)
 5. Re-run `scripts/scan_spec.ts` to confirm the inventory still matches `data.json` (same entities; the restructured verbs now visible).
@@ -50,4 +50,4 @@ Return: the diff of every `.rune` edit (file + the changed lines) and, for each,
 
 ## Never
 
-Never run `rune fmt`. Never re-model from scratch (a new endpoint/entity/granularity call → hand to `rune:spec`). Never touch the spec when the design has no read-model consequence. Never design the data or edit `data.json`. Never spawn another agent (no Task tool).
+Never run `rune fmt`. Never re-model from scratch (a new endpoint/entity/granularity call → hand to `rune:spec`). Never touch the spec when the design has no read-model consequence. Never rename or remove a read-DTO field, or change a command's input, because storage changed — below-the-waist changes stay invisible; the only upward edit is ADDITIVE history exposure. Never design the data or edit `data.json`. Never spawn another agent (no Task tool).
