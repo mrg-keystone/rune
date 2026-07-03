@@ -79,6 +79,16 @@ export {
   requiredGrants,
 } from "@foundation/domain/business/grants/mod.ts";
 export {
+  auditRoutes,
+  openRoutes,
+  warnOpenRoutes,
+} from "@foundation/domain/business/route-audit/mod.ts";
+export type {
+  RouteAuditEntry,
+  RoutePosture,
+  WarnOpenRoutesOptions,
+} from "@foundation/domain/business/route-audit/mod.ts";
+export {
   createCredentialGuard,
   getIdentity,
   grantsForApp,
