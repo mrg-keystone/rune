@@ -1,201 +1,118 @@
-> ## ✅ RESOLVED — 2026-07-01 (fixed in **infra**, per the "Preferred" option below)
->
-> **Diagnosis confirmed with evidence, and the fix is infra-side — rune 3.0.0 is correct.**
-> The proof: infra has TWO bearer-emit paths and they were inconsistent.
-> - `session.login` → `mintBearer()` already hand-builds the wire envelope as
->   `{ …, claims: ClaimDtos, … }` — correct, and covered by `session-login/bearer.test.ts`
->   (`bearer.claims`).
-> - `authz.exchange` → returned `SignedTokenDto` **directly**, whose rune-DSL field is
->   `ClaimDtos` (`[DTO] …: ClaimDto(s)` names the array after its type). So *only* the
->   exchange envelope leaked `ClaimDtos`. rune reads `claims` (the name the signer also
->   signs over), so exchanged bearers 401'd.
->
-> **Fix (infra):** map the array to `claims` at the exchange wire boundary — exactly as
-> `session.login` already does.
-> - `server/src/authz/dto/signed-token.ts` — field `ClaimDtos` → `claims`.
-> - `server/src/authz/domain/business/manual-token/mod.ts` — `assemble()` sets `claims`.
-> - `server/src/authz/domain/coordinators/manual-token-exchange/int.test.ts` — reads
->   `signed.claims`; happy-path now asserts the on-wire shape has `claims` and **not**
->   `ClaimDtos`.
->
-> No rune release, no alfred change — an infra redeploy unblocks alfred. The signed
-> bytes were already `claims` on both sides, so signatures are unaffected.
->
-> **End-to-end proof (both repos' REAL code):** infra's real `SignerService` signs a
-> session; keep's real `createJwksVerifier().verify()` **accepts** the fixed `claims`
-> envelope (grant `alfred=*` present) and **rejects** the old `ClaimDtos` envelope with
-> the exact error below. infra authz+session suites: **105 passed, 0 failed**.
->
-> Note 2 (auto-exchange of a raw opaque token) is a separate keep-side behavior and is
-> not addressed by this fix — filed for awareness only, as the report states.
+# alfred → keep/rune feedback: auth authorization is not fail-closed on the published version
 
-# Bug: rune 3.0.0 rejects every infra-issued session bearer (`ClaimDtos` vs `claims`)
+_Recorded 2026-07-03, from the alfred in-flight board work._
 
-**Component:** `@mrg-keystone/rune@3.0.0` — keep runtime, session-bearer verifier
-(`src/foundation/domain/business/token/mod.ts`) ⇄ infra `/authz/exchange`
-**Reported from:** `alfred` (a fused sprig UI + keep backend)
-**Date:** 2026-07-01
-**Severity:** **Blocker** — no network client can authenticate to a keep 3.0.0 service that uses
-infra bearers. Every `/api/*` call carrying a *valid, freshly-issued* infra bearer returns **HTTP 401**.
+## TL;DR
 
----
+An endpoint with **no** auth decorator (no `@Public`, no `@Grant`/`@Roles`) is **authenticated-open** on the keep version alfred actually runs (`keep@1.22.0`, roles-based): **any** valid bearer authorizes it, and no grant/role is ever inspected. That is **not** fail-closed. The `tooling` source (grants-based) *is* fail-closed — an undecorated route there is closed to everyone but `*`. So the fail-closed guarantee the docs describe lives only in the unpublished/unresolved source; consumers on the published line silently get authenticated-open.
 
-## Summary
+We hit this while wiring the in-flight board: a token whose only grant is `in-flight` (not `*`) successfully called an undecorated `create-in-flight`, when the intended model would return `403`.
 
-infra's `POST <INFRA_URL>/authz/exchange` returns a signed session-bearer envelope whose grants array
-is named **`ClaimDtos`**. rune 3.0.0's verifier reads **`claims`**. The names differ, so rune's
-`parseEnvelope()` throws
+## Evidence
 
-```
-TokenError: Session bearer `claims` must be an array.
-```
+### 1. The version alfred resolves is the roles guard
 
-**before** any signature / expiry / grant check runs. keep maps that to `401 Unauthorized`. The same
-divergence exists in the **signed payload** (`canonicalize()` signs over `claims`), so a field rename
-alone is not sufficient unless infra *also* signs over `claims`.
+- `server/deno.json` pins `"@mrg-keystone/rune": "jsr:@mrg-keystone/rune@^3"`.
+- `server/deno.lock` resolves **`@mrg-keystone/keep@1.22.0`** and **`@mrg-keystone/rune@1.23.0`**.
+- A `^3` constraint cannot semver-resolve to `1.23.0` — so the lock is **stale/mismatched** relative to the pin. Net effect: the running code is `keep@1.22.0`.
+- `keep@1.22.0`'s credential guard (`.../keep/1.22.0/src/foundation/domain/business/token-auth/mod.ts`, from the jsr cache) is **roles-based**: `requiredRoles` present (2 refs), zero grants-model symbols (`requiredGrants`/`grantsForApp`/`honorSkeleton`).
 
-`ClaimDtos` looks like a serializer emitting the DTO **type name** (`ClaimDto[]`) as the JSON key
-instead of the wire name `claims`.
+**Feedback:** a consumer intending `rune@^3` (grants keep) can end up pinned to `keep@1.22.0` (roles keep) through a stale lock, with **no error** — the auth model silently differs from the docs. Worth a `check:keep-lockstep`-style guard on the *consumer* side, or making `rune@^3` fail loudly if it drags in a roles-era keep.
 
----
+### 2. The two guards diverge exactly on the "no decorator" case
 
-## Environment
+Roles guard (`keep@1.22.0`, **running**) — no authorization tail when no roles are declared:
 
-- `@mrg-keystone/rune` **3.0.0** — confirmed via `deno info serve.ts` → `jsr:@mrg-keystone/rune@3.0.0`.
-- infra: `https://infra.mrg-keystone.deno.net` (state as of 2026-07-01, *after* the app-token
-  exchange fix — `/authz/exchange` now returns **200** for alfred's `DEV_TOKEN`).
-- app: `alfred` — fused sprig UI + keep via `serveSprig`, `INFRA_URL` set, routes guarded by `@Grant`.
-
----
-
-## Impact
-
-| step | result |
-|---|---|
-| `POST /authz/exchange` with the opaque `DEV_TOKEN` | **200** — returns a signed bearer, `claims["alfred"] = "*"` (as `ClaimDtos`) |
-| present that bearer to keep: `Authorization: Bearer <bearer>` | **401** on every guarded route |
-| present the raw opaque token as `Bearer <token>` | **401** (see Note 2) |
-
-Only the in-process (SSR `inject(Backend)`) channel authorizes. Operators and machine clients (e2e,
-bot) cannot authenticate over `/api/*` at all.
-
----
-
-## Reproduce
-
-`./repro.ts` is standalone and zero-dependency. It vendors rune 3.0.0's **exact** `parseEnvelope` /
-`canonicalize` (copied verbatim, with source line cites in the header — rune does not export them).
-
-```bash
-# offline & deterministic — uses the captured ./sample-bearer.json:
-deno run -A repro.ts
-
-# live — exchanges a real opaque token at INFRA_URL/authz/exchange:
-ALFRED_DEV_TOKEN=<opaque infra token> deno run -A repro.ts
-```
-
-Actual output (live mode, abridged):
-
-```
-[live] POST https://infra.mrg-keystone.deno.net/authz/exchange -> 200
-
-infra session-bearer envelope keys: ["creator","source","sessionExpiry","ClaimDtos","signature","kid"]
-  has "claims"     (what rune reads)  -> false
-  has "ClaimDtos"  (what infra emits) -> true
-
-[1] rune 3.0.0 parseEnvelope(infra bearer):
-    REJECTED -> TokenError: Session bearer `claims` must be an array.
-
-[2] control — same envelope with ClaimDtos renamed to claims:
-    parsed OK -> claims = [{"key":"alfred","value":"*"}]
-
-[3] bytes rune signs/verifies over (canonicalize) — infra must sign THESE:
-    {"creator":"mrg-keystone~alfred","source":"dev_token","sessionExpiry":"...","claims":[{"key":"alfred","value":"*"}]}
-```
-
-Exit code is `1` while the bug is present, `0` once the infra bearer parses.
-
----
-
-## Expected vs. actual
-
-- **Expected:** rune verifies the infra-signed bearer, reads `claims["alfred"]`, enforces the grant;
-  a `*` claim opens the route.
-- **Actual:** rune throws `Session bearer 'claims' must be an array.` at parse time → 401.
-
----
-
-## Root cause — exact locations
-
-`@mrg-keystone/rune@3.0.0/src/foundation/domain/business/token/mod.ts`
-(<https://jsr.io/@mrg-keystone/rune/3.0.0/src/foundation/domain/business/token/mod.ts>)
-
-**Parse (L220–222):**
 ```ts
-const claims = o.claims;
-if (!Array.isArray(claims)) {
-  throw new TokenError("Session bearer `claims` must be an array.");
-}
+if (!identity) { if (roles.length > 0 || !isPublic) throw 401; return true; } // authn gate
+if (roles.length > 0 && !roles.some(r => identity.roles.includes(r))) throw 403; // authz gate
+return true; // roles == [] falls straight here → authenticated-open
 ```
-infra's envelope has no `claims` key (it has `ClaimDtos`) → `o.claims` is `undefined` → throw.
 
-**Signed payload (L249–266) — `canonicalize()`:**
+Grants guard (`tooling/rune/keep/src/foundation/domain/business/token-auth/mod.ts`, **source**) — fail-closed:
+
 ```ts
-function canonicalize(env: BearerEnvelope): string {
-  const claims = env.claims.map(...).sort(...);
-  return JSON.stringify({ creator, source, sessionExpiry, claims });
-}
-```
-with the header comment (L17–18):
-> The canonicalization here MUST match infra's signer byte-for-byte (see infra
-> `server/src/core/data/signer/mod.ts` `canonicalize`). Any change is a wire-format break.
-
-So the contract rune 3.0.0 implements uses the key **`claims`** in *both* the envelope and the signed
-bytes. infra's exchange emits **`ClaimDtos`**.
-
-**Live envelope shape** (2026-07-01, signature redacted — see `./sample-bearer.json`):
-```json
-{ "creator": "mrg-keystone~alfred", "source": "dev_token",
-  "sessionExpiry": "…", "ClaimDtos": [{ "key": "alfred", "value": "*" }],
-  "signature": "…", "kid": "HSmt09oM-L-D9NX9" }
+const hasConstraint = domains.length > 0 || requiredRaw.length > 0;
+... enforce @LoggedIn / @Grant ...
+if (hasConstraint) return true;
+throw new ForbiddenException(); // nothing declared and not `*` → 403
 ```
 
----
+Same request, opposite outcome for an undecorated route + a non-`*` token: **200** (roles) vs **403** (grants).
 
-## Fix
+### 3. Live proof (running alfred, no change made to reach it)
 
-Two layers must agree — the **envelope field name** *and* the **signed bytes**:
+The in-flight token, introspected at infra:
 
-1. **Preferred — align infra to the published rune 3.0.0 contract:** emit the field as `claims`, and
-   `canonicalize`/sign over `{ creator, source, sessionExpiry, claims }` (claims sorted by key). This
-   is almost certainly a one-line serialization fix (the DTO is being serialized under its type name
-   `ClaimDtos` instead of `claims`).
-2. **Alternative — change rune** to read/verify `ClaimDtos`, then bump alfred to that build.
+```
+POST https://infra.mrg-keystone.deno.net/authz/exchange   {"token":"<FLIGHT_CONTROL_TOKEN>"}
+→ 200
+{ "creator":"mrg-keystone~alfred", "source":"in-flight-control",
+  "claims":[{"key":"alfred","value":"in-flight"}], "sessionExpiry":"2026-07-04T00:00:24Z" }
+```
 
-⚠️ Renaming **only** the field (while still signing over `ClaimDtos`) converts the failure from
-`claims must be an array` into `signature does not verify` — both the field and the signed payload
-must use `claims`.
+So the token holds exactly one app-scoped grant: `claims["alfred"] = "in-flight"` — **not** `*`.
 
----
+Against an undecorated `create-in-flight` on the running server:
 
-## Note 2 — secondary (auto-exchange), likely same root cause
+```
+POST /api/http/create-in-flight   (Authorization: Bearer <in-flight token>)
+→ 200   { "id":"if_…", "name":"…", … }        # created
+POST /api/http/create-in-flight   (no bearer)
+→ 401                                          # authn gate does fire
+```
 
-Presenting the **raw opaque token** (`Authorization: Bearer <uuid token>`) to keep 3.0.0 also 401s,
-with no exchange attempt visible in the server log — i.e. keep did not broker the exchange for the
-`infra tokens` UUID format (the client had to pre-exchange at `/authz/exchange`). If keep is meant to
-auto-exchange opaque tokens ("alfred exchanges it once at `/authz/exchange`"), that path isn't firing
-for this token shape. Filed for awareness only — the `ClaimDtos` mismatch above is the primary
-blocker and would also break the auto-exchange path (the exchanged bearer still fails to parse).
+The `200` is only reachable on the roles guard. The grants guard would have returned `403` for this exact request (token is not `*`, route declares no grant). **The successful create is therefore both the symptom (authenticated-open) and the proof of which version is live.**
 
----
+### 4. Minted grants are inert until an endpoint names them
 
-## Not an alfred issue
+Because no endpoint declares `@Grant("in-flight")` / `@Roles("in-flight")`, `requiredGrants`/`requiredRoles` is `[]` everywhere, and the `in-flight` grant is compared to nothing. Grants can be freely minted on infra prod and have **zero** backend effect — an easy trap: it *looks* like access control exists (a scoped token was issued) while every gated endpoint is really "any authenticated caller."
 
-alfred's wiring is correct: `INFRA_URL` is set, routes are `@Grant`-guarded, and clients present
-`Authorization: Bearer`. The whole auth path lights up unchanged the moment a bearer parses — proven
-by the `[2]` control in the repro (rename `ClaimDtos → claims` ⇒ parses ⇒ `claims["alfred"] = "*"`).
+## Why this matters
 
-## Files
+- The gap is **authorization**, not authentication — easy to miss in testing, because a token *is* required (401 without one), so it feels gated. It only surfaces when a *wrong-scope* token is (incorrectly) accepted.
+- "Deny-by-default / fail-closed" is stated in the guard docs, but on the published roles line it holds only for authentication, not authorization of undecorated routes.
 
-- `repro.ts` — runnable repro (sample + live), vendoring rune 3.0.0's exact parse logic.
-- `sample-bearer.json` — real `/authz/exchange` response shape (signature redacted).
+## Suggestions
+
+1. **Make the fail-closed authorization tail the published behavior** (ship the grants guard), and treat the upgrade as a documented behavior change: undecorated non-`@Public` routes flip from authenticated-open → `403`-unless-`*`.
+2. **Loud version lockstep on the consumer side**: `rune@^3` should not silently resolve to a roles-era `keep@1.22.0`; a mismatched lock like alfred's (`rune@^3` pinned, `keep@1.22.0`/`rune@1.23.0` locked) should be catchable.
+3. **A lint / boot warning** listing controller routes that are neither `@Public` nor `@Grant`/`@Roles` — i.e. "authenticated-open" (roles) or "closed-unless-`*`" (grants) — so a bare route is a conscious choice, not an accident. This would have surfaced `create-in-flight` immediately.
+
+## Notes / unverified
+
+- Whether a grants-based `keep`/`rune@3` is actually **published** on jsr (vs source-only) wasn't confirmed here — alfred's lock never resolved past `keep@1.22.0`. If the grants line is unpublished, suggestion (1) is really "publish it."
+- Separately observed (likely app-side, not keep): after 3 successful `create-in-flight`, a `list-in-flight` on the same dev process returned `inFlightCalls: null` once — noted for the alfred adapter, not filed against keep.
+
+## Resolution (2026-07-03)
+
+Applied in this repo (`tooling/rune`, keep `3.0.0`):
+
+1. **Fail-closed authorization is already the shipped behavior.** `keep@3.0.0`'s guard
+   (`keep/src/foundation/domain/business/token-auth/mod.ts` → `createCredentialGuard`) is the
+   grants guard, not the roles guard: an undecorated non-`@Public` route falls through to
+   `throw new ForbiddenException()` unless the caller holds `*` (lines ~184–196). The 3.0.0 bump
+   was made breaking precisely for this flip (`release(keep)!: 3.0.0`). So suggestion (1) is done
+   on the published `@^3` line — alfred's `200` came from a **stale lock** resolving `keep@1.22.0`
+   (roles-era), not from rune shipping the roles guard. Root cause = consumer lock drift.
+
+2. **Boot audit for bare routes (suggestion 3) — implemented.** New module
+   `keep/src/foundation/domain/business/route-audit/mod.ts` (`auditRoutes` / `openRoutes` /
+   `warnOpenRoutes`, exported from the package root) enumerates every HTTP controller route and
+   classifies its posture (`public` / `grant` / `loggedin` / `grant+loggedin` / `open`). It
+   reuses the guard's OWN metadata readers (`isPublicContext`, `requiredGrants`,
+   `requiredDomains`) so the classification matches enforcement exactly. `bootstrapServer` runs it
+   at boot (after the guard registers) and emits ONE aggregate warning naming each `open` route —
+   e.g. `POST /things/create (ThingsController.create)` — with wording that flips under
+   `honorSkeleton:false` ("reachable by no caller"). On by default; `KEEP_ROUTE_AUDIT=off`
+   silences it. **This would have surfaced `create-in-flight` at boot.** Covered by
+   `route-audit/test.ts` (6 tests) and confirmed live in the bootstrap int-test output.
+
+3. **Consumer-side version lockstep (suggestion 2) — root cause is consumer lock drift, not a
+   rune/keep defect.** The internal decorator-stack lockstep already exists
+   (`scripts/check-keep-lockstep.ts`). The *consumer* case alfred hit — `rune@^3` pinned but
+   `deno.lock` frozen at `keep@1.22.0`/`rune@1.23.0` — is a stale lockfile in the consumer repo;
+   the fix there is `deno cache --reload` / `deno install` to re-resolve the lock against the `^3`
+   pin. Not reproduced or changed here (it lives in alfred's repo), but recorded so it isn't
+   mistaken for a rune bug. Whether a grants-line `keep`/`rune@3` is published on jsr was the open
+   question in the note above; keep is at `3.0.0` in this repo and the guard is the grants guard.

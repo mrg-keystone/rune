@@ -36,6 +36,8 @@ import {
   healConfigured,
 } from "@foundation/domain/business/heal/mod.ts";
 import { appModule } from "@foundation/domain/business/endpoint-decorator/mod.ts";
+import { Crawler } from "@foundation/domain/business/crawler/mod.ts";
+import { warnOpenRoutes } from "@foundation/domain/business/route-audit/mod.ts";
 import {
   createDocsJsonHandler,
   injectDocsScript,
@@ -341,12 +343,18 @@ export class BootstrapServer {
         new Promise<void>((resolve) => {
           // Deno's setTimeout returns a numeric id; cast guards against Node's
           // `Timeout` typings leaking in under some toolchains (JSR publish check).
-          bootTimer.id = setTimeout(resolve, BOOT_REVOCATION_POLL_TIMEOUT_MS) as unknown as number;
+          bootTimer.id = setTimeout(
+            resolve,
+            BOOT_REVOCATION_POLL_TIMEOUT_MS,
+          ) as unknown as number;
         }),
       ]).finally(() => {
         if (bootTimer.id !== undefined) clearTimeout(bootTimer.id);
       });
-      revocationPoller = setInterval(pollOnce, revocationPollMs) as unknown as number;
+      revocationPoller = setInterval(
+        pollOnce,
+        revocationPollMs,
+      ) as unknown as number;
       // Don't keep the process (or test runner) alive on the poll timer alone.
       try {
         Deno.unrefTimer(revocationPoller);
@@ -997,6 +1005,23 @@ export class BootstrapServer {
       token: GLOBAL_GUARD,
       useValue: guard,
     }]);
+
+    // Authorization audit: name every controller route that declares neither @Public nor
+    // @Grant/@LoggedIn. Deny-by-default leaves such a route reachable only by `*` (or nobody under
+    // honorSkeleton:false) — safe, but indistinguishable from a route someone forgot to gate. Warn
+    // once so a bare route is a conscious choice. On by default; KEEP_ROUTE_AUDIT=off silences it.
+    if ((Deno.env.get("KEEP_ROUTE_AUDIT") ?? "on").toLowerCase() !== "off") {
+      const open = warnOpenRoutes(new Crawler().crawl([rootModule]), {
+        appName,
+        honorSkeleton,
+        warn: warnOnce,
+      });
+      if (open.length === 0) {
+        log.debug(
+          "route-audit: every controller route is @Public or explicitly gated.",
+        );
+      }
+    }
 
     // The in-process client dispatches via the non-stripping handler so its trust marker is
     // honored; the public `handler` (and what integrators mount) strips it.
