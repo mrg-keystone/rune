@@ -1,0 +1,22 @@
+[MOD] gateway
+
+[ENT] http.proxy(ProxyReqDto): ProxyResDto
+
+[REQ] proxy.run(ProxyReqDto): ProxyResDto
+    noop::run(): void
+
+[DTO] ProxyReqDto: target, rest, q, payload
+    a request proxied to an upstream service
+[DTO] ProxyResDto: status
+    the upstream response
+
+[TYP:from=path] target: string
+    the upstream host segment, taken from the URL path
+[TYP:from=path*] rest: string
+    the remaining upstream path (catch-all)
+[TYP:from=query,example=widgets] q: string
+    a forwarded query parameter
+[TYP] payload: string
+    the forwarded request body
+[TYP] status: number
+    the upstream status code

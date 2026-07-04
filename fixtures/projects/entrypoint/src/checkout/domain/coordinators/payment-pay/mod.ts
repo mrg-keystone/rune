@@ -16,18 +16,19 @@ export async function pay(input: PayDto): Promise<ReceiptDto> {
   const validInput = assert(PayDto, input, "payment.pay input");
   const paymentData = new PaymentData();
 
-  // reads — load inputs through the data adapters (validated at the seam)
+  // core — pure business logic, no I/O
+  payCore(validInput);
+
+  // after the core — boundary calls in spec order (validated at the seam)
+  // (guards run in the core above: a throw there prevents every call below)
   const paymentCharge = assert(ReceiptDto, await paymentData.charge(validInput), "payment.charge");
 
-  // core — pure business logic, no I/O
-  const out = payCore(validInput, paymentCharge);
-
-  return assert(ReceiptDto, out.result, "payment.pay output");
+  return paymentCharge;
 }
 
 // Pure business logic for payment.pay — no I/O. Takes the
-// request input and the dtos the reads loaded; returns the result.
-function payCore(input: PayDto, paymentCharge: ReceiptDto): { result: ReceiptDto } {
+// request input; returns nothing (the post-core boundary calls produce the flow's values).
+function payCore(input: PayDto): void {
   // Recipe from [REQ] payment.pay (run in order):
   //   1. [RET] ReceiptDto
   // TODO: implement the steps above, then build the dtos

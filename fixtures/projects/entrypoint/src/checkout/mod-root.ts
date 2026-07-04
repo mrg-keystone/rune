@@ -4,6 +4,9 @@
 //   item: string — the item to order
 //   id: string — the order id
 //   receipt: string — the receipt code
+//
+// Backing services (shared, from src/core/core.rune):
+//   db (SIDECAR): DB_URL
 // Public API surface for module "checkout".
 
 export { create } from "./domain/coordinators/order-create/mod.ts";

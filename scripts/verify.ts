@@ -30,8 +30,8 @@ const ROOT = fromFileUrl(new URL("../", import.meta.url));
 const CORPUS = join(ROOT, "fixtures/corpus");
 const GOLDEN = join(ROOT, "fixtures/golden");
 const PROJECTS = join(ROOT, "fixtures/projects");
-// Post-reorg layout: engine + keywords.json at ROOT, grammar/queries under lang/,
-// studio under rune-studio/. (Was a nested rune/new/... tree.)
+// Post-reorg layout: engine at src/; keywords.json + grammar/queries under lang/;
+// gen scripts under scripts/; studio under rune-studio/. (Was a nested rune/new/... tree.)
 
 // L4 fixture projects fall in two kinds:
 //  - GEN_FIXTURES: materialised (deterministically) from a [MOD] corpus spec,
@@ -107,7 +107,7 @@ interface GateResult {
 
 async function gateDrift(): Promise<GateResult> {
   const gen = new Deno.Command("deno", {
-    args: ["run", "--allow-read", "--allow-write", "generate.mjs"],
+    args: ["run", "--allow-read", "--allow-write", "scripts/generate.mjs"],
     cwd: ROOT,
     stdout: "null",
     stderr: "piped",
@@ -304,7 +304,7 @@ async function gateGrammar(): Promise<GateResult> {
   }
   const bad: string[] = [];
   const build = new Deno.Command("deno", {
-    args: ["run", "-A", "build-grammar.ts"],
+    args: ["run", "-A", "scripts/build-grammar.ts"],
     cwd: ROOT,
     stdout: "null",
     stderr: "piped",
@@ -318,7 +318,7 @@ async function gateGrammar(): Promise<GateResult> {
   // The grammar + highlights are regenerated from the artifact: every tag id
   // must appear as a parse rule and a highlight capture (so a tag/colour change
   // in the artifact recolours both the in-Studio and external editors).
-  const reg = JSON.parse(await Deno.readTextFile(join(ROOT, "keywords.json")));
+  const reg = JSON.parse(await Deno.readTextFile(join(ROOT, "lang/keywords.json")));
   const grammarJson = await Deno.readTextFile(join(ROOT, "lang/grammar/src/grammar.json"));
   const highlights = await Deno.readTextFile(join(ROOT, "lang/queries/highlights.scm"));
   for (const t of reg.tags as Array<{ id: string }>) {
@@ -346,7 +346,7 @@ async function gateL1(): Promise<GateResult> {
   const ARTIFACT = join(ROOT, "fixtures/artifact");
 
   // The current registry (live, single source) must validate.
-  const reg = JSON.parse(await Deno.readTextFile(join(ROOT, "keywords.json")));
+  const reg = JSON.parse(await Deno.readTextFile(join(ROOT, "lang/keywords.json")));
   const regResult = validateArtifact(reg);
   if (!regResult.ok) {
     bad.push(`live keywords.json rejected: ${regResult.errors.map((e) => e.message).join("; ")}`);
@@ -397,7 +397,7 @@ async function gateL6(): Promise<GateResult> {
   const bad: string[] = [];
   const srcBefore = await gitDiffNames("src/shape-checker");
 
-  const artifact = JSON.parse(await Deno.readTextFile(join(ROOT, "keywords.json")));
+  const artifact = JSON.parse(await Deno.readTextFile(join(ROOT, "lang/keywords.json")));
   const specPath = join(CORPUS, "valid", "module-billing.rune");
   const text = await Deno.readTextFile(specPath);
   const rel = "corpus/valid/module-billing.rune";

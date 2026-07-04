@@ -32,7 +32,10 @@ import {
   renderParams,
   toPascal,
 } from "@rune/domain/business/rune-sig/mod.ts";
-import { TYP_MODIFIERS } from "@rune/domain/business/rune-modifiers/mod.ts";
+import {
+  type FieldSource,
+  TYP_MODIFIERS,
+} from "@rune/domain/business/rune-modifiers/mod.ts";
 import type { Artifact } from "@rune/domain/business/artifact/mod.ts";
 
 export interface FilePlan {
@@ -79,6 +82,22 @@ export interface ManifestOptions {
   /** Per-role lifecycle/prune policy, e.g. from artifact.codegen.policies.
    * Merged over DEFAULT_POLICIES; defaults preserve current behavior. */
   policies?: Record<string, TemplatePolicy>;
+  /** Enforce that every boundary `service:noun.verb(...)` resolves to a declared
+   * [SRV] (shared from core.rune or local) — an undeclared service becomes a
+   * plan error. The user-facing entrypoints (check/sync/manifest/dev) set this;
+   * raw codegen callers (studio preview, golden capture) leave it off. */
+  strictServices?: boolean;
+  /** The absolute project root the entrypoint resolved. Diagnostics-only: paired
+   * with `coreSpecFound` to name the root in the root-resolution error below. */
+  projectRoot?: string;
+  /** Whether the entrypoint found a core spec FILE under `projectRoot` (see
+   * coreSpecExists). When `strictServices` finds undeclared services and this is
+   * explicitly `false`, the planner emits ONE root-resolution diagnostic — the
+   * resolved root almost certainly doesn't point at the rune project, so no
+   * core.rune could declare anything — instead of N "undeclared service" errors
+   * that send the user to edit an already-correct spec/core. Left `undefined` by
+   * raw codegen callers, who keep the per-service behavior. */
+  coreSpecFound?: boolean;
 }
 
 /** Map a loaded artifact to the engine's options: layout bindings, codegen
@@ -107,6 +126,11 @@ export function planManifest(
   runeText: string,
   existingFiles: Set<string>,
   opts: ManifestOptions = {},
+  // The project's shared `[SRV]` set, loaded from src/core/core.rune by the
+  // entrypoint. Merged below so a module's boundary steps resolve their service
+  // metadata (transport/env/docs) without re-declaring `[SRV]` locally. Pure:
+  // the loading happens in the entrypoint, keeping this planner I/O-free.
+  sharedSrvs?: Map<string, SrvNode>,
 ): ManifestPlan {
   // The DTO file-name slot is resolved from the artifact when supplied; falling
   // back to the engine's static binding keeps generated output byte-identical
@@ -173,15 +197,71 @@ export function planManifest(
   // object's meaning instead of discarding it (E12/E18).
   const nonByNoun = new Map(ast.nons.map((n) => [n.name, n]));
   // [SRV] declarations by name — adapter methods document their backing
-  // service/transport/env from these (E20).
-  const srvByName = new Map(ast.srvs.map((s) => [s.name, s]));
+  // service/transport/env from these (E20). Shared services from core.rune come
+  // first; a local `[SRV]` (the core spec itself, or a not-yet-migrated module)
+  // overrides on name collision.
+  const srvByName = new Map<string, SrvNode>(sharedSrvs ?? []);
+  for (const s of ast.srvs) srvByName.set(s.name, s);
   const types: TypeContext = {
     typMap,
     dtoByName,
     nameBinding,
     nonByNoun,
     srvByName,
+    coreSrvNames: new Set(sharedSrvs?.keys() ?? []),
   };
+
+  // STRICT service resolution (entrypoint policy): every boundary
+  // `service:noun.verb(...)` must resolve to a declared [SRV] — shared (from
+  // core.rune, merged into srvByName) or local. An undeclared service is a hard
+  // error surfaced by `rune check`/`manifest`/`sync`/`dev`. Raw codegen callers
+  // (studio preview, golden capture) leave opts.strictServices off.
+  if (opts.strictServices) {
+    const usedServices = new Map<string, number>(); // service -> first line
+    const collectUsedServices = (
+      steps: StepLike[] | CseNode["steps"],
+    ): void => {
+      for (const s of steps) {
+        if (s.kind === "boundary") {
+          if (!usedServices.has(s.service)) usedServices.set(s.service, s.line);
+        } else if (s.kind === "ply") {
+          for (const c of s.cases) collectUsedServices(c.steps);
+        }
+      }
+    };
+    for (const req of ast.reqs) collectUsedServices(req.steps);
+    const undeclared = [...usedServices].filter(([s]) => !srvByName.has(s));
+    if (undeclared.length > 0 && opts.coreSpecFound === false) {
+      // No core.rune ANYWHERE under the resolved root — so nothing could declare
+      // these services. That's a root-resolution problem (the root doesn't point
+      // at the rune project, e.g. the spec is staged above it), NOT a spec error.
+      // Emit ONE diagnostic that names the root + the fix, instead of N
+      // red-herrings telling the user to edit a core.rune that's correct and
+      // simply elsewhere. (Only fires when the entrypoint explicitly reports the
+      // core absent; raw codegen callers leave coreSpecFound undefined and keep
+      // the per-service errors below.)
+      const root = opts.projectRoot ?? ".";
+      const names = undeclared.map(([s]) => `"${s}"`).join(", ");
+      const plural = undeclared.length > 1;
+      plan.errors.push(
+        `${runePath}: no core.rune found under the resolved project root ` +
+          `"${root}" — shared services live in its src/core/core.rune and none ` +
+          `was found there, so the boundary service${plural ? "s" : ""} ${names} ` +
+          `cannot be resolved. The root is usually mis-resolved here (e.g. the ` +
+          `spec is staged above the rune project): pass \`--root <project-dir>\` ` +
+          `— the dir whose src/core/core.rune declares ${plural ? "them" : "it"} ` +
+          `— or move the spec into that project. rune resolves the root from the ` +
+          `spec's path; see \`rune sync --help\`.`,
+      );
+    } else {
+      for (const [service, line] of undeclared) {
+        plan.errors.push(
+          `${runePath}:${line + 1}: undeclared service "${service}" — declare ` +
+            `it as \`[SRV] (TRANSPORT)${service}: <ENV,…>\` in src/core/core.rune`,
+        );
+      }
+    }
+  }
 
   // Collect intended files by element type. Poly nouns are gathered UP FRONT
   // (across all [REQ]s, including nested cases) so the business-class guard in
@@ -210,19 +290,34 @@ export function planManifest(
       boundaryFaults,
       businessFaults,
       types,
+      plan.errors,
     );
   }
   for (const dto of ast.dtos) {
     addDto(emit, module, dto, runePath, types);
   }
   for (const typ of ast.typs) addTyp(emit, module, typ, runePath, types);
+  // Shared service clients: only the core module (src/core/core.rune) declares
+  // `[SRV]`, and it generates one create-once client per service into
+  // src/core/data/<name>. Module specs reference these through their data
+  // adapters; they never re-emit them (their ast.srvs is empty under the
+  // core-only rule, and the module guard keeps a stray local `[SRV]` from
+  // minting a client outside core).
+  if (module === "core") {
+    for (const srv of ast.srvs) addCoreService(emit, srv, runePath);
+  }
   // Entrypoints: group [ENT]s by surface into one keep controller; compute each
   // ent's order/dependsOn/bind from the DTO field graph across all ents.
   if (ast.ents.length > 0) {
+    // A surface is either HTTP request/response [ENT]s or a WebSocket [ENT:ws] socket.
+    const httpEnts = ast.ents.filter((e) => e.kind !== "ws");
+    const wsEnts = ast.ents.filter((e) => e.kind === "ws");
     const externalTypes = new Set(
       ast.typs.filter((t) => t.isExternal).map((t) => t.name),
     );
-    const entProcess = computeEntProcess(ast.ents, dtoByName, externalTypes);
+    // The process graph (order/dependsOn/bind) is an HTTP-flow concept — WS topics are
+    // independent message handlers, so only the HTTP ents participate.
+    const entProcess = computeEntProcess(httpEnts, dtoByName, externalTypes);
     // Ambiguous ENT→[REQ] delegation: a [REQ] is chosen by its (input, output) DTO pair, so two
     // [REQ]s with the SAME signature make the pick silent and type-correct-but-wrong. Reject it
     // rather than first-wins — the spec must disambiguate.
@@ -254,16 +349,48 @@ export function planManifest(
       }
     }
     const bySurface = new Map<string, EntNode[]>();
-    for (const ent of ast.ents) {
+    for (const ent of httpEnts) {
       const list = bySurface.get(ent.surface) ?? [];
       list.push(ent);
       bySurface.set(ent.surface, list);
     }
+    const wsBySurface = new Map<string, EntNode[]>();
+    for (const ent of wsEnts) {
+      const list = wsBySurface.get(ent.surface) ?? [];
+      list.push(ent);
+      wsBySurface.set(ent.surface, list);
+    }
+    // A surface can't be both an HTTP controller and a WebSocket socket.
+    for (const surface of wsBySurface.keys()) {
+      if (bySurface.has(surface)) {
+        plan.errors.push(
+          `${runePath}: surface "${surface}" is declared as both an HTTP [ENT] and a ` +
+            `WebSocket [ENT:ws] — give them distinct surfaces`,
+        );
+      }
+    }
     for (const [surface, ents] of bySurface) {
       addEntrypointSurface(emit, module, surface, ents, ast.reqs, entProcess, runePath, types);
     }
+    for (const [surface, ents] of wsBySurface) {
+      addWsSocketSurface(emit, module, surface, ents, ast.reqs, runePath, types);
+    }
   }
   if (ast.reqs.length > 0) {
+    // The shared services this module actually references (used boundary service
+    // names ∩ the merged [SRV] set) — surfaced in the module front-door so a
+    // reader sees its backing-service dependencies even though they are declared
+    // once in core.rune, not here.
+    const usedSrvs: SrvNode[] = [];
+    const seenSrv = new Set<string>();
+    for (const methods of nounMethods.values()) {
+      for (const m of methods) {
+        if (m.service && !seenSrv.has(m.service) && srvByName.has(m.service)) {
+          seenSrv.add(m.service);
+          usedSrvs.push(srvByName.get(m.service)!);
+        }
+      }
+    }
     addModRoot(
       emit,
       module,
@@ -271,7 +398,7 @@ export function planManifest(
       runePath,
       ast.nons,
       ast.typs,
-      ast.srvs,
+      usedSrvs,
       ast.moduleDescription,
     );
   }
@@ -306,6 +433,11 @@ interface TypeContext {
   nameBinding: Binding;
   nonByNoun: Map<string, NonNode>;
   srvByName: Map<string, SrvNode>;
+  /** Names of SHARED services (declared in core.rune, merged in via sharedSrvs).
+   * Only these get a `src/core/data/<name>` client import in an adapter — a
+   * legacy local `[SRV]` keeps the JSDoc-only behaviour (it has no shared client
+   * to point at). */
+  coreSrvNames: Set<string>;
 }
 
 function walkStepsForFiles(
@@ -318,6 +450,7 @@ function walkStepsForFiles(
   boundaryFaults: Map<string, string[]>,
   businessFaults: Map<string, string[]>,
   types: TypeContext,
+  errors: string[],
 ): void {
   for (const step of steps) {
     if (step.kind === "step") {
@@ -345,7 +478,7 @@ function walkStepsForFiles(
       );
     } else if (step.kind === "ply") {
       polyNouns.add(step.noun);
-      addPolyFeature(emit, module, step, runePath, types);
+      addPolyFeature(emit, module, step, runePath, types, errors);
       for (const cse of step.cases) {
         walkStepsForFiles(
           cse.steps,
@@ -357,6 +490,7 @@ function walkStepsForFiles(
           boundaryFaults,
           businessFaults,
           types,
+          errors,
         );
       }
     }
@@ -443,7 +577,19 @@ function addPolyFeature(
   ply: PlyNode,
   runePath: string,
   types: TypeContext,
+  errors: string[],
 ): void {
+  // A [PLY] with no [CSE] has zero variants: the poly-mod barrel would re-export
+  // `./implementations//mod.ts` (a double-slash path to a module that is never
+  // emitted), and firstVariant would be "" — the generated project fails to
+  // resolve. Surface it as a manifest error and emit nothing for this PLY.
+  if (ply.cases.length === 0) {
+    errors.push(
+      `${runePath}:${ply.line + 1}: [PLY] ${ply.noun}.${ply.verb} requires at ` +
+        `least one [CSE] (a polymorphic step needs ≥1 variant case)`,
+    );
+    return;
+  }
   const noun = applyCase(ply.noun, "kebab");
   const dir = `src/${module}/domain/business/${noun}`;
   // Render the poly signature the same way the sig/impl split does: PascalCase
@@ -528,6 +674,7 @@ function addAdapter(
       runePath,
       nonByNoun: types.nonByNoun,
       srvByName: types.srvByName,
+      sharedSrvNames: types.coreSrvNames,
     }),
   );
   // Cover every fault declared on ANY boundary step for this noun, not just the
@@ -579,6 +726,93 @@ function addTyp(
   emit("typ", `${dir}/${fileName}.ts`, renderTyp(typ, runePath, module, types));
 }
 
+// The shared client for one `[SRV]`, generated ONCE from core.rune into the
+// shared kernel's data slot src/core/data/<name>/mod.ts ("adapter for an
+// external system", mirroring the isCore dto/ path). A `[SRV]` carries no
+// methods — the per-noun data adapters hold the queries — so the client is a
+// connection/config seam: an `<Name>Service` class documenting its transport,
+// env vars, and @docs link for the dev to wire. create-once, so `sync` never
+// clobbers a filled-in client.
+function addCoreService(emit: Emit, srv: SrvNode, runePath: string): void {
+  const kebab = applyCase(srv.name, "kebab");
+  const cls = `${toPascal(srv.name)}Service`;
+  const env = srv.envVars.length ? ` — env: ${srv.envVars.join(", ")}` : "";
+  const doc = [`${srv.name} (transport ${srv.transport})${env}`];
+  if (srv.description) doc.push(jsdocSafe(srv.description));
+  if (srv.docsLink) doc.push(`@see ${srv.docsLink}`);
+  const lines = [
+    `// Generated by rune manifest from ${runePath}.`,
+    "// Shared service client. Scaffolded once; fill in the body. `sync` preserves this file.",
+    "",
+    "/**",
+    ...doc.map((d) => ` * ${d}`),
+    " */",
+    `export class ${cls} {`,
+    srv.envVars.length
+      ? `  // Wire this client from env: ${srv.envVars.join(", ")}`
+      : "  // Wire this client.",
+    "}",
+    "",
+  ];
+  emit("core-service", `src/core/data/${kebab}/mod.ts`, lines.join("\n"));
+  // The shared-kernel data slot requires a connectivity smoke test (canonical
+  // src/core/data/<service>/smk.test.ts). A placeholder mirroring the module
+  // adapter smk.test — the dev fills it in once the client is wired.
+  const test = [
+    `// Generated by rune manifest from ${runePath}.`,
+    "// Edit the body. Re-running manifest will not overwrite this file.",
+    "",
+    `Deno.test("${srv.name} — connectivity", () => {`,
+    `  // TODO: smoke test that ${cls} can reach ${srv.name} (transport ${srv.transport})`,
+    "});",
+    "",
+  ];
+  emit("core-service-test", `src/core/data/${kebab}/smk.test.ts`, test.join("\n"));
+}
+
+// The rune parser accepts arbitrary prose in a description (rune-parse:610-614)
+// once inline `//` comments are stripped — including the JSDoc comment-close
+// sequence `*/` (which is not a `//` comment, so it survives). Interpolated verbatim into a
+// `/** ... */` block it would terminate the comment early and dump the rest as
+// bare tokens — an uncompilable .ts. Break the sequence with a zero-width space
+// so the prose still reads the same in an editor but the comment stays open.
+function jsdocSafe(description: string): string {
+  return description.replaceAll("*/", "*​/");
+}
+
+// TS primitives / keywords that may legitimately appear in a `[TYP]` union — a
+// union containing any of these is a REAL type union (e.g. `string | number`),
+// NOT a string-literal enum, so its members are left unquoted (enumMembers).
+const TS_TYPE_TOKENS = new Set([
+  "string", "number", "boolean", "bigint", "symbol", "object",
+  "null", "undefined", "void", "unknown", "any", "never",
+  "true", "false", "Uint8Array", "Date",
+]);
+
+// A bare-word union like `GET | POST | DELETE` (or `draft | sent | declinedBot`)
+// is a STRING-LITERAL ENUM: each member is a value, not a TS type reference, so
+// it must be quoted — emitted bare it compiles to `Cannot find name 'GET'`
+// (TS2304). Returns the members when `typeName` is such an enum, else null: a
+// real type union (`string | number`, `FooDto | BarDto`), an already-quoted
+// union, or any non-union passes through verbatim.
+function enumMembers(typeName: string): string[] | null {
+  if (!typeName.includes("|")) return null;
+  const parts = typeName.split("|").map((p) => p.trim());
+  if (parts.length < 2) return null;
+  for (const p of parts) {
+    if (!/^[A-Za-z_$][\w$]*$/.test(p)) return null; // quoted / numeric / generic
+    if (TS_TYPE_TOKENS.has(p)) return null; // a real primitive union
+    if (/Dto$/.test(p)) return null; // a union of DTO references
+  }
+  return parts;
+}
+
+// The members of an enum [TYP] as a TS array literal: `["GET", "POST", …]` —
+// shared by the field type, the @IsIn validator, and the @ApiProperty enum hint.
+function enumList(members: string[]): string {
+  return `[${members.map((m) => JSON.stringify(m)).join(", ")}]`;
+}
+
 // Map a rune [TYP] primitive to a TS type + the class-validator decorator that
 // validates it. Unknown/unmapped types keep their TS spelling with no decorator.
 function tsFor(typeName: string | undefined): { ts: string; dec: string | null } {
@@ -593,10 +827,16 @@ function tsFor(typeName: string | undefined): { ts: string; dec: string | null }
       // No [TYP] matched the field name — emit `unknown` with no validator.
       // renderDto flags these with a `// TODO: tighten` marker so the gap stays visible.
       return { ts: "unknown", dec: null };
-    default:
-      // A non-primitive type name (e.g. a nested [DTO] referenced directly, or a
-      // generic) passes through verbatim with no decorator.
+    default: {
+      // A bare-word union is a string-literal enum — quote the members so it
+      // type-checks (`"GET" | "POST"`); renderDto/renderTyp validate it with
+      // @IsIn. Anything else (a nested [DTO], a generic) passes through verbatim.
+      const members = enumMembers(typeName);
+      if (members) {
+        return { ts: members.map((m) => JSON.stringify(m)).join(" | "), dec: null };
+      }
       return { ts: typeName, dec: null };
+    }
   }
 }
 
@@ -654,9 +894,13 @@ function renderDto(
     // A property may carry the documented modifiers: `(s)` (array of the base
     // type, property name pluralized — `taskId(s)` -> `taskIds: taskId[]`) and
     // `?` (optional). Resolve the base name to its [TYP] for the field type.
-    const optional = raw.includes("?");
-    const array = /\(s\)/.test(raw);
-    const base = raw.replace(/\(s\)/g, "").replace(/\?/g, "").trim();
+    // `(s?)` — array whose ELEMENTS may be null (dirty inbound data); distinct from a whole-field
+    // `?` (optional). Strip the array token first so a trailing `?` still reads as whole-optional.
+    const lenientArray = /\(s\?\)/.test(raw);
+    const array = lenientArray || /\(s\)/.test(raw);
+    const withoutArray = raw.replace(/\(s\??\)/g, "");
+    const optional = withoutArray.includes("?");
+    const base = withoutArray.replace(/\?/g, "").trim();
     const name = array ? `${base}s` : base;
     const decorators: string[] = [];
     // Per-field doc/provenance comments emitted ABOVE the decorator stack so a
@@ -678,12 +922,21 @@ function renderDto(
     if (nested) {
       hasNested = true;
       if (nested.name !== dto.name) nestedImports.add(nested.name);
-      if (nested.description) lead.push(`/** ${nested.description} */`);
-      if (array) lead.push(`// rune: ${base}(s) — array of [DTO] ${nested.name}`);
-      validators.add("ValidateNested");
-      decorators.push(
-        array ? "@ValidateNested({ each: true })" : "@ValidateNested()",
-      );
+      if (nested.description) lead.push(`/** ${jsdocSafe(nested.description)} */`);
+      if (array) {
+        lead.push(
+          `// rune: ${base}(${lenientArray ? "s?" : "s"}) — array of [DTO] ${nested.name}` +
+            (lenientArray ? " (elements not validated — may be null)" : ""),
+        );
+      }
+      // `(s?)` keeps @IsArray() (pushed above) but drops @ValidateNested so a null/dirty element
+      // passes — class-validator has no per-element "nullable", so leniency = no element check.
+      if (!lenientArray) {
+        validators.add("ValidateNested");
+        decorators.push(
+          array ? "@ValidateNested({ each: true })" : "@ValidateNested()",
+        );
+      }
       decorators.push(`@Type(() => ${nested.name})`);
       const ts = array ? `${nested.name}[]` : nested.name;
       return { name, ts, decorators, optional, lead };
@@ -691,7 +944,11 @@ function renderDto(
 
     const typ = types.typMap.get(base);
     const { ts: baseTs, dec } = tsFor(typ?.typeName);
-    const ts = array ? `${baseTs}[]` : baseTs;
+    // A union element (`"a" | "b"`, `x | y`) must be parenthesized before `[]`,
+    // else `"a" | "b"[]` parses as `"a" | ("b"[])`. Non-unions keep bare `T[]`.
+    const ts = array
+      ? (baseTs.includes("|") ? `(${baseTs})[]` : `${baseTs}[]`)
+      : baseTs;
     // A field whose base resolves to no [TYP] lands as `unknown` with no
     // validator — @Allow() keeps it on the instance (assert validates with
     // whitelist: true, which strips undecorated properties), and the marker
@@ -707,7 +964,7 @@ function renderDto(
     }
     // [TYP] field: doc comment from the type's description, a provenance line
     // echoing the (singular) base declaration, and notes for ext / array.
-    if (typ?.description) lead.push(`/** ${typ.description} */`);
+    if (typ?.description) lead.push(`/** ${jsdocSafe(typ.description)} */`);
     if (typ) {
       const provTag = typ.modifiers.length > 0
         ? `[TYP:${typ.modifiers.join(",")}]`
@@ -717,7 +974,12 @@ function renderDto(
     if (typ?.isExternal) {
       lead.push("// rune: [TYP:ext] — supplied by another module / the caller");
     }
-    if (array) lead.push(`// rune: ${base}(s) — array of [TYP] ${base}`);
+    if (array) {
+      lead.push(
+        `// rune: ${base}(${lenientArray ? "s?" : "s"}) — array of [TYP] ${base}` +
+          (lenientArray ? " (elements not validated — may be null)" : ""),
+      );
+    }
     // The [TYP]'s constraint modifiers, in source order. `int` REPLACES the
     // IsNumber base check (class-validator's IsInt subsumes it). Alongside the
     // validators we accumulate ONE merged @ApiProperty options object (E27).
@@ -728,6 +990,14 @@ function renderDto(
     // @IsUUID/@IsEmail/@IsUrl validators enforce them instead).
     const constraints: string[] = [];
     const api: string[] = [];
+    // Per-element schema hints for an ARRAY field. OpenAPI applies `minimum`/
+    // `maximum`/`type` placed on an array property to the array itself (bounds
+    // are silently ignored; a scalar `type` even overrides the array type),
+    // contradicting number[]/@IsArray. So for arrays these nest under `items`
+    // — mirroring the per-element validators (@Min(..,{each:true})). Scalars
+    // stay on the property.
+    const itemHint: string[] = [];
+    const pushHint = (h: string) => (array ? itemHint : api).push(h);
     if (typ?.description) api.push(`description: ${JSON.stringify(typ.description)}`);
     let baseDec = dec;
     for (const mod of typ?.modifiers ?? []) {
@@ -744,19 +1014,49 @@ function renderDto(
       const spec = TYP_MODIFIERS.get(id);
       if (!spec?.decorator) continue; // ext/core — placement, not validation
       if (id === "int") baseDec = null;
-      validators.add(spec.decorator);
-      constraints.push(array ? spec.eachCall(value) : spec.call(value));
-      // Schema hints — only keys/values valid on @danet/swagger's Schema.
-      if (id === "min") api.push(`minimum: ${value}`);
-      else if (id === "max") api.push(`maximum: ${value}`);
-      else if (id === "positive") api.push("exclusiveMinimum: 0");
-      else if (id === "int") api.push(`type: "integer"`);
+      // `(s?)` is lenient: skip per-element validators (they would reject a null element).
+      if (!lenientArray) {
+        validators.add(spec.decorator);
+        constraints.push(array ? spec.eachCall(value) : spec.call(value));
+      }
+      // Schema hints — only keys/values valid on @danet/swagger's Schema. For
+      // arrays these describe each ELEMENT, so route them under `items`.
+      if (id === "min") pushHint(`minimum: ${value}`);
+      else if (id === "max") pushHint(`maximum: ${value}`);
+      else if (id === "positive") pushHint("exclusiveMinimum: 0");
+      else if (id === "int") pushHint(`type: "integer"`);
       else if (id === "nonempty" && !array) api.push("minLength: 1");
     }
+    // A bare-word union [TYP] (`GET | POST | …`) is a string-literal enum: the
+    // field is typed as the quoted union (tsFor) and validated with @IsIn rather
+    // than left to @Allow(). `(s)` arrays validate per element; `(s?)` skips the
+    // element check (like the modifier constraints) but still documents the enum.
+    const enumVals = typ ? enumMembers(typ.typeName) : null;
+    if (enumVals) {
+      const list = enumList(enumVals);
+      if (!lenientArray) {
+        validators.add("IsIn");
+        constraints.push(array ? `@IsIn(${list}, { each: true })` : `@IsIn(${list})`);
+      }
+      pushHint(`enum: ${list}`);
+    }
     if (typ?.typeName === "Uint8Array") api.push(`type: "string"`, `format: "binary"`);
-    if (baseDec) {
+    if (itemHint.length > 0) api.push(`items: { ${itemHint.join(", ")} }`);
+    // `(s?)` arrays keep only @IsArray() (emitted above) — the element type check is dropped so
+    // dirty inbound data (e.g. a null in pathway_tags) is tolerated instead of hard-422ing.
+    if (baseDec && !lenientArray) {
       validators.add(baseDec);
-      decorators.push(array ? `@${baseDec}({ each: true })` : `@${baseDec}()`);
+      if (!array) {
+        decorators.push(`@${baseDec}()`);
+      } else if (baseDec === "IsNumber") {
+        // IsNumber(options?, validationOptions?) — `each` is a validation option,
+        // so it belongs in the SECOND arg. `@IsNumber({ each: true })` puts it in
+        // IsNumberOptions (TS2353). IsString/IsBoolean take only validationOptions,
+        // so their single-arg each-form is already correct.
+        decorators.push(`@IsNumber({}, { each: true })`);
+      } else {
+        decorators.push(`@${baseDec}({ each: true })`);
+      }
     }
     decorators.push(...constraints);
     // A [TYP] resolving to a non-primitive (union, generic, Uint8Array) is
@@ -803,14 +1103,31 @@ function renderDto(
   // names the source declaration (E26). Guarded so an undescribed DTO still
   // gets the visibility tag rather than an empty /** */.
   lines.push("/**");
-  if (dto.description) lines.push(` * ${dto.description}`);
+  if (dto.description) lines.push(` * ${jsdocSafe(dto.description)}`);
   lines.push(dto.isCore ? " * @public cross-module contract" : " * @internal");
+  if (dto.isOpen) {
+    lines.push(
+      " * @remarks [DTO:open] — opaque inbound payload: the declared fields below (and any",
+      " * declared nested DTO) are validated; this DTO's undeclared fields ride through.",
+    );
+  }
   lines.push(" */");
-  const dtoTag = dto.isCore ? "[DTO:core]" : "[DTO]";
+  const dtoTag = dto.isOpen
+    ? "[DTO:open]"
+    : dto.isCore
+    ? "[DTO:core]"
+    : "[DTO]";
   lines.push(
     `// rune declares: ${dtoTag} ${dto.name}: ${dto.properties.join(", ")}`,
   );
   lines.push(`export class ${dto.name} {`);
+  if (dto.isOpen) {
+    // keep's assert reads this marker: it validates the declared fields strictly, then re-attaches
+    // this payload's undeclared top-level fields, so an opaque inbound body rides through. Delete
+    // it for strict mode.
+    lines.push("  static readonly __keepOpen = true;");
+    if (fields.length) lines.push("");
+  }
   fields.forEach((f, i) => {
     if (i > 0) lines.push("");
     for (const d of f.lead) lines.push(`  ${d}`);
@@ -851,7 +1168,7 @@ function renderTyp(
     );
   }
   // E29: description as JSDoc (guarded — undescribed [TYP] emits no /** */).
-  if (typ.description) lines.push(`/** ${typ.description} */`);
+  if (typ.description) lines.push(`/** ${jsdocSafe(typ.description)} */`);
   lines.push(`// rune declares: ${tag} ${typ.name}: ${typ.typeName}`);
   // E30: which class-validator decorators this type's modifiers put on every
   // DTO field of this type — so the [TYP] file documents its own enforcement.
@@ -867,6 +1184,12 @@ function renderTyp(
   }
   if (enforced.length > 0) {
     lines.push(`// enforced on DTO fields: ${enforced.join(", ")}`);
+  }
+  // A bare-word union [TYP] is a string-literal enum (tsFor quotes the members);
+  // DTO fields of this type are validated with @IsIn rather than left unchecked.
+  const enumVals = enumMembers(typ.typeName);
+  if (enumVals) {
+    lines.push(`// enforced on DTO fields: @IsIn(${enumList(enumVals)})`);
   }
   if (typ.isExternal) {
     lines.push(
@@ -1036,6 +1359,18 @@ function stepRecipe(steps: StepLike[] | CseNode["steps"]): string[] {
 // returns and feeds them to the data adapters that produce side effects
 // (boundary steps returning `void` — validated before they leave), and
 // validates the result. Scaffolded straight from the rune.
+// Boundary verbs that READ state — safe to run before the core's guards. Any
+// OTHER value-returning boundary verb (set/add/save/assign/charge/…) is a
+// value-returning MUTATION: it must run AFTER the core, so the core's guards
+// (authority checks, cross-app forbidden escalations) throw before the write
+// lands. Prefix-matched on the camelCase word boundary (getRecording reads;
+// getaway/checkout do not match get/check).
+function isReadVerb(verb: string): boolean {
+  return /^(get|list|load|read|fetch|find|lookup|query|search|download|count|peek|check|exists)($|[A-Z_0-9])/
+    .test(verb) ||
+    /^(is|has|can|assert)[A-Z_0-9]/.test(verb);
+}
+
 function renderCoordinator(
   req: ReqNode,
   module: string,
@@ -1045,11 +1380,16 @@ function renderCoordinator(
   const { typMap } = types;
   const isBoundary = (s: StepLike): s is BoundaryStepNode => s.kind === "boundary";
   const boundaries = req.steps.filter(isBoundary);
-  const reads = boundaries.filter((s) => s.output !== "void" && s.output !== "");
-  const writes = boundaries.filter((s) => s.output === "void");
+  const valueSteps = boundaries.filter((s) => s.output !== "void" && s.output !== "");
+  // Value-returning boundaries split by verb: read verbs may load pre-core;
+  // mutation verbs (role.addGrant, invoice.save, gateway.authorize) are
+  // emitted post-core even when their args are all input-fed — emitting a
+  // privilege-granting mutation in the reads block put it ABOVE every position
+  // where the core's guards could reject it first (the emission-order hazard).
+  const readSteps = valueSteps.filter((s) => isReadVerb(s.verb));
   // A boundary with NO declared output is a fire-and-forget side effect: it
   // joins the writes (nothing to bind — the old read path rendered `as ;`),
-  // args straight off the validated input.
+  // args resolved through the same post-core table.
   const sends = boundaries.filter((s) => s.output === "");
   // A read whose param is a DTO produced mid-flow (not the request input) can't
   // load before the core — it consumes a value the core builds. Such reads run
@@ -1059,8 +1399,8 @@ function renderCoordinator(
   // input fields).
   const isInputRead = (r: BoundaryStepNode): boolean =>
     r.params.every((p) => !/Dto$/.test(p) || p === req.input);
-  const inputReads = reads.filter(isInputRead);
-  const coreReads = reads.filter((r) => !isInputRead(r));
+  const inputReads = readSteps.filter(isInputRead);
+  const coreReads = readSteps.filter((r) => !isInputRead(r));
   const boundaryNouns = [...new Set(boundaries.map((s) => s.noun))];
 
   // Business classes are generated ONLY for nouns that appear as untagged
@@ -1100,81 +1440,380 @@ function renderCoordinator(
     verb: r.verb,
     params: r.params,
   }));
-  // Reads consuming a core-built DTO: each needs that DTO produced by the core
-  // (a `coreField` in its return), then runs post-core fed from `out.<coreField>`.
-  const coreReadVars = coreReads.map((r) => {
-    const dtoParam = r.params.find((p) => /Dto$/.test(p) && p !== req.input);
-    return {
-      name: camel(`${r.noun}-${r.verb}`),
-      type: r.output,
-      noun: r.noun,
-      verb: r.verb,
-      params: r.params,
-      dtoParam,
-      coreField: dtoParam ? camel(dtoParam) : camel(`${r.noun}-${r.verb}-arg`),
-      coreType: dtoParam ? seamTs(dtoParam, typMap) : "unknown",
+  // Every boundary step that runs AFTER the core, in SPEC ORDER — the recipe's
+  // declared order is the execution contract (a mutation declared before the
+  // audit write must land before it). "produce" steps (value-returning
+  // mutations + reads consuming core output) bind a seam-asserted local.
+  type PostAction =
+    | { kind: "write"; step: BoundaryStepNode; field: string }
+    | { kind: "send"; step: BoundaryStepNode }
+    | {
+      kind: "produce";
+      step: BoundaryStepNode;
+      name: string;
+      type: string;
+      mutation: boolean;
     };
-  });
-  // When a core-read produces the REQ's own output, IT is the result source —
-  // the core no longer returns `result` (it can't build the output a boundary
-  // produces); the coordinator returns that read's (already-asserted) value.
-  const resultRead = [...coreReadVars].reverse().find((r) => r.type === req.output) ??
-    null;
   const usedFields = new Set<string>();
-  const writeFields = writes.map((w) => {
-    let f = camel(w.verb);
+  const writeFieldFor = (verb: string): string => {
+    let f = camel(verb);
     while (usedFields.has(f)) f += "X";
     usedFields.add(f);
-    // The value the core must produce for this write: the DTO param if there
-    // is one, else the first param. Its type mirrors the typed adapter stub's
-    // param (rune-sig resolves the same way), so the core return type and the
-    // adapter signature agree; opaque params stay `unknown` on both sides.
-    const param = w.params.find((p) => /Dto$/.test(p)) ?? w.params[0];
-    const seam: Seam = param ? seamFor(param, typMap) : { kind: "opaque" };
-    const type = seam.kind === "opaque" ? "unknown" : seamTs(param, typMap);
-    return { field: f, type, seam, noun: w.noun, verb: w.verb };
-  });
+    return f;
+  };
+  const usedLocals = new Set(readVars.map((r) => r.name));
+  const produceLocalFor = (noun: string, verb: string): string => {
+    let n = camel(`${noun}-${verb}`);
+    while (usedLocals.has(n)) n += "X";
+    usedLocals.add(n);
+    return n;
+  };
+  const postActions: PostAction[] = [];
+  for (const s of boundaries) {
+    if (s.output === "void") {
+      postActions.push({ kind: "write", step: s, field: writeFieldFor(s.verb) });
+    } else if (s.output === "") {
+      postActions.push({ kind: "send", step: s });
+    } else if (!isReadVerb(s.verb) || !isInputRead(s)) {
+      postActions.push({
+        kind: "produce",
+        step: s,
+        name: produceLocalFor(s.noun, s.verb),
+        type: s.output,
+        mutation: !isReadVerb(s.verb),
+      });
+    }
+  }
+  const produces = postActions.filter((a) => a.kind === "produce");
+  // When a post-core step produces the REQ's own output, IT is the result
+  // source — the core no longer returns `result` (it can't build the output a
+  // boundary produces); the coordinator returns that step's asserted value.
+  const resultRead = [...produces].reverse().find((r) => r.type === req.output) ??
+    null;
 
   const inputSeam = seamFor(req.input, typMap);
   const outputSeam = seamFor(req.output, typMap);
   // Validated input replaces `input` everywhere downstream.
   const inputRef = inputSeam.kind === "opaque" ? "input" : "validInput";
+  // The generated field names of the request input DTO — a scalar step param is
+  // sourced from `inputRef.<p>` ONLY when it names one of these.
+  const inputDto = types.dtoByName.get(req.input);
+  const inputFields = new Set(inputDto ? dtoFieldNames(inputDto) : []);
+  // Pure value-producer steps keyed by the scalar value they output (DTO outputs
+  // go through the post-core read path instead). A boundary param that is neither
+  // a request-input field nor a DTO is one of these produced mid-flow values —
+  // `settingsKey` from a `settingsKey::current()` step, say.
+  const producers = new Map<string, StepNode>();
+  for (const s of req.steps) {
+    if (s.kind === "step" && s.output && s.output !== "void" && !/Dto$/.test(s.output)) {
+      if (!producers.has(s.output)) producers.set(s.output, s);
+    }
+  }
+  // Which produced values the SHELL boundaries actually consume — transitively,
+  // since one producer may consume another's output. These are hoisted as real
+  // local bindings before the reads so a boundary references the binding instead
+  // of a bogus `input.<name>` (the value isn't an input field — TS2339).
+  const hoisted = new Set<string>();
+  const queue: string[] = [];
+  const consider = (p: string) => {
+    if (!/Dto$/.test(p) && !inputFields.has(p) && producers.has(p) && !hoisted.has(p)) {
+      hoisted.add(p);
+      queue.push(p);
+    }
+  };
+  for (const s of [...inputReads, ...sends, ...coreReads]) s.params.forEach(consider);
+  while (queue.length) producers.get(queue.shift()!)!.params.forEach(consider);
   // A whole-DTO param is the coordinator's own input DTO — pass the validated input that's
   // already in scope (`validInput`, or `input` when there's no seam), not `undefined as never`.
+  // A scalar param resolves to its hoisted producer local when produced mid-flow,
+  // else to the validated input field (the residual `input.<p>` covers an unbound
+  // param — a spec error left visible, unchanged from before).
+  const scalarRef = (p: string): string =>
+    !inputFields.has(p) && hoisted.has(p) ? p : `${inputRef}.${p}`;
   const stepArgs = (params: string[]): string =>
     params
-      .map((p) => /Dto$/.test(p) ? inputRef : `${inputRef}.${p}`)
+      .map((p) => /Dto$/.test(p) ? inputRef : scalarRef(p))
       .join(", ");
-  // Args for a post-core read: a core-built DTO comes from `out.<field>`
-  // (asserted at the seam), the request input DTO stays `inputRef`, TYP params
-  // are input fields.
-  const coreReadArgs = (r: { noun: string; verb: string; params: string[] }): string =>
-    r.params
-      .map((p) => {
-        if (!/Dto$/.test(p)) return `${inputRef}.${p}`;
-        if (p === req.input) return inputRef;
-        return `assert(${p}, out.${camel(p)}, "${r.noun}.${r.verb} ${camel(p)}")`;
-      })
+  // ---- post-core argument resolution (the shared name-resolution table) ----
+  //
+  // Every post-core call site binds EVERY parameter the step declares, in
+  // order, from one table — the same declarations the adapter signature is
+  // built from — so the call-site arity always equals the adapter's arity.
+  //
+  // The locals bound by post-core steps already emitted, so a later step can
+  // chain an earlier step's result (ledger.record(AuthDto) consumes the
+  // gateway.authorize local — the core runs BEFORE the mutations, so it can
+  // never fabricate their results).
+  const postLocals: { output: string; local: string }[] = [];
+  const lastPostLocal = (name: string): string | null => {
+    for (let i = postLocals.length - 1; i >= 0; i--) {
+      if (postLocals[i].output === name) return postLocals[i].local;
+    }
+    return null;
+  };
+  // Values the core must additionally return because a post-core call site
+  // consumes them and nothing else produces them. Registered in emission order;
+  // the same key resolves to the same field across call sites.
+  const extraOut = new Map<string, { field: string; type: string }>();
+  const extraFieldFor = (key: string, type: string): string => {
+    const existing = extraOut.get(key);
+    if (existing) return existing.field;
+    let f = key;
+    while (usedFields.has(f)) f += "X";
+    usedFields.add(f);
+    extraOut.set(key, { field: f, type });
+    return f;
+  };
+  // A scalar param of a post-core step: an input field, a hoisted producer
+  // local, a chained post-core result, a pre-core read's output — else the core
+  // must mint it (`out.<p>`, typed via its [TYP] seam; red by design).
+  const postScalar = (p: string): string => {
+    if (inputFields.has(p)) return `${inputRef}.${p}`;
+    if (hoisted.has(p)) return p;
+    const chained = lastPostLocal(p);
+    if (chained) return chained;
+    const readLocal = readVars.find((r) => r.type === p);
+    if (readLocal) return readLocal.name;
+    return `out.${extraFieldFor(p, seamTs(p, typMap))}`;
+  };
+  // A DTO param of a post-core step: the validated request input, a chained
+  // post-core result (already asserted), else a core-built DTO asserted at the
+  // seam (`out.<camel(dto)>` — the core returns it).
+  const postDto = (p: string, ctx: string): string => {
+    if (p === req.input) return inputRef;
+    const chained = lastPostLocal(p);
+    if (chained) return chained;
+    const f = extraFieldFor(camel(p), seamTs(p, typMap));
+    return `assert(${p}, out.${f}, ${ctx})`;
+  };
+  const postArgs = (step: BoundaryStepNode): string =>
+    step.params
+      .map((p) =>
+        /Dto$/.test(p)
+          ? postDto(p, `"${step.noun}.${step.verb} ${camel(p)}"`)
+          : postScalar(p)
+      )
       .join(", ");
-  const usesAssert = inputSeam.kind !== "opaque" ||
-    outputSeam.kind !== "opaque" ||
-    readVars.some((r) => seamFor(r.type, typMap).kind !== "opaque") ||
-    coreReadVars.length > 0 ||
-    writeFields.some((w) => w.seam.kind !== "opaque");
 
+  // ---- post-core emission (built FIRST: it decides what the core returns) ----
+  //
+  // One pass over the boundaries in SPEC ORDER. Emitting populates the shared
+  // resolution state (extraOut, coreWriteRet, postLocals), so the core call and
+  // its return type — composed after — reflect exactly what the calls consume.
+  const coreWriteRet: { field: string; type: string }[] = [];
+  const post: string[] = [];
+  for (const a of postActions) {
+    if (a.kind === "write") {
+      const w = a.step;
+      const ctx = `"${w.noun}.${w.verb} input"`;
+      // The write's PRIMARY param (its first DTO param, else its first param)
+      // is the value the core builds for it, returned under the verb-named
+      // field — unless an earlier post-core step already produced that exact
+      // value (then the write consumes the real, already-asserted result).
+      const dtoIdx = w.params.findIndex((p) => /Dto$/.test(p));
+      const primaryIdx = dtoIdx === -1 ? 0 : dtoIdx;
+      const args = w.params.map((p, i) => {
+        if (i !== primaryIdx) {
+          return /Dto$/.test(p)
+            ? postDto(p, `"${w.noun}.${w.verb} ${camel(p)}"`)
+            : postScalar(p);
+        }
+        const chained = lastPostLocal(p);
+        if (chained) return chained;
+        const seam: Seam = seamFor(p, typMap);
+        coreWriteRet.push({
+          field: a.field,
+          type: seam.kind === "opaque" ? "unknown" : seamTs(p, typMap),
+        });
+        return seam.kind === "dto"
+          ? `assert(${seam.cls}, out.${a.field}, ${ctx})`
+          : seam.kind === "primitive"
+          ? `assert.${seam.fn}(out.${a.field}, ${ctx})`
+          : `out.${a.field}`;
+      });
+      post.push(`  await ${camel(w.noun)}Data.${w.verb}(${args.join(", ")});`);
+    } else if (a.kind === "send") {
+      const s = a.step;
+      post.push(`  await ${camel(s.noun)}Data.${s.verb}(${postArgs(s)});`);
+    } else {
+      const r = a.step;
+      const call = `await ${camel(r.noun)}Data.${r.verb}(${postArgs(r)})`;
+      const seam = seamFor(a.type, typMap);
+      const ctx = `"${r.noun}.${r.verb}"`;
+      if (seam.kind === "dto") {
+        post.push(`  const ${a.name} = assert(${seam.cls}, ${call}, ${ctx});`);
+      } else if (seam.kind === "primitive") {
+        post.push(`  const ${a.name} = assert.${seam.fn}(${call}, ${ctx});`);
+      } else {
+        post.push(
+          `  const ${a.name} = ${call} as ${a.type}; // unvalidated: ${a.type} has no runtime contract`,
+        );
+      }
+      postLocals.push({ output: a.type, local: a.name });
+    }
+  }
+
+  // The core's return type: the values the writes consume, the extra values the
+  // post-core calls consume, and the result — unless a post-core step IS the
+  // result source. A core left with nothing to return is the guard-only shape:
+  // it types `void` and the shell calls it unbound.
+  const ret = [
+    ...coreWriteRet.map((w) => `${w.field}: ${w.type}`),
+    ...[...extraOut.values()].map((e) => `${e.field}: ${e.type}`),
+    ...(resultRead ? [] : [`result: ${seamTs(req.output, typMap)}`]),
+  ].join("; ");
+  const coreIsVoid = ret === "";
+
+  const B: string[] = [];
+  // JSDoc: input/output contracts + every fault, attributed to the step that
+  // raises it (collectFaultRaisers walks steps directly — collectAllFaults
+  // dedups and drops the raiser, which is exactly what @throws needs) (E2).
+  const faultRaisers = collectFaultRaisers(req.steps);
+  B.push("/**");
+  B.push(
+    ` * Coordinator for [REQ] ${req.noun}.${req.verb}(${req.input}): ${req.output}.`,
+  );
+  if (req.input) {
+    const inWord = inputSeam.kind === "opaque"
+      ? "passed through unvalidated (no [TYP] contract)"
+      : "asserted against its contract at the seam";
+    B.push(` * @param input ${req.input} — ${inWord}.`);
+  }
+  const outWord = outputSeam.kind === "opaque"
+    ? "passed through unvalidated (no [TYP] contract)"
+    : "asserted before return";
+  B.push(` * @returns ${req.output} — ${outWord}.`);
+  for (const { fault, raiser } of faultRaisers) {
+    B.push(` * @throws ${fault} — raised by ${raiser}`);
+  }
+  B.push(" */");
+  B.push(
+    `export async function ${req.verb}(input: ${
+      seamTs(req.input, typMap)
+    }): Promise<${seamTs(req.output, typMap)}> {`,
+  );
+  const inputCtx = `"${req.noun}.${req.verb} input"`;
+  if (inputSeam.kind === "dto") {
+    B.push(`  const validInput = assert(${inputSeam.cls}, input, ${inputCtx});`);
+  } else if (inputSeam.kind === "primitive") {
+    B.push(`  const validInput = assert.${inputSeam.fn}(input, ${inputCtx});`);
+  }
+  for (const n of boundaryNouns) {
+    B.push(`  const ${camel(n)}Data = new ${toPascal(n)}Data();`);
+  }
+  // value producers — pure steps whose scalar output a boundary below consumes.
+  // Emitted from the first-wins `producers` map (so a value with two producers
+  // binds once) in spec order — a producer feeding another is declared first —
+  // making each a real local the reads/sends reference instead of a missing
+  // input field. Static steps call the class; instance steps `new` it.
+  if (hoisted.size) {
+    B.push("");
+    B.push("  // value producers — pure steps whose output the boundaries below consume");
+    for (const [name, s] of producers) {
+      if (!hoisted.has(name)) continue;
+      const cls = toPascal(s.noun);
+      const call = s.isStatic
+        ? `${cls}.${s.verb}(${stepArgs(s.params)})`
+        : `new ${cls}().${s.verb}(${stepArgs(s.params)})`;
+      B.push(`  const ${name} = ${call};`);
+    }
+  }
+  if (readVars.length) {
+    B.push("");
+    B.push("  // reads — load inputs through the data adapters (validated at the seam)");
+    for (const r of readVars) {
+      const call = `await ${camel(r.noun)}Data.${r.verb}(${stepArgs(r.params)})`;
+      const seam = seamFor(r.type, typMap);
+      const ctx = `"${r.noun}.${r.verb}"`;
+      if (seam.kind === "dto") {
+        B.push(`  const ${r.name} = assert(${seam.cls}, ${call}, ${ctx});`);
+      } else if (seam.kind === "primitive") {
+        B.push(`  const ${r.name} = assert.${seam.fn}(${call}, ${ctx});`);
+      } else {
+        B.push(
+          `  const ${r.name} = ${call} as ${r.type}; // unvalidated: ${r.type} has no runtime contract`,
+        );
+      }
+    }
+  }
+  B.push("");
+  B.push("  // core — pure business logic, no I/O");
+  const coreCall = `${req.verb}Core(${
+    [inputRef, ...readVars.map((r) => r.name)].join(", ")
+  })`;
+  B.push(coreIsVoid ? `  ${coreCall};` : `  const out = ${coreCall};`);
+  if (post.length > 0) {
+    B.push("");
+    B.push("  // after the core — boundary calls in spec order (validated at the seam)");
+    if (postActions.some((a) => a.kind !== "produce" || a.mutation)) {
+      B.push("  // (guards run in the core above: a throw there prevents every call below)");
+    }
+    B.push(...post);
+  }
+  B.push("");
+  const outputCtx = `"${req.noun}.${req.verb} output"`;
+  if (resultRead) {
+    // The output is produced by a post-core boundary — already asserted above.
+    B.push(`  return ${resultRead.name};`);
+  } else if (outputSeam.kind === "dto") {
+    B.push(`  return assert(${outputSeam.cls}, out.result, ${outputCtx});`);
+  } else if (outputSeam.kind === "primitive") {
+    B.push(`  return assert.${outputSeam.fn}(out.result, ${outputCtx});`);
+  } else {
+    B.push("  return out.result;");
+  }
+  B.push("}");
+  B.push("");
+
+  const coreParams = [
+    `input: ${seamTs(req.input, typMap)}`,
+    ...readVars.map((r) => `${r.name}: ${seamTs(r.type, typMap)}`),
+  ].join(", ");
+  // Describe only the parts this verb actually has, so a no-reads or no-writes
+  // coordinator doesn't carry a misleading "the dtos the reads loaded" boilerplate.
+  const takesReads = readVars.length ? " and the dtos the reads loaded" : "";
+  const returnsClause = [
+    coreWriteRet.length ? "the dtos the writes consume" : "",
+    extraOut.size ? "the values the post-core calls consume" : "",
+    resultRead ? "" : "the result",
+  ].filter(Boolean).join(" plus ") ||
+    "nothing (the post-core boundary calls produce the flow's values)";
+  B.push(`// Pure business logic for ${req.noun}.${req.verb} — no I/O. Takes the`);
+  B.push(`// request input${takesReads}; returns ${returnsClause}.`);
+  B.push(
+    `function ${req.verb}Core(${coreParams}): ${coreIsVoid ? "void" : `{ ${ret} }`} {`,
+  );
+  for (const n of newNouns) {
+    B.push(`  const ${camel(n)} = new ${toPascal(n)}();`);
+  }
+  // E3: the spec's ordered step recipe as a checklist, so the dev implements
+  // exactly what the [REQ] declared. Boundaries are the shell's reads/writes/
+  // sends — only pure steps / [NEW] / [RET] / [PLY] dispatch belong in the core.
+  const recipe = stepRecipe(req.steps).map((l) => `  //   ${l}`);
+  if (recipe.length > 0) {
+    B.push(`  // Recipe from [REQ] ${req.noun}.${req.verb} (run in order):`);
+    B.push(...recipe);
+    B.push("  // TODO: implement the steps above, then build the dtos");
+  } else {
+    const todoNouns = newNouns.length
+      ? newNouns.map((n) => camel(n)).join(", ")
+      : "the inputs";
+    B.push(`  // TODO: run the pure steps on ${todoNouns}, build the dtos`);
+  }
+  B.push(`  throw new Error("not implemented");`);
+  B.push("}");
+  B.push("");
+
+  // ---- compose: header + imports (derived from the finished body) + body ----
   const dtos = dtoImports(
     [
       req.input,
       req.output,
-      ...readVars.map((r) => r.type),
-      ...writeFields.map((w) => w.type),
-      ...coreReadVars.map((r) => r.type),
-      ...coreReadVars.map((r) => r.dtoParam),
+      ...boundaries.flatMap((s) => [s.output, ...s.params]),
     ],
     module,
     types,
   );
-
   const L: string[] = [];
   // req.line is 0-based; +1 points at the [REQ] line in the spec (E1).
   L.push(`// Generated by rune manifest from ${runePath}:${req.line + 1}.`);
@@ -1184,7 +1823,10 @@ function renderCoordinator(
   for (const d of dtos) {
     L.push(`import { ${d.type} } from "@/${d.dir}/${d.file}.ts";`);
   }
-  if (usesAssert) L.push(`import { assert } from "#assert";`);
+  // The assert runtime is imported exactly when the emitted body calls it.
+  if (B.some((l) => /\bassert[.(]/.test(l))) {
+    L.push(`import { assert } from "#assert";`);
+  }
   for (const n of instanceNouns) {
     L.push(
       `import { ${toPascal(n)} } from "@/src/${module}/domain/business/${
@@ -1200,162 +1842,7 @@ function renderCoordinator(
     );
   }
   L.push("");
-
-  // JSDoc: input/output contracts + every fault, attributed to the step that
-  // raises it (collectFaultRaisers walks steps directly — collectAllFaults
-  // dedups and drops the raiser, which is exactly what @throws needs) (E2).
-  const faultRaisers = collectFaultRaisers(req.steps);
-  L.push("/**");
-  L.push(
-    ` * Coordinator for [REQ] ${req.noun}.${req.verb}(${req.input}): ${req.output}.`,
-  );
-  if (req.input) {
-    const inWord = inputSeam.kind === "opaque"
-      ? "passed through unvalidated (no [TYP] contract)"
-      : "asserted against its contract at the seam";
-    L.push(` * @param input ${req.input} — ${inWord}.`);
-  }
-  const outWord = outputSeam.kind === "opaque"
-    ? "passed through unvalidated (no [TYP] contract)"
-    : "asserted before return";
-  L.push(` * @returns ${req.output} — ${outWord}.`);
-  for (const { fault, raiser } of faultRaisers) {
-    L.push(` * @throws ${fault} — raised by ${raiser}`);
-  }
-  L.push(" */");
-  L.push(
-    `export async function ${req.verb}(input: ${
-      seamTs(req.input, typMap)
-    }): Promise<${seamTs(req.output, typMap)}> {`,
-  );
-  const inputCtx = `"${req.noun}.${req.verb} input"`;
-  if (inputSeam.kind === "dto") {
-    L.push(`  const validInput = assert(${inputSeam.cls}, input, ${inputCtx});`);
-  } else if (inputSeam.kind === "primitive") {
-    L.push(`  const validInput = assert.${inputSeam.fn}(input, ${inputCtx});`);
-  }
-  for (const n of boundaryNouns) {
-    L.push(`  const ${camel(n)}Data = new ${toPascal(n)}Data();`);
-  }
-  if (readVars.length) {
-    L.push("");
-    L.push("  // reads — load inputs through the data adapters (validated at the seam)");
-    for (const r of readVars) {
-      const call = `await ${camel(r.noun)}Data.${r.verb}(${stepArgs(r.params)})`;
-      const seam = seamFor(r.type, typMap);
-      const ctx = `"${r.noun}.${r.verb}"`;
-      if (seam.kind === "dto") {
-        L.push(`  const ${r.name} = assert(${seam.cls}, ${call}, ${ctx});`);
-      } else if (seam.kind === "primitive") {
-        L.push(`  const ${r.name} = assert.${seam.fn}(${call}, ${ctx});`);
-      } else {
-        L.push(
-          `  const ${r.name} = ${call} as ${r.type}; // unvalidated: ${r.type} has no runtime contract`,
-        );
-      }
-    }
-  }
-  L.push("");
-  L.push("  // core — pure business logic, no I/O");
-  L.push(
-    `  const out = ${req.verb}Core(${[inputRef, ...readVars.map((r) => r.name)].join(", ")});`,
-  );
-  if (writeFields.length || sends.length) {
-    L.push("");
-    L.push("  // writes — side effects through the data adapters (validated before they leave)");
-    for (const w of writeFields) {
-      const ctx = `"${w.noun}.${w.verb} input"`;
-      const arg = w.seam.kind === "dto"
-        ? `assert(${w.seam.cls}, out.${w.field}, ${ctx})`
-        : w.seam.kind === "primitive"
-        ? `assert.${w.seam.fn}(out.${w.field}, ${ctx})`
-        : `out.${w.field}`;
-      L.push(`  await ${camel(w.noun)}Data.${w.verb}(${arg});`);
-    }
-    for (const s of sends) {
-      L.push(`  await ${camel(s.noun)}Data.${s.verb}(${stepArgs(s.params)});`);
-    }
-  }
-  if (coreReadVars.length) {
-    L.push("");
-    L.push("  // reads consuming core output — run AFTER the core (validated at the seam)");
-    for (const r of coreReadVars) {
-      const call = `await ${camel(r.noun)}Data.${r.verb}(${coreReadArgs(r)})`;
-      const seam = seamFor(r.type, typMap);
-      const ctx = `"${r.noun}.${r.verb}"`;
-      if (seam.kind === "dto") {
-        L.push(`  const ${r.name} = assert(${seam.cls}, ${call}, ${ctx});`);
-      } else if (seam.kind === "primitive") {
-        L.push(`  const ${r.name} = assert.${seam.fn}(${call}, ${ctx});`);
-      } else {
-        L.push(`  const ${r.name} = ${call} as ${r.type}; // unvalidated: ${r.type} has no runtime contract`);
-      }
-    }
-  }
-  L.push("");
-  const outputCtx = `"${req.noun}.${req.verb} output"`;
-  if (resultRead) {
-    // The output is produced by a post-core boundary — already asserted above.
-    L.push(`  return ${resultRead.name};`);
-  } else if (outputSeam.kind === "dto") {
-    L.push(`  return assert(${outputSeam.cls}, out.result, ${outputCtx});`);
-  } else if (outputSeam.kind === "primitive") {
-    L.push(`  return assert.${outputSeam.fn}(out.result, ${outputCtx});`);
-  } else {
-    L.push("  return out.result;");
-  }
-  L.push("}");
-  L.push("");
-
-  const coreParams = [
-    `input: ${seamTs(req.input, typMap)}`,
-    ...readVars.map((r) => `${r.name}: ${seamTs(r.type, typMap)}`),
-  ].join(", ");
-  // The core also produces any DTO a post-core read consumes; and it stops
-  // producing `result` when a post-core read is the output's source.
-  const coreReadRet: string[] = [];
-  const seenCoreField = new Set<string>();
-  for (const r of coreReadVars) {
-    if (seenCoreField.has(r.coreField)) continue;
-    seenCoreField.add(r.coreField);
-    coreReadRet.push(`${r.coreField}: ${r.coreType}`);
-  }
-  const ret = [
-    ...writeFields.map((w) => `${w.field}: ${w.type}`),
-    ...coreReadRet,
-    ...(resultRead ? [] : [`result: ${seamTs(req.output, typMap)}`]),
-  ].join("; ");
-  // Describe only the parts this verb actually has, so a no-reads or no-writes
-  // coordinator doesn't carry a misleading "the dtos the reads loaded" boilerplate.
-  const takesReads = readVars.length ? " and the dtos the reads loaded" : "";
-  const returnsClause = [
-    writeFields.length ? "the dtos the writes consume" : "",
-    coreReadRet.length ? "the dtos the post-core reads consume" : "",
-    resultRead ? "" : "the result",
-  ].filter(Boolean).join(" plus ") || "the result";
-  L.push(`// Pure business logic for ${req.noun}.${req.verb} — no I/O. Takes the`);
-  L.push(`// request input${takesReads}; returns ${returnsClause}.`);
-  L.push(`function ${req.verb}Core(${coreParams}): { ${ret} } {`);
-  for (const n of newNouns) {
-    L.push(`  const ${camel(n)} = new ${toPascal(n)}();`);
-  }
-  // E3: the spec's ordered step recipe as a checklist, so the dev implements
-  // exactly what the [REQ] declared. Boundaries are the shell's reads/writes/
-  // sends — only pure steps / [NEW] / [RET] / [PLY] dispatch belong in the core.
-  const recipe = stepRecipe(req.steps).map((l) => `  //   ${l}`);
-  if (recipe.length > 0) {
-    L.push(`  // Recipe from [REQ] ${req.noun}.${req.verb} (run in order):`);
-    L.push(...recipe);
-    L.push("  // TODO: implement the steps above, then build the dtos");
-  } else {
-    const todoNouns = newNouns.length
-      ? newNouns.map((n) => camel(n)).join(", ")
-      : "the inputs";
-    L.push(`  // TODO: run the pure steps on ${todoNouns}, build the dtos`);
-  }
-  L.push(`  throw new Error("not implemented");`);
-  L.push("}");
-  L.push("");
+  L.push(...B);
   return L.join("\n");
 }
 
@@ -1364,8 +1851,8 @@ function renderCoordinator(
 // Exported for rune-stubs, which mirrors the same producer/consumer matching.
 export function dtoFieldNames(dto: DtoNode): string[] {
   return dto.properties.map((raw) => {
-    const array = /\(s\)/.test(raw);
-    const base = raw.replace(/\(s\)/g, "").replace(/\?/g, "").trim();
+    const array = /\(s\??\)/.test(raw);
+    const base = raw.replace(/\(s\??\)/g, "").replace(/\?/g, "").trim();
     return array ? `${base}s` : base;
   });
 }
@@ -1400,9 +1887,14 @@ function computeEntProcess(
   externalTypes: Set<string> = new Set(),
 ): Map<EntNode, EntProcess> {
   const out = new Map<EntNode, EntProcess>();
-  // dependsOn edges committed so far, keyed by action — lets us detect, in declaration order,
-  // when a new producer edge would close a cycle.
-  const depsByAction = new Map<string, Set<string>>();
+  // An ent's IDENTITY in the dependency graph is surface-qualified: two ents on
+  // different surfaces can share an `action` (e.g. `alpha.make` and `beta.make`),
+  // so keying the graph by bare `action` would collide them — dependsOnReaches
+  // would report a phantom self-cycle and drop a real cross-surface producer.
+  const entKey = (e: EntNode): string => `${e.surface}.${e.action}`;
+  // dependsOn edges committed so far, keyed by ent identity — lets us detect, in
+  // declaration order, when a new producer edge would close a cycle.
+  const depsByKey = new Map<string, Set<string>>();
   const dependsOnReaches = (from: string, target: string): boolean => {
     const seen = new Set<string>();
     const stack = [from];
@@ -1411,7 +1903,7 @@ function computeEntProcess(
       if (cur === target) return true;
       if (seen.has(cur)) continue;
       seen.add(cur);
-      for (const d of depsByAction.get(cur) ?? []) stack.push(d);
+      for (const d of depsByKey.get(cur) ?? []) stack.push(d);
     }
     return false;
   };
@@ -1428,14 +1920,18 @@ function computeEntProcess(
   ents.forEach((ent, i) => {
     const inDto = dtoByName.get(ent.input);
     const inFields = inDto ? dtoFieldNames(inDto) : [];
+    // `dependsOn` is the EMITTED reference (bare action — resolved within the
+    // controller); `dependsOnKeys` is the surface-qualified identity used to
+    // grow the cycle-detection graph.
     const dependsOn = new Set<string>();
+    const dependsOnKeys = new Set<string>();
     const bind: Record<string, string | string[]> = {};
     for (const field of inFields) {
       // ents is in declaration order; a producer already (transitively) downstream of this ent is
       // dropped — wiring it would create a cycle — so the earliest *acyclic* producer wins.
       const producers = ents.filter((p) =>
         p !== ent && minted(p).has(field) &&
-        !dependsOnReaches(p.action, ent.action)
+        !dependsOnReaches(entKey(p), entKey(ent))
       );
       if (producers.length === 0) {
         // No acyclic producer. If some producer exists but every one would cycle, fall back to a
@@ -1456,15 +1952,19 @@ function computeEntProcess(
       const flows = new Set(producers.map(entFlow).filter((f) => f !== null));
       if (producers.length > 1 && flows.size > 1) {
         // Branch alternatives: whichever branch ran feeds the join.
-        for (const p of producers) dependsOn.add(p.action);
+        for (const p of producers) {
+          dependsOn.add(p.action);
+          dependsOnKeys.add(entKey(p));
+        }
         bind[field] = producers.map((p) => `${p.action}.${field}`);
       } else {
         const producer = producers[0];
         dependsOn.add(producer.action);
+        dependsOnKeys.add(entKey(producer));
         bind[field] = `${producer.action}.${field}`;
       }
     }
-    depsByAction.set(ent.action, new Set(dependsOn));
+    depsByKey.set(entKey(ent), dependsOnKeys);
     const flow = entFlow(ent);
     out.set(ent, {
       order: i + 1,
@@ -1474,6 +1974,76 @@ function computeEntProcess(
       optional: ent.modifier === "optional",
     });
   });
+  return out;
+}
+
+// Field-source binding (OpenAPI's parameter model): a `[TYP:from=path|path*|query|header]`
+// modifier on an input-DTO field declares where that field is populated from at the HTTP
+// boundary. Body is the default (no `from=`), so untouched DTOs route exactly as before.
+// Returns the sourced fields in DECLARATION order — the order path segments append to the route.
+function inputFieldSources(
+  inputDtoName: string,
+  types: TypeContext,
+): Array<{ field: string; source: FieldSource }> {
+  const dto = types.dtoByName.get(inputDtoName);
+  if (!dto) return [];
+  const out: Array<{ field: string; source: FieldSource }> = [];
+  for (const raw of dto.properties) {
+    // Mirror renderDto's property parsing so the field name matches the emitted DTO property.
+    const array = /\(s\??\)/.test(raw);
+    const base = raw.replace(/\(s\??\)/g, "").replace(/\?/g, "").trim();
+    const name = array ? `${base}s` : base;
+    const mod = types.typMap.get(base)?.modifiers.find((m) => m.startsWith("from="));
+    if (!mod) continue;
+    out.push({ field: name, source: mod.slice("from=".length) as FieldSource });
+  }
+  return out;
+}
+
+// The HTTP sub-path for an [ENT] under its controller surface. The base is the kebab action;
+// each path-sourced field appends a `:field` segment in declaration order, and a `path*`
+// (catch-all remainder) appends a trailing `:field{.+}` — Hono's slash-capturing named param. It
+// always trails (a catch-all must be last) regardless of where the path* field sits in the DTO.
+// keep's doc builder rewrites `{.+}` to the paren form for swagger (path-to-regexp can't parse the
+// brace form) while Hono serves the brace form, so the route is both routable and documentable.
+function entRoutePath(
+  action: string,
+  sources: Array<{ field: string; source: FieldSource }>,
+): string {
+  const segs = [applyCase(action, "kebab")];
+  let catchAll: string | null = null;
+  for (const { field, source } of sources) {
+    if (source === "path") segs.push(`:${field}`);
+    else if (source === "path*") catchAll = field;
+  }
+  if (catchAll) segs.push(`:${catchAll}{.+}`);
+  return segs.join("/");
+}
+
+// Translate an explicit `[ENT]` path template to the served (Hono) sub-path. `{name}` → `:name`,
+// `{name*}` (catch-all) → `:name{.+}`; literal segments pass through; a leading `/` is dropped
+// (the segment mounts under the controller surface). `/proxy/{target}/{path*}` → `proxy/:target/:path{.+}`.
+function translateTemplate(tpl: string): string {
+  return tpl
+    .replace(/^\//, "")
+    .split("/")
+    .filter((seg) => seg !== "")
+    .map((seg) => {
+      const m = seg.match(/^\{(\w+)(\*?)\}$/);
+      if (!m) return seg;
+      return m[2] ? `:${m[1]}{.+}` : `:${m[1]}`;
+    })
+    .join("/");
+}
+
+// The path/path* sources a `{name}` / `{name*}` template declares (so a field needn't repeat
+// `[TYP:from=path]` when the template already names it).
+function templateSources(tpl: string): Record<string, FieldSource> {
+  const out: Record<string, FieldSource> = {};
+  for (const seg of tpl.split("/")) {
+    const m = seg.match(/^\{(\w+)(\*?)\}$/);
+    if (m) out[m[1]] = m[2] ? "path*" : "path";
+  }
   return out;
 }
 
@@ -1530,7 +2100,7 @@ function renderEntrypointController(
   L.push(`// Generated by rune manifest from ${runePath}.`);
   L.push("// Edit the body. Re-running manifest will not overwrite this file.");
   L.push("");
-  L.push(`import { Endpoint, EndpointController, endpointModule } from "@mrg-keystone/keep";`);
+  L.push(`import { Endpoint, EndpointController, endpointModule } from "@mrg-keystone/rune";`);
   for (const d of dtos) L.push(`import { ${d.type} } from "@/${d.dir}/${d.file}.ts";`);
   for (const line of coordImports) L.push(line);
   L.push("");
@@ -1544,8 +2114,22 @@ function renderEntrypointController(
     // An empty input (`({})`) has no request body — omit `input:` (emitting `input: {}` trips
     // keep's Type constraint, TS2740) and generate a no-param handler below.
     const noInput = ent.input === "{}";
+    // Field-source binding: path/query/header-sourced input fields route into the URL/headers
+    // instead of the JSON body. `sources` (declaration order) drives the route segments, keep's
+    // generic binder, the swagger params, and the cake's per-field rendering.
+    const fieldSources = noInput ? [] : inputFieldSources(ent.input, types);
+    const sources: Record<string, FieldSource> = {};
+    for (const fs of fieldSources) sources[fs.field] = fs.source;
+    // An explicit `@ METHOD /template` defines the route + verb and contributes its `{name}` /
+    // `{name*}` path sources; otherwise the route is auto-derived from the from= path fields.
+    const routePath = ent.pathTemplate
+      ? translateTemplate(ent.pathTemplate)
+      : entRoutePath(ent.action, fieldSources);
+    if (ent.pathTemplate) Object.assign(sources, templateSources(ent.pathTemplate));
+    const method = ent.method && ent.method !== "post" ? ent.method : null;
     const opts = [
-      `path: ${JSON.stringify(applyCase(ent.action, "kebab"))}`,
+      `path: ${JSON.stringify(routePath)}`,
+      ...(method ? [`method: ${JSON.stringify(method)}`] : []),
       ...(noInput ? [] : [`input: ${ent.input}`]),
       `output: ${ent.output}`,
       `order: ${p.order}`,
@@ -1558,6 +2142,7 @@ function renderEntrypointController(
       );
     }
     if (p.optional) opts.push("optional: true");
+    if (Object.keys(sources).length) opts.push(`sources: ${JSON.stringify(sources)}`);
     // E38: a JSDoc block (delegate target, @param/@returns from DTO prose,
     // @throws from the coordinator's faults) plus `//` lines explaining the
     // derived process metadata. The @Endpoint decorator itself stays one line.
@@ -1709,7 +2294,7 @@ function renderEntrypointE2e(
     "// Edit the body. Re-running manifest will not overwrite this file.",
     "",
     `import { ${moduleConst} } from "./mod.ts";`,
-    `import { bootstrapServer, exerciseEndpoints } from "@mrg-keystone/keep";`,
+    `import { bootstrapServer, exerciseEndpoints } from "@mrg-keystone/rune";`,
     `import { assertEquals } from "#std/assert";`,
     "",
     "// Fill the coordinator bodies, then run with RUNE_E2E=1 to drive every endpoint",
@@ -1755,6 +2340,152 @@ function addEntrypointSurface(
   );
 }
 
+// One keep WebSocket controller per [ENT:ws] socket surface: a @WsEndpointController mounted at
+// the handshake path, with one @WsEndpoint method per topic. Each topic asserts its inbound
+// message against the input DTO and (optionally) returns a reply DTO that Danet sends back to the
+// sender. A WS endpoint carries no HTTP verb, so it never enters the OpenAPI document or the
+// cake/headless endpoint walk. Topics delegate to a [REQ] coordinator exactly as HTTP ents do.
+function renderWsController(
+  module: string,
+  surface: string,
+  ents: EntNode[],
+  reqs: ReqNode[],
+  runePath: string,
+  types: TypeContext,
+): string {
+  const className = `${toPascal(surface)}Socket`;
+  const moduleConst = `${camel(surface)}Module`;
+
+  // Value imports (the DTO classes are referenced at runtime in @WsEndpoint). dtoImports
+  // already skips non-DTO names, so a `void` reply or an empty `()` payload imports nothing.
+  const dtos = dtoImports(ents.flatMap((e) => [e.input, e.output]), module, types);
+
+  // Match each topic to its [REQ] coordinator by (input, output) DTO pair (or explicit delegate).
+  const coordImports = new Set<string>();
+  const entCoord = new Map<EntNode, string | null>();
+  const entReqNode = new Map<EntNode, ReqNode | null>();
+  for (const ent of ents) {
+    const req = ent.delegate
+      ? reqs.find((r) => r.noun === ent.delegate!.noun && r.verb === ent.delegate!.verb)
+      : reqs.find((r) => r.input === ent.input && r.output === ent.output);
+    entReqNode.set(ent, req ?? null);
+    if (!req) {
+      entCoord.set(ent, null);
+      continue;
+    }
+    const alias = `${camel(req.noun)}${toPascal(req.verb)}`;
+    coordImports.add(
+      `import { ${req.verb} as ${alias} } from "@/src/${module}/domain/coordinators/${
+        processName(req.noun, req.verb)
+      }/mod.ts";`,
+    );
+    entCoord.set(ent, alias);
+  }
+
+  // Every topic on a socket shares the handshake path (declared once on the [ENT:ws] header).
+  // Translate `{name}` → `:name` exactly like an HTTP route template; absent ⇒ the kebab surface.
+  const tpl = ents.find((e) => e.pathTemplate)?.pathTemplate ?? null;
+  const socketPath = tpl ? translateTemplate(tpl) : applyCase(surface, "kebab");
+
+  const L: string[] = [];
+  L.push(`// Generated by rune manifest from ${runePath}.`);
+  L.push("// Edit the body. Re-running manifest will not overwrite this file.");
+  L.push("");
+  L.push(
+    `import { endpointModule, WsEndpoint, WsEndpointController } from "@mrg-keystone/rune";`,
+  );
+  for (const d of dtos) L.push(`import { ${d.type} } from "@/${d.dir}/${d.file}.ts";`);
+  for (const line of coordImports) L.push(line);
+  L.push("");
+  L.push(`@WsEndpointController(${JSON.stringify(socketPath)})`);
+  L.push(`export class ${className} {`);
+  ents.forEach((ent, i) => {
+    if (i > 0) L.push("");
+    // Empty parens (`verb(): Out`) ⇒ no inbound payload; `void`/empty output ⇒ no reply sent.
+    const noInput = ent.input === "{}" || ent.input === "";
+    const hasReply = ent.output !== "" && ent.output !== "void";
+    const opts = [
+      `topic: ${JSON.stringify(ent.action)}`,
+      ...(noInput ? [] : [`input: ${ent.input}`]),
+      ...(hasReply ? [`output: ${ent.output}`] : []),
+    ];
+    const matched = entReqNode.get(ent) ?? null;
+    const dtoDesc = (n: string): string => types.dtoByName.get(n)?.description ?? "";
+    const jsdoc: string[] = [];
+    if (matched) {
+      const how = ent.delegate
+        ? "named by the [ENT:ws] body"
+        : "matched by input/output signature";
+      jsdoc.push(`Topic "${ent.action}" → coordinator ${matched.noun}.${matched.verb} (${how}).`);
+    } else {
+      jsdoc.push(`Topic "${ent.action}" — no coordinator wired, see the handler body.`);
+    }
+    if (!noInput) {
+      const d = dtoDesc(ent.input);
+      jsdoc.push(`@param data ${ent.input}${d ? ` — ${d}` : ""} (the inbound message payload)`);
+    }
+    if (hasReply) {
+      const od = dtoDesc(ent.output);
+      jsdoc.push(`@returns ${ent.output}${od ? ` — ${od}` : ""} (sent back to the sender)`);
+    } else {
+      jsdoc.push(`@returns nothing — this topic sends no reply`);
+    }
+    if (matched) {
+      for (const { fault, raiser } of collectFaultRaisers(matched.steps)) {
+        jsdoc.push(`@throws ${fault} (${raiser})`);
+      }
+    }
+    L.push("  /**");
+    for (const d of jsdoc) L.push(`   * ${d}`);
+    L.push("   */");
+    // E37: spec provenance (+1 → the topic line).
+    L.push(`  // from ${runePath}:${ent.line + 1}`);
+    L.push(`  @WsEndpoint({ ${opts.join(", ")} })`);
+    const retType = hasReply ? ent.output : "void";
+    L.push(
+      `  ${ent.action}(${noInput ? "" : `data: ${ent.input}`}): Promise<${retType}> {`,
+    );
+    const alias = entCoord.get(ent);
+    if (alias) {
+      L.push(`    return ${alias}(${noInput ? "{}" : "data"});`);
+    } else {
+      const target = ent.delegate
+        ? processName(ent.delegate.noun, ent.delegate.verb)
+        : "<noun>-<verb>";
+      L.push(`    // No [REQ] matches (${ent.input || "{}"}): ${ent.output}.`);
+      L.push(`    // Create src/${module}/domain/coordinators/${target}/mod.ts`);
+      L.push(`    throw new Error("not implemented");`);
+    }
+    L.push(`  }`);
+  });
+  L.push("}");
+  L.push("");
+  L.push(
+    `export const ${moduleConst} = endpointModule(${
+      JSON.stringify(toPascal(module))
+    }, [${className}]);`,
+  );
+  L.push("");
+  return L.join("\n");
+}
+
+function addWsSocketSurface(
+  emit: Emit,
+  module: string,
+  surface: string,
+  ents: EntNode[],
+  reqs: ReqNode[],
+  runePath: string,
+  types: TypeContext,
+): void {
+  const dir = `src/${module}/entrypoints/${applyCase(surface, "kebab")}`;
+  emit(
+    "entrypoint-mod",
+    `${dir}/mod.ts`,
+    renderWsController(module, surface, ents, reqs, runePath, types),
+  );
+}
+
 function addModRoot(
   emit: Emit,
   module: string,
@@ -1788,7 +2519,7 @@ function addModRoot(
     `${n.name}${n.description ? `: ${n.description}` : ""}`));
   section("Type vocabulary (from [TYP]):", typs.map((t) =>
     `${t.name}: ${t.typeName}${t.description ? ` — ${t.description}` : ""}`));
-  section("Backing services (from [SRV]):", srvs.map((s) =>
+  section("Backing services (shared, from src/core/core.rune):", srvs.map((s) =>
     `${s.name} (${s.transport})${s.envVars.length ? `: ${s.envVars.join(", ")}` : ""}`));
   const moduleDoc = doc.length > 0 ? doc.join("\n") + "\n" : "";
   emit(
@@ -2071,6 +2802,11 @@ export const DEFAULT_POLICIES: Record<string, TemplatePolicy> = {
   "poly-impl-test": { lifecycle: "create-once", prunable: true },
   "dto": { lifecycle: "create-once", prunable: true },
   "typ": { lifecycle: "create-once", prunable: true },
+  // Shared service clients (src/core/data/<name>/mod.ts) + their smoke tests are
+  // dev-owned once scaffolded; prunable:false keeps a filled-in client safe even
+  // if a `[SRV]` is removed from core.rune (delete the orphan client by hand).
+  "core-service": { lifecycle: "create-once", prunable: false },
+  "core-service-test": { lifecycle: "create-once", prunable: false },
   "entrypoint-mod": { lifecycle: "create-once", prunable: true },
   "entrypoint-e2e": { lifecycle: "create-once", prunable: true },
   "mod-root": { lifecycle: "regenerate", prunable: true },

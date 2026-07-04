@@ -1,0 +1,93 @@
+---
+name: "rune:framework"
+description: >-
+  The runtime that rune-generated Deno backends run on — the "back end" half of
+  rune's world. Use when you tune or debug the *running* app rather than the
+  `.rune` spec: `bootstrapServer` (the `{ listen, stop, backend, handler }`
+  return), the in-process `backend.fetch` client, forwarding conn info to
+  `Deno.serve`, and why a request 401s/403s. Covers the infra-only trust model
+  (in-process trusted, an infra-signed session bearer verified offline against
+  infra's JWKS, everything else deny-by-default — no localhost trust),
+  `@Public`/`@LoggedIn`/`@Grant` (deny-by-default, app-scoped grants, the `*`
+  skeleton), the `INFRA_URL` config keep verifies against
+  (`<INFRA_URL>/authz/jwks` + `/authz/status`), the `#assert`→`RuneAssertError`→HTTP
+  422 mapping, the `@Endpoint`/`@EndpointController` option semantics
+  (`order`/`dependsOn`/`bind`), the `exerciseEndpoints` headless runner +
+  `POST /docs/_run`, the `/docs/_map` system map, and deployment (standalone,
+  hosting under a sprig UI via `serveSprig`/`sprigUi`, `withBasePath`, Deno
+  Deploy, logging). Trigger phrases:
+  "why is auth failing / 401 / 403", "forward remoteAddr / conn info",
+  "host the backend under a sprig UI", "deploy a sprig+keep app",
+  "deploy to Deno Deploy", "verify an infra bearer / set INFRA_URL",
+  "what does bootstrapServer return", "run exerciseEndpoints in CI". NOT the
+  `.rune` language or modeling → use `rune:spec`; NOT generating/filling/testing
+  a module → use `rune:build`; NOT the interactive cake walk / `/docs/<m>` UI /
+  heal panel → use `rune:cake`; NOT Swagger examples / `@ApiProperty` /
+  `/docs/<m>/json` doc content → use `rune:docs`.
+---
+
+# rune:framework — orchestration playbook
+
+The runtime the generated code runs on, as a **router**. This skill is advisory
+knowledge split across three reference-expert specialists; the main session reads
+the request, routes it to the right specialist, and synthesizes the answer. It
+does **not** answer runtime questions inline — it delegates.
+
+## When this skill applies
+
+Tuning or debugging the *running* app (not the `.rune` spec): a 401/403, what
+`bootstrapServer` returns, `@Endpoint` order/deps/bind, the headless runner, or
+deploying / hosting under a sprig UI.
+
+## Specialist roster
+
+- **`rune-framework-auth`** — auth & trust: why a request 401s/403s, the
+  infra-only trust model, verifying the infra session bearer offline against
+  `INFRA_URL`'s JWKS, `@Public`/`@LoggedIn`/`@Grant`, grants + the `*` skeleton,
+  the docs/browser bearer flow. Owns `references/auth.md`.
+- **`rune-framework-runtime`** — the process layer: `bootstrapServer`, in-process
+  `backend.fetch`, `@Endpoint`/`@EndpointController` semantics, the
+  `exerciseEndpoints` runner + `POST /docs/_run` + `/docs/_map`, `@WsEndpoint`.
+  Owns `references/endpoints.md`.
+- **`rune-framework-deploy`** — deployment & hosting: standalone, sprig-hosted
+  (`serveSprig`/`sprigUi`), `withBasePath`, Deno Deploy, the in-process `backend`
+  client, logging. Owns `references/deployment.md`.
+
+## Flow
+
+1. **Classify the question by domain** (main session):
+   - auth / 401 / 403 / infra bearer / grants / `INFRA_URL` / docs-access → `rune-framework-auth`
+   - `bootstrapServer` / `@Endpoint` semantics / `order`·`dependsOn`·`bind` / the
+     `exerciseEndpoints`·`/docs/_run`·`/docs/_map` runner surface / WS sockets →
+     `rune-framework-runtime`
+   - serving / hosting under sprig / `withBasePath` / Deno Deploy / logging →
+     `rune-framework-deploy`
+2. **Delegate** to that specialist via the Task tool. Pass: the question/symptom
+   (with the failing request + origin + any response body), the project root,
+   optionally a running server's base URL, and **the absolute path to the
+   specialist's reference file** (`claude/skills/rune:framework/references/<auth|endpoints|deployment>.md`,
+   or the installed `~/.claude/skills/rune:framework/references/…`). The agent
+   reads its own reference; do not paste it into the prompt.
+3. **Summarize** the specialist's return (cause + cited rule + evidence + minimal
+   fix) for the user. If the answer spans domains (e.g. "my deployed sprig app
+   401s" = deploy mount + auth trust), call the second specialist with the first's
+   finding as context, then synthesize both.
+4. **Route real fixes out**: a spec change → `rune:spec`; a generated-body/test fix
+   → `rune:build`; a real-data e2e walk → `rune:cake`; a per-endpoint Swagger
+   example → `rune:docs`.
+
+**Cross-cutting note (`#assert` → 422):** the runtime maps a failed `RuneAssertError`
+to HTTP 422; `rune-framework-runtime` explains the mapping, but the *authoring* side
+(where asserts/`[TYP]` modifiers come from) is **`rune:spec`**.
+
+## Hard rule
+
+The main session delegates to the named specialist; it does not answer the runtime
+question itself. Each specialist is read-mostly and owns exactly one reference —
+keep their domains distinct so routing stays unambiguous.
+
+## What's no longer here
+
+The per-domain how-to (the trust model, the `@Endpoint`/runner option surface, the
+mounting recipes) now lives in the three specialists and their reference files —
+this playbook only routes.

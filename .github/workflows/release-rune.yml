@@ -1,0 +1,198 @@
+name: release-rune
+
+# Deploy model:
+#   - merge into `main`   -> BOTH the rolling `latest` release (what install.sh
+#                            pulls by default) AND a NEW pinned `vX.Y.Z` snapshot,
+#                            cut EVERY push. The `version` job computes the next
+#                            free patch (seeded from keep/deno.json); `pin` cuts
+#                            the snapshot in the SAME run as the rolling release —
+#                            no tag-push round-trip, so GitHub's "a GITHUB_TOKEN
+#                            push doesn't re-trigger workflows" rule can't swallow it.
+#   - push to `develop`   -> rolling `develop` release (RUNE_VERSION=develop)
+#   - push a `vX.Y.Z` tag -> pinned snapshot release
+# The binary's baked version (`rune -v`) is stamped with the SAME computed version
+# (RUNE_VERSION_OVERRIDE → gen-version.ts), so the release tag and `rune -v` agree.
+# Builds (cross-compile + codesign) are rune-specific and run at the repo root
+# (rune IS the root package); the release itself is mrg-keystone/actions/gh-release.
+#
+# `paths-ignore` stops pushes that touch ONLY runtime-owned or non-binary facets
+# (the keep/ runtime source, the e2e/examples/docs/todos facets, incl. the
+# runtime's auto-bump commit) from rebuilding rune's 3 binary targets. The rune
+# binary's real inputs are src/, lang/ (incl. keywords.json), claude/ (the seven
+# rune:* skills under claude/skills/ plus any claude/agents/), and scripts/ (the gen
+# scripts) —
+# none of which are ignored here. NOTE: GitHub does not apply
+# paths-ignore to TAG pushes, so `v*` snapshot releases still build. If a `v*`
+# tag is ever unexpectedly skipped, move the tag trigger into its own workflow.
+on:
+  push:
+    branches: [main, develop]
+    tags: ["v*"]
+    paths-ignore:
+      - "keep/**"
+      - "e2e/**"
+      - "examples/**"
+      - "docs/**"
+      - "todos/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-rune-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Resolve the version this run will stamp + (on main) release. One source of
+  # truth consumed by both `build` (binary stamp) and `pin` (the snapshot tag):
+  #   - on a `v*` tag push  -> that tag, verbatim
+  #   - on `main`           -> the next FREE patch, seeded from keep/deno.json's
+  #                            semver, skipping any vX.Y.Z that already has a tag
+  #                            or release (so every push gets a brand-new version)
+  #   - otherwise (develop) -> keep/deno.json's semver, for the binary stamp only
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      next: ${{ steps.v.outputs.next }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need the full tag history to find the next free patch
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "next=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          base="$(python3 -c "import json;print(json.load(open('keep/deno.json')).get('version','0.0.0'))")"
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "next=v${base}" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          IFS=. read -r MA MI PA <<< "${base#v}"
+          MA="${MA:-0}"; MI="${MI:-0}"; PA="${PA:-0}"
+          git fetch --tags --force --quiet 2>/dev/null || true
+          taken() {
+            git rev-parse "refs/tags/$1" >/dev/null 2>&1 \
+              || gh release view "$1" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1
+          }
+          while taken "v${MA}.${MI}.${PA}"; do PA=$((PA + 1)); done
+          echo "next=v${MA}.${MI}.${PA}" >> "$GITHUB_OUTPUT"
+          echo "next release version: v${MA}.${MI}.${PA}"
+
+  build:
+    needs: [version]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest # cross-compiled from arm64 (macos-13 runners unavailable)
+            target: x86_64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build rune + rune-lsp + rune-syntax (target ${{ matrix.target }})
+        env:
+          # Stamp the exact version this run will release, so `rune -v` == the tag.
+          RUNE_VERSION_OVERRIDE: ${{ needs.version.outputs.next }}
+        run: |
+          deno run --allow-read --allow-run --allow-write src/bootstrap/config.ts
+          deno run --allow-read --allow-write scripts/gen-shape-docs.ts
+          deno run --allow-read --allow-run --allow-write --allow-env scripts/gen-version.ts
+          deno compile --allow-read --allow-write --allow-net --allow-env --allow-run \
+            --target ${{ matrix.target }} -o dist/rune src/bootstrap/mod.ts
+          (cd lang && cargo build --release --target ${{ matrix.target }})
+          mkdir -p dist
+          cp "lang/target/${{ matrix.target }}/release/rune-lsp" \
+             "lang/target/${{ matrix.target }}/release/rune-syntax" dist/
+
+      - name: Ad-hoc codesign (macOS)
+        if: runner.os == 'macOS'
+        run: codesign -s - --force dist/rune dist/rune-lsp dist/rune-syntax
+
+      - name: Package
+        # The Claude Code skills + agents ship INSIDE the tarball as skill/ and
+        # agent/ dirs (skill/ holds every rune:* skill folder —
+        # scope/spec/data/build/cake/framework/docs; agent/ holds every bundled
+        # agent), so a pinned install gets the skills + agents matching its binaries
+        # (install.sh extracts both dirs and base-level-replaces each entry). They
+        # come from the repo's claude/ dir. evals/ is dev-only and not shipped.
+        run: |
+          rm -rf dist/skill dist/agent && mkdir -p dist/skill dist/agent
+          cp -R claude/skills/. dist/skill/
+          cp -R claude/agents/. dist/agent/
+          tar -C dist -czf "rune-${{ matrix.target }}.tar.gz" rune rune-lsp rune-syntax skill agent
+          shasum -a 256 "rune-${{ matrix.target }}.tar.gz" > "rune-${{ matrix.target }}.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          # upload-artifact paths are relative to the workspace (repo) root.
+          path: rune-${{ matrix.target }}.tar.gz*
+          retention-days: 3
+
+  # The commit this release was built from, shipped as a sibling asset so
+  # `rune -v` can tell whether an installed binary is stale WITHOUT reading the
+  # git `latest` tag (which gh-release freezes — it lags the served binary by
+  # weeks). commit.txt is uploaded into the same `latest` release as the
+  # binaries, so it can never disagree with what you'd download. Emitted as a
+  # `release-*` artifact so the existing artifact-pattern picks it up.
+  meta:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "${{ github.sha }}" > commit.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-meta
+          path: commit.txt
+          retention-days: 3
+
+  release:
+    needs: [build, meta]
+    uses: mrg-keystone/actions/.github/workflows/gh-release.yml@main
+    permissions:
+      contents: write
+    with:
+      artifact-pattern: release-*
+      # rune's asset surface is a contract with install.sh + `rune update`: the
+      # skills + agents ship as skill/ and agent/ dirs INSIDE each tarball (all
+      # rune:* skill folders + bundled agents), not as separately packed assets —
+      # so pack-skills stays off.
+      pack-skills: false
+      extra-assets: |
+        scripts/install.sh
+        scripts/uninstall.sh
+
+  # The NEW pinned `vX.Y.Z` snapshot, cut on EVERY push to main alongside the
+  # rolling `latest` above. The reusable's `tag` input overrides ref-resolution,
+  # so it publishes a pinned (make_latest:false) release at this commit — and
+  # softprops creates the tag itself, all in THIS run (no tag-push round-trip
+  # that a GITHUB_TOKEN push would fail to re-trigger). Same artifacts as
+  # `latest`, so the snapshot and the rolling release are byte-identical.
+  pin:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [version, build, meta]
+    uses: mrg-keystone/actions/.github/workflows/gh-release.yml@main
+    permissions:
+      contents: write
+    with:
+      tag: ${{ needs.version.outputs.next }}
+      artifact-pattern: release-*
+      pack-skills: false
+      extra-assets: |
+        scripts/install.sh
+        scripts/uninstall.sh

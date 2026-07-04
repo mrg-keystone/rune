@@ -1,0 +1,38 @@
+[MOD] tasks
+
+[REQ] task.create(CreateTaskDto): TaskDto
+    id::generate(): id
+    [NEW] task
+    task.fill(title): task
+    db:task.save(TaskDto): void
+      timeout
+    task.toDto(): TaskDto
+
+[REQ] task.complete(CompleteTaskDto): TaskDto
+    db:task.load(id): TaskDto
+      not-found
+    task.markDone(): task
+    db:task.save(TaskDto): void
+      timeout
+    task.toDto(): TaskDto
+
+[ENT] http.add(CreateTaskDto): TaskDto
+
+[ENT] http.finish(CompleteTaskDto): TaskDto
+
+[TYP] id: string
+    a unique task identifier
+[TYP:example=milk] title: string
+    the human-readable task title
+[TYP] done: boolean
+    whether the task has been completed
+
+[DTO] CreateTaskDto: title
+    input to create a new task
+[DTO] CompleteTaskDto: id
+    a reference to the task to complete
+[DTO] TaskDto: id, title, done
+    a persisted task record
+
+[NON] task
+    a single todo item

@@ -6,9 +6,19 @@ import {
   TYP_MODIFIERS,
 } from "@rune/domain/business/rune-modifiers/mod.ts";
 
-// The closed set of service transports a [SRV] may declare.
-export const SRV_TRANSPORTS = ["sk", "hp", "ws", "sc"] as const;
+// The closed set of service transports a [SRV] may declare, written as a
+// parenthesized prefix: `[SRV] (SDK)stripe: KEY`. NATIVE is the in-process
+// runtime/std-lib boundary (filesystem, subprocess, crypto, clock) — neither a
+// network surface nor a co-located process; its faults are synchronous throws.
+export const SRV_TRANSPORTS = ["SDK", "HTTP", "WEBSOCKET", "SIDECAR", "NATIVE"] as const;
 export type SrvTransport = typeof SRV_TRANSPORTS[number];
+
+// A [MOD] name becomes a `src/<module>/` directory AND is camel/pascal-cased
+// into a JS identifier alias in the generated bootstrap registry. Constrain it
+// to the same identifier shape [SRV] names use — a letter/underscore start, then
+// letters, digits, `-`, `_` — so a digit-leading or punctuated name can't slip
+// through and emit a registry that won't parse or type-check.
+export const MOD_NAME_RE = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 
 export interface RuneAst {
   module: string | null;
@@ -45,6 +55,23 @@ export interface EntNode {
    */
   modifier: string | null;
   line: number;
+  /**
+   * Explicit HTTP verb from an `[ENT] … @ POST /…` clause (lowercased). Null ⇒ POST (the default).
+   */
+  method?: string | null;
+  /**
+   * Explicit route template from `@ METHOD <template>` with `{name}` / `{name*}` segments
+   * (e.g. `/proxy/{target}/{path*}`). Null ⇒ the route is auto-derived from the action + the
+   * field sources. A `{name}` segment binds that field from the path, `{name*}` is the catch-all.
+   */
+  pathTemplate?: string | null;
+  /**
+   * Transport kind. "http" (the default, and the value when omitted) is a request/response
+   * route. "ws" is a WebSocket message handler grouped under an `[ENT:ws]` socket header:
+   * `action` is the message topic, `pathTemplate` is the handshake path shared by every
+   * topic on the socket, and `method` is null (the upgrade is always a GET).
+   */
+  kind?: "http" | "ws";
   /**
    * The [REQ] this ent dispatches to, captured from an indented `[REQ]` line in the ent body
    * (`[ENT] http.x(A): B` then `    [REQ] noun.verb(A): B`). When set, codegen delegates to exactly
@@ -114,6 +141,9 @@ export interface DtoNode {
   properties: string[];
   description: string;
   isCore: boolean;
+  /** [DTO:open] — opaque inbound payload: declared fields are validated, undeclared
+   * fields pass through (the generated class carries a marker keep's assert reads). */
+  isOpen: boolean;
   line: number;
 }
 
@@ -146,13 +176,18 @@ export interface NonNode {
 }
 
 export interface SrvNode {
-  /** Connection transport — one of SRV_TRANSPORTS (sk/hp/ws/sc). */
+  /** Transport — one of SRV_TRANSPORTS (SDK/HTTP/WEBSOCKET/SIDECAR/NATIVE).
+   * NATIVE is in-process (no connection); the rest front a network/SDK/process. */
   transport: string;
   /** Service name referenced by `<name>:` boundary prefixes. */
   name: string;
   /** Declared environment variable names (comma-separated after the 2nd colon). */
   envVars: string[];
   description: string;
+  /** REQUIRED documentation link — the indented `@docs <url>` line under the
+   * [SRV]. A spec with a [SRV] missing this is a hard parse error (surfaced by
+   * `rune check` and mirrored by the LSP). Empty only on a malformed spec. */
+  docsLink: string;
   line: number;
 }
 
@@ -190,6 +225,15 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
   let currentCse: CseNode | null = null;
   let lastStep: StepNode | BoundaryStepNode | null = null;
   let currentEnt: EntNode | null = null;
+  // An open `[ENT:ws]` socket. While set, subsequent indented `verb(InputDto): OutputDto`
+  // lines are its topics — each becomes a kind:"ws" EntNode sharing this handshake path.
+  // Closed by any dedent to column 0 (the next top-level tag) or end-of-file.
+  let currentWsSocket:
+    | { surface: string; pathTemplate: string | null; line: number; topicCount: number }
+    | null = null;
+  // The [SRV] whose description block is currently open — routes an indented
+  // `@docs <url>` line to its docsLink. Only "active" while descTarget === it.
+  let currentSrv: SrvNode | null = null;
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
@@ -236,6 +280,46 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
       currentEnt = null;
     }
 
+    // Topics of an open [ENT:ws] socket. Each indented `verb(InputDto): OutputDto` line
+    // becomes a kind:"ws" EntNode sharing the socket's handshake path (action = the topic).
+    // A dedent to column 0 closes the socket and falls through to normal top-level parsing;
+    // blank lines (handled above) keep it open so topics may be visually grouped.
+    if (currentWsSocket) {
+      if (indent > 0) {
+        const topic = parseWsTopicSignature(trimmed);
+        if (topic) {
+          ast.ents.push({
+            surface: currentWsSocket.surface,
+            action: topic.verb,
+            input: topic.input,
+            output: topic.output,
+            modifier: null,
+            line: i,
+            method: null,
+            pathTemplate: currentWsSocket.pathTemplate,
+            kind: "ws",
+          });
+          currentWsSocket.topicCount++;
+        } else {
+          ast.errors.push({
+            line: i,
+            message:
+              `[ENT:ws] ${currentWsSocket.surface}: malformed topic — expected "<verb>(InputDto): OutputDto"`,
+          });
+        }
+        descTarget = null;
+        continue;
+      }
+      if (currentWsSocket.topicCount === 0) {
+        ast.errors.push({
+          line: currentWsSocket.line,
+          message:
+            `[ENT:ws] ${currentWsSocket.surface} has no topics — add at least one "<verb>(InputDto): OutputDto"`,
+        });
+      }
+      currentWsSocket = null;
+    }
+
     // Close [PLY]/[CSE] block when indentation drops back to step level (≤4)
     // and the current line is not a [CSE] (which lives at indent 8 inside PLY).
     // Faults sit at indent ≥6 so they don't trigger this.
@@ -260,6 +344,13 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
       if (name === "") {
         ast.errors.push({ line: i, message: "[MOD] missing name" });
         descTarget = null;
+      } else if (!MOD_NAME_RE.test(name)) {
+        ast.errors.push({
+          line: i,
+          message:
+            `[MOD] invalid name "${name}" — must start with a letter or "_" and use only letters, digits, "-", "_"`,
+        });
+        descTarget = null;
       } else if (ast.module !== null) {
         ast.errors.push({ line: i, message: `duplicate [MOD]: already set to "${ast.module}"` });
         descTarget = null;
@@ -271,14 +362,14 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
       continue;
     }
 
-    // [SRV] <transport>:<name>: <ENV, ENV2>  (the backing-service declaration).
+    // [SRV] (TRANSPORT)<name>: <ENV, ENV2>  (the backing-service declaration).
     if (trimmed.startsWith("[SRV]")) {
       const rest = trimmed.slice("[SRV]".length).trim();
-      const m = rest.match(/^([a-z]+):([A-Za-z_][A-Za-z0-9_-]*)(?::\s*(.*))?$/);
+      const m = rest.match(/^\(([A-Za-z]+)\)([A-Za-z_][A-Za-z0-9_-]*)(?::\s*(.*))?$/);
       if (!m) {
         ast.errors.push({
           line: i,
-          message: "[SRV] malformed — expected [SRV] <transport>:<name>: <ENV,…>",
+          message: "[SRV] malformed — expected [SRV] (TRANSPORT)<name>: <ENV,…>",
         });
         descTarget = null;
         continue;
@@ -295,9 +386,17 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
       const envVars = (envStr ?? "").split(",").map((s) => s.trim()).filter((s) =>
         s !== ""
       );
-      const node: SrvNode = { transport, name, envVars, description: "", line: i };
+      const node: SrvNode = {
+        transport,
+        name,
+        envVars,
+        description: "",
+        docsLink: "",
+        line: i,
+      };
       ast.srvs.push(node);
       descTarget = node;
+      currentSrv = node; // indented `@docs <url>` routes to node.docsLink
       continue;
     }
 
@@ -328,10 +427,45 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
     // [ENT] — same shape as REQ
     const entTag = rec.match(trimmed, "ent");
     if (entTag) {
+      // [ENT:ws] opens a WebSocket socket: `[ENT:ws] <surface> @ /path`. The indented
+      // `verb(InputDto): OutputDto` lines that follow are its topics (consumed above on
+      // the next iterations). The header itself emits no EntNode — only its topics do.
+      if (entTag.modifier === "ws") {
+        const header = parseWsHeader(entTag.rest);
+        if (!header) {
+          ast.errors.push({
+            line: i,
+            message: '[ENT:ws] malformed — expected "[ENT:ws] <surface> @ /path"',
+          });
+          currentWsSocket = null;
+        } else {
+          currentWsSocket = {
+            surface: header.surface,
+            pathTemplate: header.pathTemplate,
+            line: i,
+            topicCount: 0,
+          };
+        }
+        currentReq = null;
+        currentPly = null;
+        currentCse = null;
+        lastStep = null;
+        currentEnt = null;
+        descTarget = null;
+        continue;
+      }
       const sig = parseReqSignature(entTag.rest);
       if (!sig) {
         ast.errors.push({ line: i, message: "[ENT] missing or malformed signature" });
       } else {
+        // An explicit `@ METHOD` must name a real HTTP verb.
+        if (sig.method && !ENT_METHODS.has(sig.method)) {
+          ast.errors.push({
+            line: i,
+            message:
+              `[ENT] HTTP method must be one of GET, POST, PUT, PATCH, DELETE (got "${sig.method.toUpperCase()}")`,
+          });
+        }
         const entNode: EntNode = {
           surface: sig.noun,
           action: sig.verb,
@@ -339,6 +473,8 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
           output: sig.output,
           modifier: entTag.modifier,
           line: i,
+          method: sig.method ?? null,
+          pathTemplate: sig.pathTemplate ?? null,
         };
         ast.ents.push(entNode);
         currentEnt = entNode; // an indented [REQ] on the next line becomes its delegate
@@ -355,6 +491,19 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
     const dtoTag = rec.match(trimmed, "dto");
     if (dtoTag) {
       const isCore = dtoTag.modifier === "core";
+      // [DTO:open] — opaque inbound payload: validate the declared fields but let undeclared
+      // ones ride through (keep's assert reads the generated marker and re-attaches them).
+      const isOpen = dtoTag.modifier === "open";
+      // A modifier that is neither :core nor :open is a typo (e.g. [DTO:opne]) — error loudly
+      // rather than silently degrading to a strict DTO that would strip an inbound payload's
+      // fields at runtime with no warning. Mirrors the [REQ] modifier guard.
+      if (dtoTag.modifier && !isCore && !isOpen) {
+        ast.errors.push({
+          line: i,
+          message:
+            `[DTO] unknown modifier "${dtoTag.modifier}" — expected :core or :open`,
+        });
+      }
       const colon = dtoTag.rest.indexOf(":");
       if (colon === -1) {
         ast.errors.push({ line: i, message: "[DTO] missing properties" });
@@ -365,7 +514,7 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
           .split(",")
           .map((p) => p.trim())
           .filter((p) => p.length > 0);
-        const node: DtoNode = { name, properties: props, description: "", isCore, line: i };
+        const node: DtoNode = { name, properties: props, description: "", isCore, isOpen, line: i };
         ast.dtos.push(node);
         descTarget = node;
       }
@@ -536,11 +685,39 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
       }
     }
 
+    // `@docs <url>` under an [SRV] is the REQUIRED documentation link — routed to
+    // docsLink, NOT appended to the prose description. Gated on descTarget still
+    // pointing at the current [SRV] so an `@docs`-looking line under a [DTO]/[TYP]
+    // stays plain prose (those tags don't carry a docs link).
+    if (
+      currentSrv && descTarget === currentSrv && indent === 4 &&
+      (trimmed === "@docs" || trimmed.startsWith("@docs "))
+    ) {
+      const url = trimmed.slice("@docs".length).trim();
+      if (url === "") {
+        ast.errors.push({
+          line: i,
+          message: `[SRV] ${currentSrv.name}: @docs needs a URL`,
+        });
+      } else if (currentSrv.docsLink) {
+        ast.errors.push({
+          line: i,
+          message: `[SRV] ${currentSrv.name}: duplicate @docs link`,
+        });
+      } else {
+        currentSrv.docsLink = url;
+      }
+      continue;
+    }
+
     // Description line: free-text prose at 4-space indent under [DTO]/[TYP]/[NON].
     // `descTarget` is only set by those declarations and is cleared by every step/
-    // tag, so an indented line here is unambiguously prose — accept ANY characters
-    // (periods in "e.g.", "@" in emails, parentheticals). Only a nested tag (`[`)
-    // ends the block.
+    // tag, so an indented line here is unambiguously prose. NOTE: the line has
+    // already had any inline `// ...` comment stripped at the top of this loop
+    // (stripInlineComment) — `//` is a comment everywhere per spec.md, prose
+    // included, so it is NOT preserved verbatim. Apart from that the prose accepts
+    // any characters (periods in "e.g.", "@" in emails, parentheticals). Only a
+    // nested tag (`[`) ends the block.
     if (descTarget && indent === 4 && !trimmed.startsWith("[")) {
       descTarget.description = descTarget.description
         ? `${descTarget.description} ${trimmed}`
@@ -564,9 +741,19 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
     ast.errors.push({ line: i, message: `unrecognized line: "${trimmed}"` });
   }
 
+  // An [ENT:ws] socket still open at EOF with no topics is an error (mirrors the
+  // dedent-close check inside the loop, for a socket that ends the file).
+  if (currentWsSocket && currentWsSocket.topicCount === 0) {
+    ast.errors.push({
+      line: currentWsSocket.line,
+      message:
+        `[ENT:ws] ${currentWsSocket.surface} has no topics — add at least one "<verb>(InputDto): OutputDto"`,
+    });
+  }
+
   // Every property used in a [DTO] must resolve to a declared type — no untyped
   // (`unknown`) fields. It may be a [TYP], a nested [DTO] (named directly or via
-  // the <Name>Dto convention), after stripping the optional `?` and plural `(s)`
+  // the <Name>Dto convention), after stripping the optional `?` and plural `(s)`/`(s?)`
   // modifiers. (TYP names cover both module and :core typs.)
   const typNames = new Set(ast.typs.map((t) => t.name));
   const dtoNames = new Set(ast.dtos.map((d) => d.name));
@@ -575,7 +762,7 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
       .join("");
   for (const dto of ast.dtos) {
     for (const prop of dto.properties) {
-      const clean = prop.replace(/\(s\)/g, "").replace(/\?/g, "").trim();
+      const clean = prop.replace(/\(s\??\)/g, "").replace(/\?/g, "").trim();
       const resolved = typNames.has(clean) || dtoNames.has(clean) ||
         dtoNames.has(`${pascal(clean)}Dto`);
       if (!resolved) {
@@ -585,6 +772,17 @@ export function parse(text: string, opts: ParseOptions = {}): RuneAst {
             `[DTO] ${dto.name}: property "${prop}" has no [TYP] or [DTO] — declare "[TYP] ${clean}: <type>"`,
         });
       }
+    }
+  }
+
+  // Every [SRV] MUST declare an `@docs <url>` link (hard error, mirrored by the
+  // LSP). It's the one piece of provenance a dev needs to wire the service.
+  for (const srv of ast.srvs) {
+    if (!srv.docsLink) {
+      ast.errors.push({
+        line: srv.line,
+        message: `[SRV] ${srv.name} requires an @docs <url> line`,
+      });
     }
   }
 
@@ -605,8 +803,17 @@ function countIndent(raw: string): number {
 }
 
 function stripInlineComment(raw: string): string {
-  const idx = raw.indexOf("//");
-  return idx === -1 ? raw : raw.slice(0, idx);
+  // A `//` only starts a comment when it follows whitespace or opens the line —
+  // the conventional ` // note` form. A `//` glued to a non-space char is left
+  // intact so URLs survive (`@docs https://x` / a URL in a prose description);
+  // `://` is never a comment.
+  let i = raw.indexOf("//");
+  while (i !== -1) {
+    const prev = raw[i - 1];
+    if (i === 0 || prev === " " || prev === "\t") return raw.slice(0, i);
+    i = raw.indexOf("//", i + 2);
+  }
+  return raw;
 }
 
 interface TagMatch {
@@ -760,7 +967,14 @@ interface ReqSig {
   verb: string;
   input: string;
   output: string;
+  /** Explicit HTTP verb (lowercased) from an `[ENT] … @ POST /…` clause. */
+  method?: string;
+  /** Explicit route template from `@ METHOD <template>` (e.g. `/proxy/{target}/{path*}`). */
+  pathTemplate?: string;
 }
+
+/** HTTP verbs accepted in an `[ENT] … @ METHOD /…` clause (lowercased). */
+const ENT_METHODS = new Set(["get", "post", "put", "patch", "delete"]);
 
 function parseReqSignature(s: string): ReqSig | null {
   const trimmed = s.trim();
@@ -775,7 +989,25 @@ function parseReqSignature(s: string): ReqSig | null {
   const output = afterParen.slice(colonIdx + 1).trim();
   const input = trimmed.slice(parenOpen + 1, parenClose).trim();
 
-  const namePart = trimmed.slice(0, parenOpen);
+  // An optional `@ METHOD <template>` clause (`[ENT]` only) sits between the name and `(`:
+  //   http.proxy @ POST /proxy/{target}/{path*}(Dto): Dto
+  // Everything left of `@` is the noun.verb; `METHOD <template>` declares the route explicitly.
+  let namePart = trimmed.slice(0, parenOpen);
+  let method: string | undefined;
+  let pathTemplate: string | undefined;
+  const atIdx = namePart.indexOf("@");
+  if (atIdx !== -1) {
+    const clause = namePart.slice(atIdx + 1).trim();
+    namePart = namePart.slice(0, atIdx);
+    const sp = clause.search(/\s/);
+    if (sp === -1) {
+      method = clause.toLowerCase();
+      pathTemplate = "";
+    } else {
+      method = clause.slice(0, sp).trim().toLowerCase();
+      pathTemplate = clause.slice(sp + 1).trim();
+    }
+  }
   let noun: string;
   let verb: string;
 
@@ -806,7 +1038,56 @@ function parseReqSignature(s: string): ReqSig | null {
   }
 
   if (noun === "" || verb === "") return null;
-  return { noun, verb, input, output };
+  return { noun, verb, input, output, method, pathTemplate };
+}
+
+/**
+ * Parse an `[ENT:ws]` socket header: `<surface> [@ /path]`. Returns the socket surface
+ * (the controller noun) and the optional handshake path template — `{name}` segments are
+ * translated to route params at codegen exactly like an HTTP route template. A header
+ * carrying a `(...)` signature is rejected: topics are declared on indented lines below,
+ * never on the header.
+ */
+function parseWsHeader(
+  rest: string,
+): { surface: string; pathTemplate: string | null } | null {
+  const trimmed = rest.trim();
+  if (trimmed === "" || trimmed.includes("(")) return null;
+  const atIdx = trimmed.indexOf("@");
+  let surface: string;
+  let pathTemplate: string | null = null;
+  if (atIdx === -1) {
+    surface = trimmed;
+  } else {
+    surface = trimmed.slice(0, atIdx).trim();
+    pathTemplate = trimmed.slice(atIdx + 1).trim() || null;
+  }
+  if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(surface)) return null;
+  return { surface, pathTemplate };
+}
+
+/**
+ * Parse one `[ENT:ws]` topic line: `<verb>(InputDto): OutputDto`. The verb is a bare
+ * identifier (the message topic); the socket header supplies the surface. Empty parens
+ * (`verb(): Out`) mean the topic carries no inbound payload. Returns null on any other
+ * shape so the caller can report a malformed topic.
+ */
+function parseWsTopicSignature(
+  s: string,
+): { verb: string; input: string; output: string } | null {
+  const trimmed = s.trim();
+  const parenOpen = trimmed.indexOf("(");
+  const parenClose = trimmed.lastIndexOf(")");
+  if (parenOpen === -1 || parenClose === -1 || parenClose < parenOpen) return null;
+  const verb = trimmed.slice(0, parenOpen).trim();
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(verb)) return null;
+  const afterParen = trimmed.slice(parenClose + 1);
+  const colonIdx = afterParen.indexOf(":");
+  if (colonIdx === -1) return null;
+  const output = afterParen.slice(colonIdx + 1).trim();
+  if (output === "") return null;
+  const input = trimmed.slice(parenOpen + 1, parenClose).trim();
+  return { verb, input, output };
 }
 
 function isFaultName(s: string): boolean {

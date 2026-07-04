@@ -375,6 +375,7 @@
       ],
       "description": "a list of URLs returned by provider search",
       "isCore": false,
+      "isOpen": false,
       "line": 78
     },
     {
@@ -385,6 +386,7 @@
       ],
       "description": "input for retrieving a recording by provider and external ID",
       "isCore": false,
+      "isOpen": false,
       "line": 80
     },
     {
@@ -395,6 +397,7 @@
       ],
       "description": "input for setting metadata on a recording",
       "isCore": false,
+      "isOpen": false,
       "line": 82
     },
     {
@@ -404,6 +407,7 @@
       ],
       "description": "wrapper for binary recording data",
       "isCore": false,
+      "isOpen": false,
       "line": 84
     },
     {
@@ -413,6 +417,7 @@
       ],
       "description": "wrapper for recording metadata",
       "isCore": false,
+      "isOpen": false,
       "line": 86
     },
     {
@@ -423,6 +428,7 @@
       ],
       "description": "complete recording with data and metadata",
       "isCore": false,
+      "isOpen": false,
       "line": 88
     },
     {
@@ -433,6 +439,7 @@
       ],
       "description": "unique identifier combining provider and external ID",
       "isCore": false,
+      "isOpen": false,
       "line": 90
     }
   ],
@@ -501,6 +508,37 @@
       "line": 63
     }
   ],
-  "srvs": [],
+  "srvs": [
+    {
+      "transport": "HTTP",
+      "name": "ex",
+      "envVars": [
+        "EX_URL"
+      ],
+      "description": "external http service",
+      "docsLink": "https://docs.example.com/ex",
+      "line": 93
+    },
+    {
+      "transport": "SIDECAR",
+      "name": "db",
+      "envVars": [
+        "DB_URL"
+      ],
+      "description": "the primary datastore",
+      "docsLink": "https://docs.example.com/db",
+      "line": 97
+    },
+    {
+      "transport": "SIDECAR",
+      "name": "os",
+      "envVars": [
+        "OS_ENDPOINT"
+      ],
+      "description": "object storage",
+      "docsLink": "https://docs.example.com/os",
+      "line": 101
+    }
+  ],
   "errors": []
 }

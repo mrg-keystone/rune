@@ -1,0 +1,26 @@
+name: publish-keep
+
+# keep (keep/) -> JSR (@mrg-keystone/rune). The runtime library publish.
+#
+# The Claude skill is folded into the rune skills (claude/skills/rune:*, shipped with
+# the rune release), so this workflow no longer ships a skill or a `keep-latest`
+# GitHub release — it is a pure JSR publish. The JSR reusable auto-bumps
+# keep/deno.json and commits "release: vX (auto-bump)" back to main; that commit
+# touches only keep/** so it re-enters HERE as an idempotent no-op (version
+# already published) and does NOT rebuild rune.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "keep/**"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    uses: mrg-keystone/actions/.github/workflows/jsr-publish.yml@main
+    with:
+      working-directory: keep
+    secrets:
+      JSR_TOKEN: ${{ secrets.JSR_TOKEN }}

@@ -41,6 +41,7 @@
       ],
       "description": "where an item is physically stored",
       "isCore": false,
+      "isOpen": false,
       "line": 25
     },
     {
@@ -53,6 +54,7 @@
       ],
       "description": "a request to add an item to the inventory",
       "isCore": false,
+      "isOpen": false,
       "line": 28
     },
     {
@@ -66,6 +68,7 @@
       ],
       "description": "a stored inventory item with its location and tags",
       "isCore": false,
+      "isOpen": false,
       "line": 31
     }
   ],
@@ -140,6 +143,17 @@
     }
   ],
   "nons": [],
-  "srvs": [],
+  "srvs": [
+    {
+      "transport": "SIDECAR",
+      "name": "db",
+      "envVars": [
+        "DB_URL"
+      ],
+      "description": "the primary datastore",
+      "docsLink": "https://docs.example.com/db",
+      "line": 34
+    }
+  ],
   "errors": []
 }

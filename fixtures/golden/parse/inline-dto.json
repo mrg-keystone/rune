@@ -42,6 +42,7 @@
       ],
       "description": "a search query with pagination",
       "isCore": false,
+      "isOpen": false,
       "line": 5
     },
     {
@@ -51,6 +52,7 @@
       ],
       "description": "the matched results",
       "isCore": false,
+      "isOpen": false,
       "line": 8
     }
   ],
@@ -75,6 +77,17 @@
     }
   ],
   "nons": [],
-  "srvs": [],
+  "srvs": [
+    {
+      "transport": "SIDECAR",
+      "name": "db",
+      "envVars": [
+        "DB_URL"
+      ],
+      "description": "the primary datastore",
+      "docsLink": "https://docs.example.com/db",
+      "line": 16
+    }
+  ],
   "errors": []
 }

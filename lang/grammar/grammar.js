@@ -27,8 +27,10 @@ module.exports = grammar({
         $.dto_line,
         $.non_line,
         $.srv_line,
+        $.srv_docs_line,
         $.boundary_line,
         $.step_line,
+        $.ws_topic_line,
         $.fault_line,
         $.dto_desc,
         $.typ_desc,
@@ -38,7 +40,7 @@ module.exports = grammar({
     // ---- generated keyword rules --------------------------------------
     // [REQ] Requirement (indent 0)
     req_tag: ($) => "[REQ]",
-    req_line: ($) => seq($.req_tag, field("noun", $.identifier), optional(seq(choice(".", "::"), field("verb", $.method_name))), $.parameters, ":", $.return_type),
+    req_line: ($) => seq($.req_tag, field("noun", $.identifier), optional(seq(choice(".", "::"), field("verb", $.method_name))), optional($.http_route), $.parameters, ":", $.return_type),
 
     // [MOD] Module (indent 0)
     mod_tag: ($) => "[MOD]",
@@ -46,7 +48,7 @@ module.exports = grammar({
 
     // [ENT] Entrypoint (indent 0)
     ent_tag: ($) => token(seq("[ENT", optional(seq(":", /[^\]\s]+/)), "]")),
-    ent_line: ($) => seq($.ent_tag, $.signature, ":", $.return_type),
+    ent_line: ($) => choice(seq($.ent_tag, $.signature, ":", $.return_type), seq($.ent_tag, field("ws_surface", $.identifier), optional($.ws_route))),
 
     // [PLY] Polymorphic step (indent 4)
     ply_tag: ($) => "[PLY]",
@@ -90,10 +92,21 @@ module.exports = grammar({
         field("noun", $.identifier),
         choice(".", "::"),
         field("verb", $.method_name),
+        optional($.http_route),
         $.parameters
       ),
 
     method_name: ($) => /[a-zA-Z][a-zA-Z0-9_-]*/,
+
+    // [ENT] field-source binding: an optional "@ METHOD /path/{seg}/{seg-star}" clause between the
+    // verb and the parameters. One anchored token (@ + space + verb + space + slash-led path), so
+    // it never collides with @docs (no space after the @) or // line comments.
+    http_route: ($) => token(seq("@", /\s+/, /[A-Za-z]+/, /\s+/, "/", /[^\s()]*/)),
+
+    // [ENT:ws] socket-header path: "@ /path" — like http_route but with no HTTP verb (a WS
+    // handshake is always a GET). A distinct token so the lexer never confuses "@ /x" with
+    // "@ VERB /x" (http_route) or "@docs" (no space after the @).
+    ws_route: ($) => token(seq("@", /\s+/, "/", /[^\s()]*/)),
 
     parameters: ($) => seq("(", optional($._param_list), ")"),
 
@@ -163,6 +176,13 @@ module.exports = grammar({
 
     step_line: ($) => seq($.signature, ":", $.return_type),
 
+    // [ENT:ws] topic line: a bare "verb(InputDto): OutputDto" (no noun. prefix) under a socket
+    // header. step_line's signature requires a dotted noun.verb, so topics need their own rule.
+    // The verb MUST be $.identifier (the same leading token step_line uses) — using method_name
+    // would make the lexer commit to it before the parser sees a dotted form's ".", spuriously
+    // erroring real steps. After the identifier, the next token ("." / "::" vs "(") disambiguates.
+    ws_topic_line: ($) => seq(field("verb", $.identifier), $.parameters, ":", $.return_type),
+
     // The boundary prefix is the external service_prefix token (`name:`, a
     // single colon — distinct from the `::` static separator, which the DFA
     // can't tell apart without the scanner's lookahead).
@@ -171,6 +191,12 @@ module.exports = grammar({
 
     // [SRV] body: <transport>:<name>: <ENV, ...> consumed as one line token.
     srv_spec: ($) => token(/[^\n]+/),
+
+    // `@docs <url>` — the required documentation link under an [SRV]. Its own
+    // line rule (not a *_desc) so it parses cleanly instead of as an ERROR node;
+    // the url reuses the greedy srv_spec token so a `//` inside it is NOT lexed
+    // as a comment.
+    srv_docs_line: ($) => seq("@docs", optional($.srv_spec)),
 
     dto_def_name: ($) => /[A-Za-z_][A-Za-z0-9_]*Dto/,
 

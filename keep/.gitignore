@@ -1,0 +1,10 @@
+.env
+**/env/**
+.env*
+*.log
+.playwright-mcp/
+node_modules/
+# session handoff scratch — "do not commit" per its own header
+context.md
+# skill-creator eval scratch — would ship as a bogus release tarball if committed
+skills/keep-workspace/

@@ -44,7 +44,7 @@ Deno.test("sync scaffolds, then preserves fill-ins and prunes orphans", async ()
     const denoJson = JSON.parse(await Deno.readTextFile(join(root, "deno.json")));
     assertEquals(denoJson.imports["@/"], "./");
     assertEquals(denoJson.imports["class-validator"], "npm:class-validator@^0.14");
-    assertEquals(denoJson.imports["#assert"], "jsr:@mrg-keystone/keep@^1/assert");
+    assertEquals(denoJson.imports["#assert"], "jsr:@mrg-keystone/rune@^3/assert");
     assertEquals(denoJson.compilerOptions.experimentalDecorators, true);
 
     // Fill in cart, and plant an orphan feature the spec doesn't declare.
@@ -118,6 +118,63 @@ Deno.test("sync scaffolds beside the spec, moves the spec in, and re-syncs in pl
     );
   } finally {
     await Deno.remove(base, { recursive: true });
+  }
+});
+
+Deno.test("sync moves a finalized spec from a singular spec/ folder into the sibling src/<module>/", async () => {
+  // The `rune init` layout: spec/ is a STAGING area under the project root.
+  // resolveRoot maps spec/orders.rune to the project (the dir ABOVE spec/), so a
+  // finalized spec is moved into <root>/src/orders/orders.rune — never nested
+  // under spec/ — while spec/ is left empty.
+  const root = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(join(root, "spec"), { recursive: true });
+    const spec = join(root, "spec", "orders.rune");
+    await Deno.writeTextFile(spec, SPEC);
+
+    assertEquals(await runSync([spec]), 0);
+    const moved = join(root, "src/orders/orders.rune");
+    assert(await exists(moved), "finalized spec must move into src/orders/");
+    assert(!(await exists(spec)), "spec must no longer be in spec/");
+    assert(
+      await exists(join(root, "src/orders/domain/business/cart/mod.ts")),
+      "codegen lands in the sibling src/orders, at the project root",
+    );
+    assert(
+      !(await exists(join(root, "spec/src"))),
+      "must not nest codegen under spec/",
+    );
+
+    // Re-sync the moved spec: idempotent, stays put (root = dir above its src/).
+    assertEquals(await runSync([moved]), 0);
+    assert(await exists(moved), "moved spec stays put on re-sync");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("sync leaves an .in-prog.rune draft in spec/ (drafts iterate in place)", async () => {
+  // A draft is excluded from auto-discovery and iterates freely in its staging
+  // folder: an explicit sync scaffolds src/<module>/ but must NOT move/rename the
+  // draft out from under the author. Finalizing = renaming to <module>.rune.
+  const root = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(join(root, "spec"), { recursive: true });
+    const draft = join(root, "spec", "orders.in-prog.rune");
+    await Deno.writeTextFile(draft, SPEC);
+
+    assertEquals(await runSync([draft]), 0);
+    assert(await exists(draft), "draft must stay at spec/orders.in-prog.rune");
+    assert(
+      await exists(join(root, "src/orders/domain/business/cart/mod.ts")),
+      "draft sync still scaffolds src/orders",
+    );
+    assert(
+      !(await exists(join(root, "src/orders/orders.rune"))),
+      "draft must not be moved/renamed into the module",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
   }
 });
 

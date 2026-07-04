@@ -1,6 +1,52 @@
 import { assertEquals } from "#std/assert";
-import { applyCase, bindings, processName, transformName } from "./mod.ts";
+import {
+  applyCase,
+  bindings,
+  isInProgSpec,
+  isProjectSpec,
+  moduleFromSpecPath,
+  processName,
+  transformName,
+} from "./mod.ts";
 import { canonicalPaths as SHAPE } from "@rune/domain/business/artifact/canonical-paths.ts";
+
+Deno.test("isProjectSpec — recognizes the spec-folder and src layouts", () => {
+  assertEquals(isProjectSpec("spec/runes/todos.rune"), true); // canonical staging dir
+  assertEquals(isProjectSpec("specs/runes/todos.rune"), true);
+  assertEquals(isProjectSpec("spec/todos.rune"), true); // legacy flat
+  assertEquals(isProjectSpec("specs/todos.rune"), true);
+  assertEquals(isProjectSpec("src/todos/todos.rune"), true);
+  assertEquals(isProjectSpec("src/todos/spec.rune"), true);
+  assertEquals(isProjectSpec("docs/notes.rune"), false);
+});
+
+Deno.test("isProjectSpec — sibling spec/misc and spec/ui dirs are NOT spec dirs", () => {
+  // spec/misc/ (data + cake artifacts) and spec/ui/ (sprig prototype) live under
+  // spec/ but are not staging dirs: their paths have a slash after `spec/` and
+  // aren't `<name>.rune` directly under a recognized dir, so they fall through.
+  assertEquals(isProjectSpec("spec/misc/data.json"), false);
+  assertEquals(isProjectSpec("spec/ui/index.html"), false);
+  assertEquals(isProjectSpec("spec/ui/components/card.rune"), false); // nested too deep
+});
+
+Deno.test("isProjectSpec — .in-prog.rune drafts are excluded", () => {
+  assertEquals(isInProgSpec("spec/todos.in-prog.rune"), true);
+  assertEquals(isInProgSpec("spec/todos.rune"), false);
+  // A draft is NOT a project spec anywhere — auto-discovery skips it entirely.
+  assertEquals(isProjectSpec("spec/todos.in-prog.rune"), false);
+  assertEquals(isProjectSpec("src/todos/todos.in-prog.rune"), false);
+});
+
+Deno.test("moduleFromSpecPath — strips the .in-prog tag so explicit sync resolves", () => {
+  assertEquals(moduleFromSpecPath("spec/runes/todos.rune"), "todos"); // canonical
+  assertEquals(moduleFromSpecPath("spec/runes/todos.in-prog.rune"), "todos");
+  assertEquals(moduleFromSpecPath("specs/runes/todos.rune"), "todos");
+  assertEquals(moduleFromSpecPath("spec/todos.rune"), "todos"); // legacy flat
+  assertEquals(moduleFromSpecPath("spec/todos.in-prog.rune"), "todos");
+  assertEquals(moduleFromSpecPath("specs/todos.in-prog.rune"), "todos");
+  assertEquals(moduleFromSpecPath("src/orders/orders.rune"), "orders");
+  assertEquals(moduleFromSpecPath("docs/notes.rune"), null);
+});
 
 Deno.test("applyCase — kebab", () => {
   assertEquals(applyCase("GetRecordingDto", "kebab"), "get-recording-dto");

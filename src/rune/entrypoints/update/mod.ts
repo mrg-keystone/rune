@@ -8,7 +8,7 @@ const REPO = "mrg-keystone/rune";
 // `rune update [tag]` (alias: upgrade) — self-update. Fetches install.sh and
 // runs it: the installer uninstalls every prior copy, installs the rolling
 // `latest` release (or the pinned tag, e.g. v0.1.0), and refreshes the
-// Claude Code skill in user scope. Exit code is the installer's.
+// rune Claude Code skills in user scope. Exit code is the installer's.
 //
 // GitHub Releases are the source of truth: the installer comes from the TARGET
 // release's own assets, so its logic is version-matched to what it installs.

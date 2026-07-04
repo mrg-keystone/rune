@@ -10,7 +10,9 @@ export class Payment {
   /**
    * @param payDto a payment for an order
    * @returns a receipt for a payment
-   * service: db (no [SRV] declared)
+   * service: db (transport SIDECAR) — env: DB_URL
+   * the primary datastore
+   * @see https://docs.example.com/db
    * @throws timeout
    */
   charge(payDto: PayDto): Promise<ReceiptDto> {

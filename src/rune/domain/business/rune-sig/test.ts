@@ -1,7 +1,40 @@
 import { assert, assertEquals, assertStringIncludes } from "#std/assert";
 import { parse } from "@rune/domain/business/rune-parse/mod.ts";
 import { bindings } from "@rune/domain/business/rune-bindings/mod.ts";
-import { collectNounMethods, renderImpl } from "./mod.ts";
+import { collectNounMethods, renderImpl, renderParams } from "./mod.ts";
+
+// ---- L1: param identifier dedup must stay collision-free ----
+// The empty/duplicate fallback must NOT itself collide. When an earlier real
+// param already produced `arg1` and a later param at index 1 collapses (empty
+// or junk), the fallback `arg${i}` would reuse `arg1`, emitting a signature
+// like `run(arg1: unknown, arg1: unknown)` that fails `deno check` (TS2300
+// Duplicate identifier). Each rendered identifier must be DISTINCT.
+
+function identsOf(rendered: string): string[] {
+  return rendered
+    .split(",")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .map((p) => p.split(":")[0].trim());
+}
+
+Deno.test("renderParams — empty param colliding with a real argN stays distinct", () => {
+  // `arg1` is a real param at index 0; the empty param at index 1 must NOT
+  // also collapse to `arg1`.
+  const rendered = renderParams(["arg1", ""]);
+  const idents = identsOf(rendered);
+  assertEquals(idents.length, 2);
+  assertEquals(new Set(idents).size, 2, `duplicate identifier in: ${rendered}`);
+});
+
+Deno.test("renderParams — junk param colliding with a real argN stays distinct", () => {
+  // `@` sanitises to "" then would collapse to `arg1`, colliding with the real
+  // `arg1` at index 0.
+  const rendered = renderParams(["arg1", "@"]);
+  const idents = identsOf(rendered);
+  assertEquals(idents.length, 2);
+  assertEquals(new Set(idents).size, 2, `duplicate identifier in: ${rendered}`);
+});
 
 const SPEC = `[MOD] m
 [REQ] m.run(InDto): OutDto
@@ -174,10 +207,11 @@ Deno.test("renderImpl — adapter announces its I/O-boundary role + [NON]", () =
 Deno.test("renderImpl — adapter method documents its [SRV] service (E20)", () => {
   const srvByName = new Map([
     ["firebase", {
-      transport: "sk",
+      transport: "SDK",
       name: "firebase",
       envVars: ["FIREBASE_API_KEY", "FIREBASE_PROJECT_ID"],
       description: "Firebase callable; charge() idempotent",
+      docsLink: "https://firebase.google.com/docs/functions",
       line: 0,
     }],
   ]);
@@ -190,11 +224,69 @@ Deno.test("renderImpl — adapter method documents its [SRV] service (E20)", () 
       faults: ["timeout"],
       service: "firebase",
     },
-  ], { async: true, module: "checkout", nameBinding: bindings["<name>"], srvByName });
+  ], {
+    async: true,
+    module: "checkout",
+    nameBinding: bindings["<name>"],
+    srvByName,
+    sharedSrvNames: new Set(["firebase"]),
+  });
   assertStringIncludes(
     impl,
-    "service: firebase (transport sk) — env: FIREBASE_API_KEY, FIREBASE_PROJECT_ID",
+    "service: firebase (transport SDK) — env: FIREBASE_API_KEY, FIREBASE_PROJECT_ID",
   );
   assertStringIncludes(impl, "Firebase callable; charge() idempotent");
+  assertStringIncludes(impl, "@see https://firebase.google.com/docs/functions");
   assertStringIncludes(impl, "@throws timeout");
+  // Shared service: the adapter imports the core client and constructs it, so
+  // the import is used and the dev has it in hand.
+  assertStringIncludes(
+    impl,
+    'import { FirebaseService } from "@/src/core/data/firebase/mod.ts";',
+  );
+  assertStringIncludes(
+    impl,
+    "constructor(private readonly firebase = new FirebaseService()) {}",
+  );
+});
+
+Deno.test("renderImpl — no shared-service import when service is unresolved", () => {
+  // A boundary whose [SRV] isn't in srvByName (no core.rune): keep the legacy
+  // "no [SRV] declared" doc and emit NO import/constructor (would be unused).
+  const impl = renderImpl("order", [
+    {
+      verb: "save",
+      params: ["OrderDto"],
+      output: "void",
+      isStatic: false,
+      faults: [],
+      service: "firebase",
+    },
+  ], { async: true, module: "checkout", nameBinding: bindings["<name>"] });
+  assertStringIncludes(impl, "service: firebase (no [SRV] declared)");
+  assert(!impl.includes("src/core/data/"));
+  assert(!impl.includes("constructor("));
+});
+
+Deno.test("renderImpl — multiple services: one import + ctor param each, sorted", () => {
+  const srvByName = new Map([
+    ["db", { transport: "SIDECAR", name: "db", envVars: ["DB_URL"], description: "", docsLink: "https://x", line: 0 }],
+    ["ex", { transport: "HTTP", name: "ex", envVars: ["EX_URL"], description: "", docsLink: "https://y", line: 0 }],
+  ]);
+  const impl = renderImpl("task", [
+    { verb: "save", params: ["TaskDto"], output: "void", isStatic: false, faults: [], service: "db" },
+    { verb: "notify", params: ["TaskDto"], output: "void", isStatic: false, faults: [], service: "ex" },
+  ], {
+    async: true,
+    module: "tasks",
+    nameBinding: bindings["<name>"],
+    srvByName,
+    sharedSrvNames: new Set(["db", "ex"]),
+  });
+  assertStringIncludes(impl, 'import { DbService } from "@/src/core/data/db/mod.ts";');
+  assertStringIncludes(impl, 'import { ExService } from "@/src/core/data/ex/mod.ts";');
+  assertStringIncludes(
+    impl,
+    "constructor(private readonly db = new DbService(), private readonly ex = new ExService()) {}",
+  );
 });

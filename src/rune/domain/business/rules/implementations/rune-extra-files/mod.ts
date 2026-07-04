@@ -11,6 +11,7 @@ import {
   moduleFromSpecPath,
   processName,
   transformName,
+  typFileName,
 } from "@rune/domain/business/rune-bindings/mod.ts";
 
 // rune-extra-files: folders/files in rune-managed slots that no rune element
@@ -118,7 +119,14 @@ async function getPredictions(ctx: PipelineContext): Promise<Predictions> {
     }
 
     for (const typ of ast.typs) {
-      const name = applyCase(typ.name, "kebab");
+      // Mirror the generator's collision handling (and rune-typ-shape): a [TYP]
+      // sharing a same-dir [DTO]'s stripped stem (cap vs CapDto) is written with
+      // a `-type` suffix. Predict it the SAME way the presence rule requires it,
+      // else the real `<name>-type.ts` file is wrongly flagged as an orphan.
+      const dtoNamesSameDir = ast.dtos
+        .filter((d) => !!d.isCore === !!typ.isCore)
+        .map((d) => d.name);
+      const name = typFileName(typ.name, dtoNamesSameDir, dtoBinding);
       const moduleScope = typ.isCore ? "core" : moduleName;
       files.add(`src/${moduleScope}/dto/${name}.ts`);
     }

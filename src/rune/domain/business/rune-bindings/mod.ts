@@ -129,13 +129,84 @@ export function processName(noun: string, verb: string): string {
   return `${toKebab(noun)}-${toKebab(verb)}`;
 }
 
+// The canonical shared-service spec, relative to the project root. `[SRV]` may
+// only be declared in a core spec; every other spec resolves its boundary
+// services against it (declare-once, visible everywhere). No import syntax — the
+// convention is the path. Shared by the loader (spec-root) and the lint rules.
+export const CORE_SPEC_REL = "src/core/core.rune";
+
+// Dedicated spec-folder layouts: a folder of authored `.rune` specs that
+// generate into the project's `src/` (the specs stay put — they are the source).
+// The canonical staging dir is `spec/runes/` (the `rune init` default), which
+// sits beside its sibling `spec/misc/` (data design + cake artifacts) and
+// `spec/ui/` (the sprig prototype + design system). The flat `spec/` and the
+// plural `specs/` / `specs/runes/` names also resolve, so older projects keep
+// working. ORDER MATTERS: the more specific `…/runes/` prefixes must come first
+// so `moduleFromSpecPath` strips `spec/runes/` (not just `spec/`) — otherwise a
+// `spec/runes/orders.rune` would derive the module "runes/orders".
+const SPEC_DIRS = ["spec/runes/", "specs/runes/", "spec/", "specs/"];
+
+// The core spec under any layout: src/core/core.rune (canonical), the
+// `spec/runes/` staging dir (`spec/runes/core.rune`), or the flat
+// `spec/core.rune` / `specs/core.rune` legacy spec-folder layouts. The
+// `.in-prog.rune` draft variants count too — core is shared infrastructure that
+// must keep supplying services (and accept `[SRV]`) even while it is a draft,
+// unlike a module draft which is excluded from auto-discovery entirely.
+const CORE_SPEC_PATHS = [
+  CORE_SPEC_REL,
+  "spec/runes/core.rune",
+  "specs/runes/core.rune",
+  "spec/core.rune",
+  "specs/core.rune",
+  "src/core/core.in-prog.rune",
+  "spec/runes/core.in-prog.rune",
+  "specs/runes/core.in-prog.rune",
+  "spec/core.in-prog.rune",
+  "specs/core.in-prog.rune",
+];
+
+/** Is this (root-relative) path the project's shared-service spec? */
+export function isCoreSpec(path: string): boolean {
+  return CORE_SPEC_PATHS.includes(path);
+}
+
+// The draft suffix: a spec named `<name>.in-prog.rune` is a work in progress.
+// Drafts are EXCLUDED from every auto-discovery scan (the `rune dev` watch, the
+// composed-app run-all, ghost-stub planning, and the lint rules) so a half-built
+// spec can never break the running app — `isProjectSpec` returns false for them.
+// You still iterate freely: `rune check` validates a draft, and an explicit
+// `rune sync spec/<name>.in-prog.rune` scaffolds src/<name>/ (moduleFromSpecPath
+// strips the tag). Finalize by renaming to `<name>.rune` — then it is picked up.
+const IN_PROG_SUFFIX = ".in-prog.rune";
+
+/** Is this (root-relative) path a work-in-progress draft spec? */
+export function isInProgSpec(path: string): boolean {
+  return path.endsWith(IN_PROG_SUFFIX);
+}
+
+/** Strip the `.in-prog` draft tag, leaving the canonical `<name>.rune` path. */
+function canonicalSpecPath(path: string): string {
+  return isInProgSpec(path)
+    ? path.slice(0, -IN_PROG_SUFFIX.length) + ".rune"
+    : path;
+}
+
 // A rune file counts as a project spec only at one of these paths:
-//   specs/<name>.rune
+//   spec/runes/<name>.rune  |  specs/runes/<name>.rune   (canonical staging dir)
+//   spec/<name>.rune        |  specs/<name>.rune         (legacy flat layout)
 //   src/<module>/spec.rune
 //   src/<module>/<module>.rune
-// Documentation, vendored, and arbitrary rune files are skipped by rune rules.
+// Note the sibling `spec/misc/` (data design + cake artifacts) and `spec/ui/`
+// (sprig prototype) are NOT spec dirs — their files have a slash after `spec/`
+// and aren't `<name>.rune` directly under a recognized staging dir, so they fall
+// through here (and a stray `.rune` nested deeper than one level is skipped).
+// Documentation, vendored, in-progress drafts (`.in-prog.rune`), and arbitrary
+// rune files are skipped by rune rules.
 export function isProjectSpec(path: string): boolean {
-  if (path.startsWith("specs/") && !path.slice("specs/".length).includes("/")) return true;
+  if (isInProgSpec(path)) return false; // drafts: excluded from auto-discovery
+  for (const dir of SPEC_DIRS) {
+    if (path.startsWith(dir) && !path.slice(dir.length).includes("/")) return true;
+  }
   if (path.startsWith("src/")) {
     const rest = path.slice("src/".length);
     const slash = rest.indexOf("/");
@@ -147,15 +218,23 @@ export function isProjectSpec(path: string): boolean {
   return false;
 }
 
-// Derive the module name from a project-spec path.
-//   specs/recording.rune       → "recording"
-//   src/orders/spec.rune       → "orders"
-//   src/orders/orders.rune     → "orders"
+// Derive the module name from a project-spec path. Drafts derive from their
+// CANONICAL name (the `.in-prog` tag stripped), so an explicit sync of a draft
+// still resolves the right module.
+//   spec/runes/recording.rune          → "recording"
+//   spec/runes/recording.in-prog.rune  → "recording"
+//   spec/recording.rune                → "recording"  (legacy flat)
+//   specs/recording.rune               → "recording"
+//   src/orders/spec.rune               → "orders"
+//   src/orders/orders.rune             → "orders"
 export function moduleFromSpecPath(path: string): string | null {
-  if (!isProjectSpec(path)) return null;
-  if (path.startsWith("specs/")) {
-    return path.slice("specs/".length, -".rune".length);
+  const canonical = canonicalSpecPath(path);
+  if (!isProjectSpec(canonical)) return null;
+  for (const dir of SPEC_DIRS) {
+    if (canonical.startsWith(dir)) {
+      return canonical.slice(dir.length, -".rune".length);
+    }
   }
   // src/<module>/...
-  return path.slice("src/".length).split("/")[0];
+  return canonical.slice("src/".length).split("/")[0];
 }

@@ -90,3 +90,16 @@
     complete recording with data and metadata
 [DTO] IdDto: providerName, externalId
     unique identifier combining provider and external ID
+
+[SRV] (HTTP)ex: EX_URL
+    external http service
+    @docs https://docs.example.com/ex
+
+[SRV] (SIDECAR)db: DB_URL
+    the primary datastore
+    @docs https://docs.example.com/db
+
+[SRV] (SIDECAR)os: OS_ENDPOINT
+    object storage
+    @docs https://docs.example.com/os
+

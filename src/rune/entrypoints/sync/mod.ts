@@ -1,11 +1,21 @@
 import { basename, dirname, join, relative, resolve } from "#std/path";
-import { planSync } from "@rune/domain/business/rune-sync/mod.ts";
+import {
+  parseBarrelTarget,
+  planCreateOnceGrowth,
+  planSync,
+  polyBarrelNote,
+} from "@rune/domain/business/rune-sync/mod.ts";
 import {
   artifactToOptions,
   type ManifestOptions,
 } from "@rune/domain/business/rune-manifest/mod.ts";
 import { loadArtifact } from "@rune/domain/business/artifact/mod.ts";
-import { isProjectSpec } from "@rune/domain/business/rune-bindings/mod.ts";
+import { applyCase, isInProgSpec, isProjectSpec } from "@rune/domain/business/rune-bindings/mod.ts";
+import {
+  type CseNode,
+  parse,
+  type StepLike,
+} from "@rune/domain/business/rune-parse/mod.ts";
 import {
   planInputDiagnostics,
   planStubs,
@@ -19,7 +29,11 @@ import {
   renderHealRules,
   todoSlugs,
 } from "@rune/domain/business/rune-heal/mod.ts";
-import { resolveRoot } from "@rune/entrypoints/spec-root.ts";
+import {
+  coreSpecExists,
+  loadCoreSrvs,
+  resolveRoot,
+} from "@rune/entrypoints/spec-root.ts";
 
 const RED = "\x1b[31m";
 const GREEN = "\x1b[32m";
@@ -38,7 +52,7 @@ interface SyncArgs {
   noRun: boolean; // --no-run: skip the run-all gate (red-by-default is the point)
 }
 
-function parseSyncArgs(args: string[]): SyncArgs | null {
+export function parseSyncArgs(args: string[]): SyncArgs | null {
   let runePath: string | null = null;
   let root: string | null = null;
   let dryRun = false;
@@ -46,15 +60,29 @@ function parseSyncArgs(args: string[]): SyncArgs | null {
   let artifactPath: string | null = null;
   let regen: string | null = null;
   let noRun = false;
+  // A value-taking flag at the end of argv (or followed by another flag) used to
+  // silently default — for --regen that degraded a targeted, NON-destructive
+  // single-file regen into a FULL sync that prunes dev-owned orphans. Treat a
+  // missing value as a usage error (return null) so the flag fails loudly.
+  const value = (i: number): string | null => {
+    const v = args[i];
+    return v === undefined || v.startsWith("--") ? null : v;
+  };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--dry-run") dryRun = true;
     else if (a === "--force") force = true;
     else if (a === "--no-run") noRun = true;
-    else if (a === "--root") root = args[++i] ?? ".";
-    else if (a === "--artifact") artifactPath = args[++i] ?? null;
-    else if (a === "--regen") regen = args[++i] ?? null;
-    else if (!a.startsWith("--") && runePath === null) runePath = a;
+    else if (a === "--root") {
+      root = value(++i);
+      if (root === null) return null;
+    } else if (a === "--artifact") {
+      artifactPath = value(++i);
+      if (artifactPath === null) return null;
+    } else if (a === "--regen") {
+      regen = value(++i);
+      if (regen === null) return null;
+    } else if (!a.startsWith("--") && runePath === null) runePath = a;
   }
   if (runePath === null) return null;
   return { runePath, root, dryRun, force, artifactPath, regen, noRun };
@@ -110,6 +138,9 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
     console.error(
       "Usage: rune sync <rune-file> [--root <dir>] [--artifact <keywords.json>] [--dry-run] [--force] [--regen <path>] [--no-run]",
     );
+    console.error(
+      "  The project root is resolved from <rune-file>'s path (the dir above spec/runes/, spec/, or src/<module>/); --root overrides it. Shared [SRV]s are read from <root>/src/core/core.rune.",
+    );
     return 2;
   }
 
@@ -131,10 +162,18 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
   if (opts === "error") return 2;
 
   const existingFiles = await collectFiles(root);
-  const plan = planSync(relRune, runeText, existingFiles, opts ?? {});
+  const sharedSrvs = await loadCoreSrvs(root, absRune);
+  const coreSpecFound = await coreSpecExists(root, absRune);
+  const plan = planSync(
+    relRune,
+    runeText,
+    existingFiles,
+    { ...(opts ?? {}), strictServices: true, projectRoot: root, coreSpecFound },
+    sharedSrvs,
+  );
 
   if (plan.errors.length > 0) {
-    console.error(`${RED}parse error in ${relRune}:${RESET}`);
+    console.error(`${RED}error in ${relRune}:${RESET}`);
     for (const e of plan.errors) console.error(`  ${e}`);
     return 2;
   }
@@ -161,18 +200,22 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
     const abs = join(root, relTarget);
     const existing = await readMaybe(abs);
     if (existing === null) {
-      await write(root, relTarget, planned.content, ioErrors, written);
-      console.log(`  ${CYAN}created ${relTarget}${RESET}`);
+      // Only report success when the write actually landed; a failed write adds
+      // to ioErrors below, and a success log would contradict the error + exit 2.
+      if (await write(root, relTarget, planned.content, ioErrors, written)) {
+        console.log(`  ${CYAN}created ${relTarget}${RESET}`);
+      }
     } else if (existing === planned.content) {
       console.log(
         `  ${CYAN}${relTarget} already matches the spec — nothing to do${RESET}`,
       );
     } else {
       const newRel = `${relTarget}.new`;
-      await write(root, newRel, planned.content, ioErrors, written);
-      console.log(
-        `  ${CYAN}wrote ${newRel} — diff it into ${relTarget}, then delete the .new${RESET}`,
-      );
+      if (await write(root, newRel, planned.content, ioErrors, written)) {
+        console.log(
+          `  ${CYAN}wrote ${newRel} — diff it into ${relTarget}, then delete the .new${RESET}`,
+        );
+      }
     }
     if (ioErrors.length > 0) {
       for (const e of ioErrors) console.error(`  ${RED}${e}${RESET}`);
@@ -189,6 +232,29 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
   const deletable = parsed.force
     ? plan.toPrune
     : plan.toPrune.filter((p) => !ownedSet.has(p));
+
+  // Incremental create-once growth: when the spec GREW an existing module, the
+  // preserved files may now owe members the fresh plan predicts — adapter/
+  // business methods the new coordinators call, DTO fields, @Endpoint bindings
+  // (the last invisible even to `deno check`). Append each missing member
+  // exactly as the generator would have emitted it (throwing stubs — red by
+  // design), never touching existing members; when a file has drifted so far
+  // its class can't be located, report the owed members loudly instead.
+  const grown: { path: string; added: string[] }[] = [];
+  const growthOwed: string[] = [];
+  const growthWrites: { path: string; content: string }[] = [];
+  for (const file of plan.toSkip) {
+    const existing = await readMaybe(join(root, file.path));
+    if (existing === null) continue;
+    const result = planCreateOnceGrowth(file.path, existing, file.content);
+    if (result === null) continue;
+    if ("owed" in result) {
+      growthOwed.push(`${file.path} — hand-add: ${result.owed.join(", ")}`);
+    } else {
+      grown.push({ path: file.path, added: result.grown.added });
+      growthWrites.push({ path: file.path, content: result.grown.content });
+    }
+  }
 
   if (parsed.dryRun) {
     created.push(...plan.toCreate.map((f) => f.path));
@@ -207,6 +273,10 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
         regenerated.push(file.path);
       }
     }
+    // Create-once files extended with the members the grown spec now owes them.
+    for (const file of growthWrites) {
+      await write(root, file.path, file.content, ioErrors, written);
+    }
     for (const target of deletable) {
       const abs = join(root, target);
       try {
@@ -223,11 +293,31 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
     const mapNote = await ensureImportMap(root, ioErrors, written);
     if (mapNote) console.log(`\n  ${CYAN}${mapNote}${RESET}`);
 
-    // Move the spec into its module so it lives beside the code it generates
-    // (src/<module>/<spec>.rune). Idempotent: a no-op once it's already there.
-    // Happens BEFORE ensureBootstrap so the just-synced spec is at its project
-    // path when ghost-stub planning collects the project's specs.
-    const specTarget = join(root, "src", plan.module, basename(absRune));
+    // Move the spec into its module so it lives beside the code it generates.
+    // The destination name follows the CANONICAL convention isProjectSpec()
+    // recognises (`<module>.rune`) rather than the author's arbitrary basename —
+    // otherwise the moved spec lands at a path collectProjectSpecs() rejects, and
+    // ghost-stub planning / input diagnostics (run later in THIS same sync)
+    // silently skip it. Left in place when the spec is ALREADY canonical
+    // (spec.rune or <module>.rune in its module) OR is an `.in-prog.rune` DRAFT —
+    // drafts iterate freely in their staging folder (rune-bindings: "iterate
+    // freely … finalize by renaming"), so an explicit `rune sync` of a draft
+    // scaffolds src/<module>/ but never moves/renames the draft out from under
+    // you. Otherwise both staging layouts — the singular `spec/` folder (the
+    // `rune init` default) and the plural `specs/` — are STAGING areas: a
+    // FINALIZED spec authored there is MOVED into `src/<module>/<module>.rune` on
+    // its first sync, beside the code. resolveRoot keeps the project as the root
+    // for a `spec/`-folder spec, so the move target is the sibling `src/<module>/`
+    // (never nested under `spec/`). Idempotent: a no-op once it's already at a
+    // canonical project path. Happens BEFORE ensureBootstrap so the just-synced
+    // spec is collected.
+    const canonicalDir = join(root, "src", plan.module);
+    const leaveInPlace = isInProgSpec(absRune) ||
+      (resolve(absRune) === resolve(join(canonicalDir, "spec.rune"))) ||
+      (resolve(absRune) === resolve(join(canonicalDir, `${plan.module}.rune`)));
+    const specTarget = leaveInPlace
+      ? absRune
+      : join(canonicalDir, `${plan.module}.rune`);
     if (resolve(specTarget) !== absRune) {
       try {
         await Deno.mkdir(dirname(specTarget), { recursive: true });
@@ -254,6 +344,14 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
     const healNotes = await ensureHealRules(root, ioErrors, written);
     for (const n of healNotes) console.log(`\n  ${CYAN}${n}${RESET}`);
 
+    // Warn when a create-once poly-mod barrel re-exports a [PLY] variant the spec no
+    // longer declares (or whose folder a --force prune just removed). The barrel is
+    // dev-owned so sync never rewrites it — and its dangling re-export sits outside the
+    // composed-app graph `deno check` / the run-all gate traverse, so this is the only
+    // place that silent break surfaces.
+    const barrelNotes = await ensurePolyBarrels(root, plan.module, runeText);
+    for (const n of barrelNotes) console.log(`\n  ${YELLOW}${n}${RESET}`);
+
     // Composition diagnostics: unproducible $inputs (plural-convention misses)
     // and required fields nothing fills — the two shapes that turn the
     // headless walk red. Printed every sync while they remain.
@@ -271,6 +369,8 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
     pruned,
     blocked,
     ioErrors,
+    grown,
+    growthOwed,
   );
 
   // The run-all gate: execute the composed app's walk and print the verdict
@@ -281,6 +381,44 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
   }
 
   return ioErrors.length > 0 ? 2 : 0;
+}
+
+/** Warn (never rewrite — it's create-once) when a [PLY] feature's poly-mod barrel
+ * re-exports a variant the spec no longer declares, or whose folder is gone. The pure
+ * decision lives in rune-sync (parseBarrelTarget / polyBarrelNote); this does the I/O. */
+async function ensurePolyBarrels(
+  root: string,
+  module: string,
+  runeText: string,
+): Promise<string[]> {
+  const ast = parse(runeText);
+  const features: { dir: string; cases: Set<string> }[] = [];
+  const collect = (steps: StepLike[] | CseNode["steps"]): void => {
+    for (const step of steps) {
+      if (step.kind === "ply") {
+        features.push({
+          dir: `src/${module}/domain/business/${applyCase(step.noun, "kebab")}`,
+          cases: new Set(step.cases.map((c) => applyCase(c.name, "kebab"))),
+        });
+        for (const c of step.cases) collect(c.steps);
+      }
+    }
+  };
+  for (const req of ast.reqs) collect(req.steps);
+
+  const notes: string[] = [];
+  for (const f of features) {
+    const barrel = await readMaybe(join(root, f.dir, "poly-mod.ts"));
+    if (barrel === null) continue;
+    const target = parseBarrelTarget(barrel);
+    if (target === null) continue; // hand-rewritten barrel — can't statically check
+    const exists =
+      (await readMaybe(join(root, f.dir, "implementations", target, "mod.ts"))) !==
+        null;
+    const note = polyBarrelNote(f.dir, target, f.cases, exists);
+    if (note) notes.push(note);
+  }
+  return notes;
 }
 
 // Import aliases the generated code relies on; the consuming project's deno.json
@@ -301,9 +439,9 @@ const REQUIRED_IMPORTS: Record<string, string> = {
   "#std/assert": "jsr:@std/assert",
   "#std/path": "jsr:@std/path",
   // Generated [ENT] controllers + e2e tests import the keep backend framework.
-  "@mrg-keystone/keep": "jsr:@mrg-keystone/keep@^1",
+  "@mrg-keystone/rune": "jsr:@mrg-keystone/rune@^3",
   // Generated coordinators validate their seams via keep's assert runtime.
-  "#assert": "jsr:@mrg-keystone/keep@^1/assert",
+  "#assert": "jsr:@mrg-keystone/rune@^3/assert",
   // DTO [TYP:example=…] fields emit @ApiProperty({ example }) — the swagger
   // decorator keep's runner/cake read example values from. Same range keep
   // itself maps #danet/swagger to.
@@ -320,7 +458,7 @@ const REQUIRED_COMPILER_OPTIONS: Record<string, unknown> = {
 /** Ensure the project's deno.json carries the import map the generated code
  * needs. Non-destructive: only adds missing keys, never overwrites the user's
  * values. Creates a minimal deno.json if none exists. Returns a report note. */
-async function ensureImportMap(
+export async function ensureImportMap(
   root: string,
   ioErrors: string[],
   written?: string[],
@@ -329,10 +467,30 @@ async function ensureImportMap(
   // deno-lint-ignore no-explicit-any
   let config: Record<string, any> = {};
   let existed = false;
+  // Distinguish "file does not exist" (create fresh, fine) from "file exists but
+  // is malformed" (error loudly — never silently clobber the user's config).
+  let raw: string | null = null;
   try {
-    config = JSON.parse(await Deno.readTextFile(path));
-    existed = true;
-  } catch { /* create fresh */ }
+    raw = await Deno.readTextFile(path);
+  } catch {
+    raw = null; // absent → create a fresh minimal deno.json below
+  }
+  if (raw !== null) {
+    // Strip a UTF-8 BOM: Deno.readTextFile does not, and JSON.parse throws on a
+    // leading U+FEFF — which the old catch swallowed into a fresh-file clobber.
+    const text = raw.replace(/^﻿/, "");
+    try {
+      config = JSON.parse(text);
+      existed = true;
+    } catch (e) {
+      // The file is present but unparseable. Refuse to overwrite it.
+      ioErrors.push(
+        `deno.json: existing file is not valid JSON (${errMessage(e)}) — ` +
+          `refusing to overwrite; fix or remove it and re-run`,
+      );
+      return null;
+    }
+  }
   const imports: Record<string, string> =
     (config.imports && typeof config.imports === "object") ? config.imports : {};
   const added: string[] = [];
@@ -397,7 +555,25 @@ const pascal = (s: string): string => {
   return c.charAt(0).toUpperCase() + c.slice(1);
 };
 
-/** Find every generated keep surface module in the project tree. */
+// Coerce an alias candidate into a valid JS/TS identifier: drop every character
+// that can't appear in an identifier (so module/surface names with quotes,
+// spaces, or other punctuation can't break the import binding) and prefix a `_`
+// when the result would start with a digit. A normal camel/pascal alias is
+// unchanged; empty residue falls back to `surfaceModule`.
+const safeIdent = (s: string): string => {
+  const stripped = s.replace(/[^A-Za-z0-9_$]/g, "");
+  const prefixed = /^[0-9]/.test(stripped) ? `_${stripped}` : stripped;
+  return prefixed || "surfaceModule";
+};
+
+// Strip line and block comments before scanning a mod.ts for its export name so
+// a commented-out `export const …Module` can't be read as the real one.
+const stripComments = (text: string): string =>
+  text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+
+/** Find every generated keep surface module in the project tree. Aliases are
+ * always valid identifiers and unique across surfaces, so the rendered registry
+ * type-checks even when module/surface names collide or carry illegal chars. */
 export async function scanSurfaceModules(
   root: string,
 ): Promise<SurfaceModule[]> {
@@ -414,21 +590,34 @@ export async function scanSurfaceModules(
       }
       // The generated convention is `export const <surface>Module = endpointModule(…)`,
       // but the file is dev-owned — read the actual export name when it diverges.
-      const exportName = text.match(/export const (\w+Module)\b/)?.[1] ??
-        `${camel(surface)}Module`;
+      // Comments are stripped first so a commented-out export isn't read as it.
+      const exportName =
+        stripComments(text).match(/export const (\w+Module)\b/)?.[1] ??
+          `${camel(surface)}Module`;
       found.push({
         module: mod,
         surface,
         exportName,
-        alias: `${camel(mod)}${pascal(surface)}Module`,
+        alias: safeIdent(`${camel(mod)}${pascal(surface)}Module`),
       });
     }
   }
-  return found.sort((a, b) =>
+  found.sort((a, b) =>
     a.module === b.module
       ? a.surface.localeCompare(b.surface)
       : a.module.localeCompare(b.module)
   );
+  // Disambiguate alias collisions (distinct surfaces whose names camel/pascal to
+  // the same identifier, e.g. foo-bar/http vs foo/bar-http): the registry imports
+  // each surface under its alias, so a duplicate is a `Duplicate identifier`
+  // compile error that silently drops a module. Suffix the 2nd+ occurrence.
+  const seen = new Map<string, number>();
+  for (const s of found) {
+    const n = seen.get(s.alias) ?? 0;
+    seen.set(s.alias, n + 1);
+    if (n > 0) s.alias = `${s.alias}_${n + 1}`;
+  }
+  return found;
 }
 
 async function listDirs(dir: string): Promise<string[]> {
@@ -456,8 +645,14 @@ export function renderAppRegistry(
     "",
   ];
   for (const s of surfaces) {
+    // The module/surface segments are dev-controlled directory names; JSON-encode
+    // the specifier so a `"` (or other quote) in a name can't break the string
+    // literal (the alias itself is already a sanitized identifier).
+    const specifier = JSON.stringify(
+      `@/src/${s.module}/entrypoints/${s.surface}/mod.ts`,
+    );
     L.push(
-      `import { ${s.exportName} as ${s.alias} } from "@/src/${s.module}/entrypoints/${s.surface}/mod.ts";`,
+      `import { ${s.exportName} as ${s.alias} } from ${specifier};`,
     );
   }
   if (ghostStubs) {
@@ -484,13 +679,15 @@ export function renderMain(appName: string): string {
     "// tune the app name, port, or keep options freely. The module registry",
     "// (bootstrap/modules.ts) is regenerated as runes are added and removed.",
     "",
-    'import { bootstrapServer } from "@mrg-keystone/keep";',
+    'import { bootstrapServer } from "@mrg-keystone/rune";',
     'import { config } from "@/bootstrap/config.ts";',
     'import { modules } from "@/bootstrap/modules.ts";',
     "",
     `export const api = await bootstrapServer("${appName}", modules, { port: config.port });`,
     "",
     "if (import.meta.main) {",
+    "  // listen() walks to the next free port if config.port is busy; the",
+    "  // runtime logs the actual bound port (\"Listening on <port>\").",
     "  await api.listen();",
     "  console.log(",
     `    \`${appName} on http://localhost:\${config.port} — emulator at /docs/<module>\`,`,
@@ -661,19 +858,26 @@ async function ensureGhostStubs(
 // ---- heal-rules (keep cake self-healer) ------------------------------------
 //
 // A keep app's cake turns endpoint failures into one-click fixes via a
-// per-project rules file: fixtures/heal-rules.json, keyed on the fault slug
+// per-project rules file: spec/misc/heal-rules.json, keyed on the fault slug
 // (the failed response body's `message`). rune knows every endpoint's slugs
 // from the spec, so it scaffolds the file — one entry per slug, pre-filling a
 // `run-step` where the slug names an obvious precondition, a TODO note
-// otherwise. The dir mirrors keep's cake config (fixtures/cake.json) and obeys
-// the same KEEP_FIXTURES_DIR override.
+// otherwise. The dir mirrors keep's cake config (spec/misc/cake.json): it is
+// the project's spec/misc/ when a spec/ dir exists, else the legacy fixtures/,
+// and obeys the same KEEP_FIXTURES_DIR override.
 
-function fixturesDir(): string {
+function fixturesDir(root: string): string {
   const env = Deno.env.get("KEEP_FIXTURES_DIR");
-  return env && env.trim() ? env.trim() : "fixtures";
+  if (env && env.trim()) return env.trim();
+  try {
+    if (Deno.statSync(join(root, "spec")).isDirectory) return "spec/misc";
+  } catch {
+    // no spec/ dir (or stat not permitted) — fall through to the legacy default
+  }
+  return "fixtures";
 }
 
-/** Reconcile fixtures/heal-rules.json with the project's endpoint fault slugs.
+/** Reconcile spec/misc/heal-rules.json with the project's endpoint fault slugs.
  * Creates it when endpoints declare slugs, merges new slugs into an existing
  * file without ever clobbering human/LLM edits, and reports slugs the spec no
  * longer declares (kept, never auto-deleted). Returns report notes; never
@@ -684,7 +888,7 @@ export async function ensureHealRules(
   written?: string[],
 ): Promise<string[]> {
   const notes: string[] = [];
-  const dir = fixturesDir();
+  const dir = fixturesDir(root);
   const path = join(root, dir, "heal-rules.json");
   const existingRaw = await readMaybe(path);
 
@@ -850,7 +1054,7 @@ export function formatRunAllVerdict(
   }
   L.push(
     `    ${YELLOW}→ fix the spec/bindings until run-all is green, or enrich${RESET}`,
-    `    ${YELLOW}  fixtures/heal-rules.json where the failure is environmental.${RESET}`,
+    `    ${YELLOW}  spec/misc/heal-rules.json where the failure is environmental.${RESET}`,
   );
   return L;
 }
@@ -873,7 +1077,7 @@ async function runAllGate(
   const body = [
     "// Written by rune sync for the run-all gate; deleted right after the run.",
     'import { api } from "@/bootstrap/mod.ts";',
-    'import { exerciseEndpoints } from "@mrg-keystone/keep";',
+    'import { exerciseEndpoints } from "@mrg-keystone/rune";',
     "const report = await exerciseEndpoints({ api });",
     "// deno-lint-ignore no-explicit-any",
     "const slim = (r: any) => ({ id: r.id, module: r.module, status: r.status, error: r.error, body: r.body });",
@@ -943,7 +1147,7 @@ async function runAllGate(
 
 /** The project's heal-rules file, parsed leniently (null when absent/foreign). */
 async function loadProjectHealRules(root: string): Promise<HealRules | null> {
-  const raw = await readMaybe(join(root, fixturesDir(), "heal-rules.json"));
+  const raw = await readMaybe(join(root, fixturesDir(root), "heal-rules.json"));
   if (raw === null) return null;
   try {
     return readHealRules(JSON.parse(raw));
@@ -1007,6 +1211,8 @@ function report(
   pruned: string[],
   blocked: string[],
   ioErrors: string[],
+  grown: { path: string; added: string[] }[] = [],
+  growthOwed: string[] = [],
 ): void {
   console.log(
     `${BOLD}sync ${relRune} (module: ${module})${
@@ -1022,6 +1228,22 @@ function report(
       `\n  ${CYAN}Regenerated ${regenerated.length} signature(s):${RESET}`,
     );
     for (const p of regenerated) console.log(`    ${CYAN}~ ${p}${RESET}`);
+  }
+  if (grown.length > 0) {
+    console.log(
+      `\n  ${GREEN}Extended ${grown.length} create-once file(s) — the spec grew, new members appended (bodies still yours):${RESET}`,
+    );
+    for (const g of grown) {
+      console.log(
+        `    ${GREEN}~ ${g.path} (+${g.added.join(", +")})${RESET}`,
+      );
+    }
+  }
+  if (growthOwed.length > 0) {
+    console.log(
+      `\n  ${YELLOW}create-once drift — these files must be hand-edited (sync preserved them, and could not safely append):${RESET}`,
+    );
+    for (const o of growthOwed) console.log(`    ${YELLOW}! ${o}${RESET}`);
   }
   if (preserved > 0) {
     console.log(
@@ -1043,8 +1265,8 @@ function report(
     for (const e of ioErrors) console.log(`    ${RED}! ${e}${RESET}`);
   }
   if (
-    created.length === 0 && pruned.length === 0 && blocked.length === 0 &&
-    ioErrors.length === 0
+    created.length === 0 && grown.length === 0 && growthOwed.length === 0 &&
+    pruned.length === 0 && blocked.length === 0 && ioErrors.length === 0
   ) {
     console.log(`\n  ${CYAN}In sync — nothing to create or prune.${RESET}`);
   }

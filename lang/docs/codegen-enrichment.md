@@ -28,12 +28,12 @@ enriched; no grammar change, no breaking change:
   E34 smk boundary list · E35 poly test skeletons · E36 int-test provenance ·
   E46 mod-root glossary · E48 poly base docs. Non-breaking; achievable.
 **SHIPPED — Tier 2 grammar (built in worktree, integrated, GREEN):**
-- `[SRV] <transport>:<name>: <ENV,…>` + `[MOD] name: desc` parsing; `matchBoundary`
+- `[SRV] (TRANSPORT)<name>: <ENV,…>` + `[MOD] name: desc` parsing; `matchBoundary`
   rewritten to a single-colon `service:` prefix (no fixed kinds); `BoundaryStepNode.
   tag`→`service`; `SrvNode` + `RuneAst.srvs`/`moduleDescription`.
 - tree-sitter `srv` tag (keywords.json + generate-core + grammar.js/json + WASM +
   highlights — 11/11 tags); `artifact/schema.ts` FOLLOWS gained `service`.
-- new `rune-service-presence` lint rule (project-scoped); migrated example/todos +
+- new `rune-service-presence` lint rule (project-scoped); migrated examples/todos +
   fixtures/specs to `[SRV]`.
 - **E20 service docs on adapters**: each generated adapter method documents its
   backing service + transport + env vars + prose (the original jr-dev gap, closed).
@@ -379,7 +379,7 @@ export class Task {
 
 **E20 · Service/transport/env method + class doc** `[adapter-method-service-jsdoc, adapter-method-service, srv-description-to-adapter-doc, adapter-class-service-header, data-adapter-service-meta]` — `[SRV]` · doc-comment · **needs-SRV**. Per-method (service is per-method): `service: <name> (transport <t>)`, the `[SRV]` description, wrapped `Connection env:` list, then `@throws`.
 
-**E21 · Transport connection scaffold** `[srv-connection-scaffolding, adapter-conn-stub]` — `[SRV].transport` · code-stub · **needs-SRV**. Drive `sk`=SDK client / `hp`=base-URL+fetch / `ws`=socket / `sc`=sidecar. **Keep comment-only until the data-adapter DI/config convention is settled** (a `private readonly base = config.firebase.apiKey` references an unimported `config` → compile break). Requires E27 (config sub-objects) first.
+**E21 · Transport connection scaffold** `[srv-connection-scaffolding, adapter-conn-stub]` — `[SRV].transport` · code-stub · **needs-SRV**. Drive `SDK`=SDK client / `HTTP`=base-URL+fetch / `WEBSOCKET`=socket / `SIDECAR`=sidecar. **Keep comment-only until the data-adapter DI/config convention is settled** (a `private readonly base = config.firebase.apiKey` references an unimported `config` → compile break). Requires E27 (config sub-objects) first.
 
 **E22 · `@throws` + call provenance per method** — covered by E13; the call-ref form becomes `service:noun.verb` once `[SRV]` lands (no rework).
 
@@ -389,7 +389,7 @@ export class Task {
 
 **E23 · Field `[TYP]` description JSDoc** `[typ-description-to-field-jsdoc, typ-desc-to-dto-field-jsdoc, dto-field-typ-desc, dto-field-typ-description-jsdoc]` — `TypNode.description` (**the single largest discarded node-axis signal**) · doc-comment · none. In the field loop, when `typMap.get(base)?.description` is non-empty, push `/** <desc> */` (multi-line block when >80) before the decorator stack at `:695-699`.
 ```ts
-// AFTER (example/todos add-task.ts)
+// AFTER (examples/todos add-task.ts)
   /** an id of a task placed on the list */
   @IsString()
   taskId!: string;
@@ -433,7 +433,7 @@ Mapping into the merged object:
   })
   @IsOptional()
   @IsArray()
-  @IsNumber({ each: true })
+  @IsNumber({}, { each: true })
   @Min(0, { each: true })
   @Max(100, { each: true })
   qtys?: number[];
@@ -586,7 +586,7 @@ Static-`[PLY]` (`isStatic`): `// rune: static dispatch verb (Provider::pick)`.
 
 **E52 · `.env.example` (new file)** `[srv-env-example-file, env-example-from-services]` — `[SRV].envVars` · code-stub · **needs-SRV**. Dedup env vars across services; group per `[SRV]` with transport + description header.
 
-**E53 · `deno.json` transport deps** `[deno-json-srv-transport-deps]` — `[SRV].transport` · code-stub · **needs-SRV** (+ a package field for `sk`). Only `sk` adds a dep; `hp`/`ws`/`sc` use built-in `fetch`/`WebSocket` (no entry). `ensureImportMap` is the only renderer consuming zero spec signal today.
+**E53 · `deno.json` transport deps** `[deno-json-srv-transport-deps]` — `[SRV].transport` · code-stub · **needs-SRV** (+ a package field for `SDK`). Only `SDK` adds a dep; `HTTP`/`WEBSOCKET`/`SIDECAR`/`NATIVE` use built-in `fetch`/`WebSocket`/Deno runtime APIs (no entry). `ensureImportMap` is the only renderer consuming zero spec signal today.
 
 **E54 · `bootstrap/mod.ts` emulator inventory** `[main-module-emulator-inventory]` — `SurfaceModule[]` · header · changes-emitted-code (created-once). Pass `surfaces` into `renderMain` (already in scope at `sync:525`); print real `/docs/<module> (<surface>)` per surface instead of the literal `<module>` token. Update `sync/test.ts:78` call.
 
@@ -620,6 +620,8 @@ No runtime/type change, no lint-rule change, no compile risk. Goldens refresh me
 ### Tier 2 — needs grammar (~50 items) — BLOCKED on the two LOCKED changes
 
 **`[SRV]` (change 1):** E11, E19 (durable), E20, E21, E34 (service part), E42 (services), E45, E51, E52, E53, E56 (transport). Items: `adapter-method-service-jsdoc`, `adapter-method-service`, `adapter-method-call-provenance-jsdoc`, `srv-description-to-adapter-doc`, `srv-env-example-file`, `srv-config-reads`, `srv-connection-scaffolding`, `adapter-conn-stub`, `adapter-class-service-header`, `data-adapter-service-meta`, `data-adapter-boundary-kind`, `smk-test-connectivity-names-service`, `smk-transport-connection-scaffold`, `coordinator-boundary-call-service-comment`, `boundary-adapter-service-annotation`, `config-service-env-blocks`, `env-example-from-services`, `services-connection-scaffold`, `deno-json-srv-transport-deps`, `e2e-required-service-env-vars`, `controller-service-touchpoints`, `heal-why-service-transport`.
+
+> **Grammar landed — `@docs` (required).** A `[SRV]` now also carries a **required** documentation link, written as an indented `@docs <url>` line under the declaration (`SrvNode.docsLink`). A `[SRV]` missing it is a hard parse error (`[SRV] <name> requires an @docs <url> line`), surfaced by `rune check`/`sync` and mirrored by the Rust LSP. Codegen surfaces it as a `@see <url>` JSDoc tag on the generated adapter method (extends E20). Note: both engines' inline-comment stripper was made URL-aware (a `//` only starts a comment when preceded by whitespace/line-start) so `https://` survives. Obeys the 80-column rule like any other line.
 
 **`[MOD]` (change 2):** E10, E17, E40, E44 (header), E46 (desc), E50, E58 (`@module`). Items: `mod-desc-mod-root-doc`, `mod-root-module-description`, `mod-root-module-desc`, `mod-desc-endpoint-controller-opt`, `mod-desc-controller-jsdoc`, `mod-desc-controller-class-jsdoc`, `mod-desc-endpointcontroller-arg`, `controller-description-from-mod`, `mod-desc-to-module-headers`, `mod-desc-impl-header`, `coordinator-mod-description-header`, `registry-module-description-comment`, `e2e-mod-description-header`, `module-fileoverview-jsdoc-tag`.
 
@@ -656,12 +658,12 @@ The ≤80-char rule is an **LSP/`.rune`-source** constraint (`constraints.md:9`)
 
 **Manifest goldens** (`fixtures/golden/manifest/`) — every Tier-1/Tier-3 emit changes these; regenerate with `deno task verify --update-goldens`:
 - `entrypoint.json` (already `M` in git status), `typ-constraints.json`, `module-billing.json`, `module-catalog.json`, `inline-dto.json`, `all-tags.json`, `scope-static-instance.json`.
-- Poly specs `poly-single-case.json` / `poly-nested.json` / `poly-many-cases.json` and `example-e2e.json` currently error on missing `[MOD]` (empty `toCreate`) — they only gain content once their specs get a `[MOD]`; poly **template** edits affect `example/todos` output, not these.
+- Poly specs `poly-single-case.json` / `poly-nested.json` / `poly-many-cases.json` and `example-e2e.json` currently error on missing `[MOD]` (empty `toCreate`) — they only gain content once their specs get a `[MOD]`; poly **template** edits affect `examples/todos` output, not these.
 - **E47/E54/E31** change the **file set** (`toCreate`) pinned in `entrypoint.json` etc. — these break until regenerated (not just content).
 
 **Live project fixtures:** `fixtures/projects/entrypoint/src/checkout/**` (incl. the new `dto/receipt-type.ts` already untracked), and **`fixtures/heal-rules.json`** (E56).
 
-**Example projects (hand-checked-in output):** `example/todos/src/**` (every `mod.ts`/`test.ts`/`dto`/`mod-root.ts`/`int.test.ts`/`smk.test.ts`), `example/cake/**`. READMEs (`example/todos/README.md`, `example/cake/README.md`) are hand-written — E57 must be **create-once** so it never clobbers them.
+**Example projects (hand-checked-in output):** `examples/todos/src/**` (every `mod.ts`/`test.ts`/`dto`/`mod-root.ts`/`int.test.ts`/`smk.test.ts`), `examples/cake/**`. READMEs (`examples/todos/README.md`, `examples/cake/README.md`) are hand-written — E57 must be **create-once** so it never clobbers them.
 
 **Parse goldens** (`fixtures/golden/parse/`): **unchanged** by codegen enrichments; they change **only** when `[SRV]`/`[MOD]` grammar lands (new AST fields). Flag for Tier 2.
 
@@ -672,4 +674,4 @@ The ≤80-char rule is an **LSP/`.rune`-source** constraint (`constraints.md:9`)
 - `sync/test.ts:78` — `renderMain` now takes `surfaces` (E54).
 - `rune-heal/test.ts:87,90-105` — `why` text change (E56); `raisedBy` is bare verb, not module-prefixed.
 
-**Process:** never run `deno fmt` (repo has no fmt config + intentional long lines — churns whole files). Hand-edit renderers, run `deno task verify --update-goldens`, confirm the valid corpus stays at **0 LSP diagnostics** (the "map runs green" definition of done) and `deno lint`/`deno check` pass on the regenerated `example/todos` tree.
+**Process:** never run `deno fmt` (repo has no fmt config + intentional long lines — churns whole files). Hand-edit renderers, run `deno task verify --update-goldens`, confirm the valid corpus stays at **0 LSP diagnostics** (the "map runs green" definition of done) and `deno lint`/`deno check` pass on the regenerated `examples/todos` tree.

@@ -2,10 +2,12 @@ export { runPipeline } from "./domain/coordinators/pipeline/mod.ts";
 export { parseArgs, printHeader, printResults, printJson } from "./entrypoints/cli.ts";
 export { runManifest } from "./entrypoints/manifest/mod.ts";
 export { runSync } from "./entrypoints/sync/mod.ts";
+export { runInit } from "./entrypoints/init/mod.ts";
 export { runCheck } from "./entrypoints/check/mod.ts";
-export { runDev } from "./entrypoints/dev/mod.ts";
+export { runDev, runStop } from "./entrypoints/dev/mod.ts";
 export { runValidate } from "./entrypoints/validate/mod.ts";
 export { runUpdate } from "./entrypoints/update/mod.ts";
+export { runVersion } from "./entrypoints/version/mod.ts";
 export type { RuleDefinition } from "@core/dto/types.ts";
 
 import type { RuleDefinition } from "@core/dto/types.ts";
@@ -29,6 +31,7 @@ import {
   runeBusinessPresence,
   runeAdapterPresence,
   runeServicePresence,
+  runeServiceCoreOnly,
   runePolyCases,
   runeEntrypointPresence,
   runeDtoShape,
@@ -57,7 +60,8 @@ export const rules: RuleDefinition[] = [
   { name: "rune-coordinator-presence", description: "Every [REQ] in a .rune file must have a coordinator folder", check: runeCoordinatorPresence.check, systemPrompt: runeCoordinatorPresence.SYSTEM_PROMPT, buildPrompt: runeCoordinatorPresence.buildPrompt },
   { name: "rune-business-presence", description: "Every untagged step's noun must have a business feature folder", check: runeBusinessPresence.check, systemPrompt: runeBusinessPresence.SYSTEM_PROMPT, buildPrompt: runeBusinessPresence.buildPrompt },
   { name: "rune-adapter-presence", description: "Every boundary call must have an adapter folder", check: runeAdapterPresence.check, systemPrompt: runeAdapterPresence.SYSTEM_PROMPT, buildPrompt: runeAdapterPresence.buildPrompt },
-  { name: "rune-service-presence", description: "Every boundary service: prefix must resolve to a declared [SRV]", check: runeServicePresence.check, systemPrompt: runeServicePresence.SYSTEM_PROMPT, buildPrompt: runeServicePresence.buildPrompt },
+  { name: "rune-service-presence", description: "Every boundary service: prefix must resolve to a declared [SRV] (shared, from src/core/core.rune)", check: runeServicePresence.check, systemPrompt: runeServicePresence.SYSTEM_PROMPT, buildPrompt: runeServicePresence.buildPrompt },
+  { name: "rune-service-core-only", description: "[SRV] may only be declared in src/core/core.rune — shared across all specs", check: runeServiceCoreOnly.check, systemPrompt: runeServiceCoreOnly.SYSTEM_PROMPT, buildPrompt: runeServiceCoreOnly.buildPrompt },
   { name: "rune-poly-cases", description: "Every [PLY] block requires base/, implementations/<case>/, and poly-mod.ts", check: runePolyCases.check, systemPrompt: runePolyCases.SYSTEM_PROMPT, buildPrompt: runePolyCases.buildPrompt },
   { name: "rune-entrypoint-presence", description: "Every [ENT] must have an entrypoints/<surface>/ folder", check: runeEntrypointPresence.check, systemPrompt: runeEntrypointPresence.SYSTEM_PROMPT, buildPrompt: runeEntrypointPresence.buildPrompt },
   { name: "rune-dto-shape", description: "Every [DTO] must have a Zod schema file with matching properties", check: runeDtoShape.check, systemPrompt: runeDtoShape.SYSTEM_PROMPT, buildPrompt: runeDtoShape.buildPrompt },
@@ -65,5 +69,5 @@ export const rules: RuleDefinition[] = [
   { name: "rune-fault-coverage", description: "Every fault declared in a rune must have a Deno.test case in the relevant test file", check: runeFaultCoverage.check, systemPrompt: runeFaultCoverage.SYSTEM_PROMPT, buildPrompt: runeFaultCoverage.buildPrompt },
   { name: "rune-extra-files", description: "Folders/files in rune-managed slots without a backing rune element are flagged as orphans", check: runeExtraFiles.check, systemPrompt: runeExtraFiles.SYSTEM_PROMPT, buildPrompt: runeExtraFiles.buildPrompt },
   { name: "rune-signature-parity", description: "Coordinator and entrypoint files must reference the input/output DTOs declared by the rune", check: runeSignatureParity.check, systemPrompt: runeSignatureParity.SYSTEM_PROMPT, buildPrompt: runeSignatureParity.buildPrompt },
-  { name: "rune-heal-todo", description: "Generated fixtures/heal-rules.json entries must be enriched (todo:true removed) — strict-gated", check: runeHealTodo.check, systemPrompt: runeHealTodo.SYSTEM_PROMPT, buildPrompt: runeHealTodo.buildPrompt },
+  { name: "rune-heal-todo", description: "Generated spec/misc/heal-rules.json entries must be enriched (todo:true removed) — strict-gated", check: runeHealTodo.check, systemPrompt: runeHealTodo.SYSTEM_PROMPT, buildPrompt: runeHealTodo.buildPrompt },
 ];

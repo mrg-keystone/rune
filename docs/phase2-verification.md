@@ -13,7 +13,7 @@ in-process runner (Stage 5), and Swagger gating (Stage 7). They do **not** cover
 **rune generating the controller (Stage 8)**. This plan closes those with a single realistic
 fixture exercised through the real flow.
 
-## Fixture — `example/cake/`
+## Fixture — `examples/cake/`
 
 A spec whose DTO field names chain so Phase 2 auto-derivation yields a **linear**
 `dependsOn`/`bind`:
@@ -33,12 +33,12 @@ seeded/typed.
 
 Commit (hand-written, not generated):
 - `server.ts` — `bootstrapServer("cake", httpModule).listen()`.
-- `deno.json` — maps `@mrg-keystone/keep` → the **local keep checkout** (path import) so the example
+- `deno.json` — maps `@mrg-keystone/rune` → the **local keep checkout** (path import) so the example
   resolves without a published JSR release (overrides the build plan's `jsr:` default for local dev).
 
 ## Execution (the flow under test)
 
-1. `rune sync example/cake/src/cake/cake.rune` → generated `entrypoints/http/mod.ts`
+1. `rune sync examples/cake/src/cake/cake.rune` → generated `entrypoints/http/mod.ts`
    (`@EndpointController` + 6 `@Endpoint` methods with computed `order`/`dependsOn`/`bind`), DTOs,
    coordinators, opt-in e2e test.
 2. Confirm the synced `deno.json` carries `experimentalDecorators`/`emitDecoratorMetadata` +
@@ -79,7 +79,7 @@ chromium` (or `PLAYWRIGHT_BROWSERS_PATH`). keep tasks `test:browser` (`KEEP_BROW
 - **reflect-metadata skew:** synced project pins `reflect-metadata@^0.2`, keep uses `0.1.13`, danet
   uses `@dx/reflect`. Mixed polyfill copies can blank out `@Endpoint`/DTO metadata. Confirm
   `x-keep-process` + DTO schemas actually appear in `/docs/cake/json`; align ranges if broken.
-- **`@mrg-keystone/keep` resolution:** local path for the example; `jsr:` for real projects — both
+- **`@mrg-keystone/rune` resolution:** local path for the example; `jsr:` for real projects — both
   must resolve.
 - **`layer-restrictions` lint:** the entrypoints→coordinators import edge must pass `rune lint`; add
   the edge to the rule's allowlist if it flags.

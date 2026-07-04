@@ -1,0 +1,31 @@
+[MOD] orders
+
+[REQ] order.place(PlaceOrderDto): OrderDto
+    id::generate(): id
+    [NEW] order
+    order.fill(amountCents): order
+    pay:order.charge(ChargeDto): ReceiptDto
+      card-declined timeout
+    order.markPaid(): order
+    db:order.save(OrderDto): void
+      timeout
+    order.toDto(): OrderDto
+
+[TYP] id: string
+    a unique order identifier
+[TYP] amountCents: number
+    the order total in cents
+[TYP] status: string
+    the order lifecycle status
+
+[DTO] PlaceOrderDto: amountCents
+    input to place an order
+[DTO] ChargeDto: amountCents
+    a payment charge request
+[DTO] ReceiptDto: id, status
+    proof of a completed charge
+[DTO] OrderDto: id, amountCents, status
+    a persisted order record
+
+[NON] order
+    a customer purchase in flight

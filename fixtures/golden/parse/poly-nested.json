@@ -83,6 +83,7 @@
       ],
       "description": "a message to deliver",
       "isCore": false,
+      "isOpen": false,
       "line": 13
     },
     {
@@ -92,6 +93,7 @@
       ],
       "description": "a delivery receipt",
       "isCore": false,
+      "isOpen": false,
       "line": 16
     }
   ],
@@ -122,6 +124,17 @@
       "line": 10
     }
   ],
-  "srvs": [],
+  "srvs": [
+    {
+      "transport": "HTTP",
+      "name": "ex",
+      "envVars": [
+        "EX_URL"
+      ],
+      "description": "external http service",
+      "docsLink": "https://docs.example.com/ex",
+      "line": 24
+    }
+  ],
   "errors": []
 }

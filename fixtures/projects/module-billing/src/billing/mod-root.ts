@@ -4,6 +4,9 @@
 //   customerId: string — the customerId
 //   amount: number — the amount
 //   id: string — the id
+//
+// Backing services (shared, from src/core/core.rune):
+//   db (SIDECAR): DB_URL
 // Public API surface for module "billing".
 
 export { issue } from "./domain/coordinators/invoice-issue/mod.ts";

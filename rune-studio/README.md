@@ -6,8 +6,8 @@ supersedes the static `../playground/` page.
 A studio for _designing the Rune language_: edit keywords on the right, watch
 the spec editor recolor live, and shape the code each keyword generates — all
 from one source of truth. The hand-edited registry lives at
-`../keywords.json`; `data/keywords.json` is a generated copy bundled with the
-studio (regenerate both, plus the grammar, with `deno run -A ../generate.mjs`).
+`../lang/keywords.json`; `data/keywords.json` is a generated copy bundled with the
+studio (regenerate both, plus the grammar, with `deno run -A ../scripts/generate.mjs`).
 
 ## Run
 
@@ -26,8 +26,8 @@ cargo build --release -p rune-cli     # from the repo root
 ## How it's wired
 
 ```
-../keywords.json     ← the single source of truth (registry, hand-edited)
-        │  generate.mjs ▶ data/keywords.json (generated copy) + grammar + highlights
+../lang/keywords.json  ← the single source of truth (registry, hand-edited)
+        │  scripts/generate.mjs ▶ data/keywords.json (generated copy) + grammar + highlights
         ▼
 data/keywords.json   ← the studio's bundled copy
         │  (read at request time in routes/index.tsx)

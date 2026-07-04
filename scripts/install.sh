@@ -1,7 +1,10 @@
 #!/usr/bin/env sh
 # Install the rune CLI (rune + rune-lsp + rune-syntax) from GitHub Releases,
-# plus the rune Claude Code skill into user scope (~/.claude/skills/rune), and
-# refresh the coupled keep skill (~/.claude/skills/keep) alongside it.
+# plus the rune Claude Code skills (rune:scope, rune:spec, rune:data, rune:build,
+# rune:cake, rune:framework, rune:docs) into user scope (~/.claude/skills/) and any
+# bundled agents into ~/.claude/agents/. Both ship from the repo's claude/ dir
+# (claude/skills/ + claude/agents/). Between them the skills cover the whole arc —
+# product scoping, spec authoring, data design, and the generated runtime.
 #
 # Installs CLEANLY: it first UNINSTALLS any existing rune (every known location),
 # then installs one fresh copy — so you never accumulate stale/duplicate binaries.
@@ -17,6 +20,7 @@
 #   RUNE_REF            fallback ref for uninstall.sh + the skill, used only for
 #                       releases that predate those assets (default: main)
 #   CLAUDE_SKILLS_DIR   Claude Code skills dir (default: ~/.claude/skills)
+#   CLAUDE_AGENTS_DIR   Claude Code agents dir (default: ~/.claude/agents)
 #
 # Prerequisite: `deno` on your PATH — the linter's type-aware rules spawn
 # `deno lsp`. Set SHAPE_NO_LSP=1 to skip them.
@@ -29,6 +33,7 @@ RUNE_REF="${RUNE_REF:-main}"
 # (purge / chmod / xattr / codesign) picks it up — no other edit needed.
 BINS="rune rune-lsp rune-syntax"
 SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
+AGENTS_DIR="${CLAUDE_AGENTS_DIR:-$HOME/.claude/agents}"
 
 # The release tag to install. The rolling release is ALWAYS tagged `latest`;
 # pinned snapshots use their v* tag. Resolve directly — never via the GitHub
@@ -38,37 +43,62 @@ SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
 # the skill), so each fetch is version-matched to the tag being installed.
 tag="${RUNE_VERSION:-latest}"
 
-# install_skill <path-to-SKILL.md> — install the rune Claude Code skill into
-# user scope, so the assistant always matches the installed toolchain. Skipped
-# when ~/.claude is absent (no Claude Code on this machine). Only SKILL.md is
-# managed — anything else in the skill folder (evals/, notes) is the user's. A
-# symlinked skill dir (the old README setup) is replaced with a real dir so we
-# never write through the link into someone's checkout.
-install_skill() {
-  if [ ! -d "$HOME/.claude" ]; then
-    echo "rune: ~/.claude not found — skipping the Claude Code skill."
-    return 0
-  fi
-  [ -L "$SKILLS_DIR/rune" ] && rm -f "$SKILLS_DIR/rune"
-  mkdir -p "$SKILLS_DIR/rune"
-  cp "$1" "$SKILLS_DIR/rune/SKILL.md"
-  echo "Installed the rune skill -> $SKILLS_DIR/rune/SKILL.md"
+# install_unit <src entry> <dest dir> — install/UPDATE one unit (a skill folder,
+# or an agent file/folder) into a Claude Code dir by BASE-LEVEL REPLACE: the unit
+# is the base "key", so its destination is removed and re-copied whole. This is
+# the spread merge   destDir = { ...destDir, ...toInstall }   applied one key at a
+# time — the named unit is replaced outright; every sibling already in the dest is
+# left untouched. A symlinked dest (the old README setup) is unlinked first so we
+# never write through the link into a checkout.
+install_unit() {
+  name="$(basename "$1")"
+  dst="$2/$name"
+  [ -L "$dst" ] && rm -f "$dst"
+  rm -rf "$dst"
+  cp -R "$1" "$dst"
+  echo "Installed $name -> $dst"
 }
 
-# install_keep_skill — rune and keep ship as a coupled pair, so refresh the keep
-# skill (always keep's rolling `latest`) alongside rune's, into the same skills
-# dir. Best-effort: a keep-release hiccup must NOT fail the rune install; no-op
-# without Claude Code. ($tmp is set below, before this is ever called.)
-install_keep_skill() {
-  [ -d "$HOME/.claude" ] || return 0
-  echo "Refreshing the coupled keep skill…"
-  if curl -fsSL "https://github.com/mrg-keystone/keep/releases/download/latest/install.sh" \
-       -o "$tmp/keep-install.sh" 2>/dev/null; then
-    CLAUDE_SKILLS_DIR="$SKILLS_DIR" sh "$tmp/keep-install.sh" \
-      || echo "rune: keep skill not refreshed (rune itself is installed)." >&2
-  else
-    echo "rune: could not fetch the keep installer (rune itself is installed)." >&2
+# install_skills <dir of skill folders> — install/update EVERY skill under a
+# skills/ dir (the `toInstall` operand) into $SKILLS_DIR, each via base-level
+# replace. A skill is a FOLDER containing SKILL.md; an entry without one is
+# skipped. Skipped wholesale when ~/.claude is absent (no Claude Code here).
+install_skills() {
+  [ -d "$1" ] || return 0
+  if [ ! -d "$HOME/.claude" ]; then
+    echo "rune: ~/.claude not found — skipping the Claude Code skills."
+    return 0
   fi
+  mkdir -p "$SKILLS_DIR"
+  # Cutover: the monolith `rune` skill was split into the namespaced rune:* skills.
+  # Remove a stale colon-less `rune` so it can't linger as an extra skill whose
+  # triggers collide with them (harmless if it was never there).
+  [ -d "$SKILLS_DIR/rune" ] && rm -rf "$SKILLS_DIR/rune"
+  for d in "$1"/*/; do
+    [ -d "$d" ] || continue
+    src="${d%/}"
+    [ -e "$src/SKILL.md" ] || { echo "rune: '$src' has no SKILL.md — skipping." >&2; continue; }
+    install_unit "$src" "$SKILLS_DIR"
+  done
+}
+
+# install_agents <dir of agent files/folders> — install/update EVERY agent under
+# an agents/ dir into $AGENTS_DIR, each via the SAME base-level replace as skills
+# (   agentsDir = { ...agentsDir, ...toInstall }   ). An agent is ONE top-level
+# entry: a `<name>.md` file (the usual case) or a folder bundling resources. A
+# dotfile that only holds the dir in git (.gitkeep) is skipped by the glob, so an
+# empty agents/ installs nothing. Skipped wholesale when ~/.claude is absent.
+install_agents() {
+  [ -d "$1" ] || return 0
+  if [ ! -d "$HOME/.claude" ]; then
+    echo "rune: ~/.claude not found — skipping the Claude Code agents."
+    return 0
+  fi
+  mkdir -p "$AGENTS_DIR"
+  for e in "$1"/*; do
+    [ -e "$e" ] || continue   # empty dir → glob stays literal; nothing to install
+    install_unit "$e" "$AGENTS_DIR"
+  done
 }
 
 # --dev: build + install from this local checkout instead of a GitHub release.
@@ -110,6 +140,11 @@ if [ "$DEV" = "1" ]; then
   mkdir -p "$BINDIR"
 
   echo "Compiling rune from source…"
+  # Stamp the build identity (version + commit) so the compiled binary's `rune -v`
+  # reports this checkout — matches what `deno task compile` does via `setup`, and
+  # is required because `deno compile` below statically imports the generated file.
+  ( cd "$repo" && deno run --allow-read --allow-run --allow-write --allow-env \
+    scripts/gen-version.ts )
   deno compile --allow-read --allow-write --allow-net --allow-env --allow-run \
     --config "$repo/deno.json" -o "$BINDIR/rune" "$repo/src/bootstrap/mod.ts"
 
@@ -125,8 +160,8 @@ if [ "$DEV" = "1" ]; then
   if [ "$(uname -s)" = "Darwin" ]; then
     for b in $BINS; do codesign -f -s - "$BINDIR/$b" 2>/dev/null || true; done
   fi
-  install_skill "$repo/skills/rune/SKILL.md"
-  install_keep_skill
+  install_skills "$repo/claude/skills"
+  install_agents "$repo/claude/agents"
   echo "Installed rune (dev build from $repo) -> $BINDIR"
   command -v deno >/dev/null 2>&1 && echo "Run: rune --help"
   exit 0
@@ -151,8 +186,8 @@ url="https://github.com/$REPO/releases/download/$tag/rune-$target.tar.gz"
 echo "Downloading rune $tag ($target)…"
 curl -fSL "$url" -o "$tmp/rune.tar.gz"
 
-# Unpack to a staging dir (the tarball also carries SKILL.md, which must not
-# land in BINDIR), then move the binaries into place.
+# Unpack to a staging dir (the tarball also carries the skill/ + agent/ dirs,
+# which must not land in BINDIR), then move the binaries into place.
 mkdir -p "$tmp/pkg" "$BINDIR"
 tar -C "$tmp/pkg" -xzf "$tmp/rune.tar.gz"
 for b in $BINS; do
@@ -165,21 +200,45 @@ if [ "$os" = "Darwin" ]; then
   for b in $BINS; do xattr -d com.apple.quarantine "$BINDIR/$b" 2>/dev/null || true; done
 fi
 
-# The skill ships inside the release tarball, version-matched to the binaries.
-# Fallbacks for releases that predate that: the release's standalone SKILL.md
-# asset, then the repo at $RUNE_REF.
-if [ -f "$tmp/pkg/SKILL.md" ]; then
-  install_skill "$tmp/pkg/SKILL.md"
-elif curl -fsSL "https://github.com/$REPO/releases/download/$tag/SKILL.md" \
-       -o "$tmp/SKILL.md" 2>/dev/null ||
-     curl -fsSL "https://raw.githubusercontent.com/$REPO/$RUNE_REF/skills/rune/SKILL.md" \
-       -o "$tmp/SKILL.md" 2>/dev/null; then
-  install_skill "$tmp/SKILL.md"
+# The skills ship as a skill/ dir inside the release tarball, version-matched to
+# the binaries — that dir CONTAINS every rune:* skill folder (rune:scope, rune:spec,
+# rune:data, rune:build, rune:cake, rune:framework, rune:docs), so install_skills
+# replaces each in turn.
+# Fallback for releases that predate the dir: fetch claude/skills/MANIFEST.txt from
+# the repo at $RUNE_REF and curl each listed repo-relative path into a staging tree
+# mirroring claude/skills/, then install every folder under it.
+if [ -d "$tmp/pkg/skill" ]; then
+  install_skills "$tmp/pkg/skill"
+elif curl -fsSL "https://raw.githubusercontent.com/$REPO/$RUNE_REF/claude/skills/MANIFEST.txt" \
+       -o "$tmp/MANIFEST.txt" 2>/dev/null; then
+  # Each line is a repo-relative path like claude/skills/rune:spec/SKILL.md. Mirror
+  # the layout under $tmp/skill so install_skills sees one folder per skill.
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    case "$path" in claude/skills/*) rel="${path#claude/skills/}" ;; *) continue ;; esac
+    dst="$tmp/skill/$rel"
+    mkdir -p "$(dirname "$dst")"
+    curl -fsSL "https://raw.githubusercontent.com/$REPO/$RUNE_REF/$path" \
+      -o "$dst" 2>/dev/null || true
+  done < "$tmp/MANIFEST.txt"
+  install_skills "$tmp/skill"
 else
-  echo "rune: could not fetch the rune skill — binaries installed, skill left as-is." >&2
+  # No manifest either — fetch just rune:spec/SKILL.md so something installs.
+  mkdir -p "$tmp/skill/rune:spec"
+  if curl -fsSL "https://raw.githubusercontent.com/$REPO/$RUNE_REF/claude/skills/rune:spec/SKILL.md" \
+       -o "$tmp/skill/rune:spec/SKILL.md" 2>/dev/null; then
+    install_skills "$tmp/skill"
+    echo "rune: skills manifest unavailable — installed rune:spec only." >&2
+  else
+    echo "rune: could not fetch the rune skills — binaries installed, skills left as-is." >&2
+  fi
 fi
 
-install_keep_skill
+# Agents ship the SAME way — an agent/ dir inside the release tarball holding every
+# Claude Code agent (one top-level entry each), installed by base-level replace.
+# A new surface, so there is no pre-tarball MANIFEST fallback: a release without an
+# agent/ dir simply has no agents to install.
+[ -d "$tmp/pkg/agent" ] && install_agents "$tmp/pkg/agent"
 
 echo "Installed rune $tag -> $BINDIR"
 case ":$PATH:" in

@@ -1,0 +1,135 @@
+{
+  "module": "chat",
+  "moduleDescription": null,
+  "reqs": [],
+  "ents": [
+    {
+      "surface": "chat",
+      "action": "join",
+      "input": "JoinDto",
+      "output": "JoinedDto",
+      "modifier": null,
+      "line": 3,
+      "method": null,
+      "pathTemplate": "/rooms/{room}",
+      "kind": "ws"
+    },
+    {
+      "surface": "chat",
+      "action": "send",
+      "input": "ChatDto",
+      "output": "EchoDto",
+      "modifier": null,
+      "line": 4,
+      "method": null,
+      "pathTemplate": "/rooms/{room}",
+      "kind": "ws"
+    },
+    {
+      "surface": "chat",
+      "action": "leave",
+      "input": "LeaveDto",
+      "output": "void",
+      "modifier": null,
+      "line": 5,
+      "method": null,
+      "pathTemplate": "/rooms/{room}",
+      "kind": "ws"
+    }
+  ],
+  "dtos": [
+    {
+      "name": "JoinDto",
+      "properties": [
+        "room"
+      ],
+      "description": "a request to join a room",
+      "isCore": false,
+      "isOpen": false,
+      "line": 7
+    },
+    {
+      "name": "JoinedDto",
+      "properties": [
+        "room",
+        "members"
+      ],
+      "description": "the join acknowledgement",
+      "isCore": false,
+      "isOpen": false,
+      "line": 9
+    },
+    {
+      "name": "ChatDto",
+      "properties": [
+        "text"
+      ],
+      "description": "a chat line typed by a member",
+      "isCore": false,
+      "isOpen": false,
+      "line": 11
+    },
+    {
+      "name": "EchoDto",
+      "properties": [
+        "text",
+        "at"
+      ],
+      "description": "the line echoed back with a server timestamp",
+      "isCore": false,
+      "isOpen": false,
+      "line": 13
+    },
+    {
+      "name": "LeaveDto",
+      "properties": [
+        "room"
+      ],
+      "description": "a request to leave a room",
+      "isCore": false,
+      "isOpen": false,
+      "line": 15
+    }
+  ],
+  "typs": [
+    {
+      "name": "room",
+      "typeName": "string",
+      "description": "a room id, bound once from the handshake path",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 18
+    },
+    {
+      "name": "members",
+      "typeName": "number",
+      "description": "the current member count",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 20
+    },
+    {
+      "name": "text",
+      "typeName": "string",
+      "description": "the message text",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 22
+    },
+    {
+      "name": "at",
+      "typeName": "number",
+      "description": "a server timestamp",
+      "isCore": false,
+      "isExternal": false,
+      "modifiers": [],
+      "line": 24
+    }
+  ],
+  "nons": [],
+  "srvs": [],
+  "errors": []
+}

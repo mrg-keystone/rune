@@ -164,7 +164,18 @@
   {
     "type": "ent_line",
     "named": true,
-    "fields": {},
+    "fields": {
+      "ws_surface": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    },
     "children": {
       "multiple": true,
       "required": true,
@@ -179,6 +190,10 @@
         },
         {
           "type": "signature",
+          "named": true
+        },
+        {
+          "type": "ws_route",
           "named": true
         }
       ]
@@ -396,6 +411,10 @@
       "required": true,
       "types": [
         {
+          "type": "http_route",
+          "named": true
+        },
+        {
           "type": "parameters",
           "named": true
         },
@@ -486,9 +505,13 @@
       }
     },
     "children": {
-      "multiple": false,
+      "multiple": true,
       "required": true,
       "types": [
+        {
+          "type": "http_route",
+          "named": true
+        },
         {
           "type": "parameters",
           "named": true
@@ -558,6 +581,10 @@
           "named": true
         },
         {
+          "type": "srv_docs_line",
+          "named": true
+        },
+        {
           "type": "srv_line",
           "named": true
         },
@@ -571,6 +598,25 @@
         },
         {
           "type": "typ_line",
+          "named": true
+        },
+        {
+          "type": "ws_topic_line",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "srv_docs_line",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "srv_spec",
           "named": true
         }
       ]
@@ -747,6 +793,36 @@
     }
   },
   {
+    "type": "ws_topic_line",
+    "named": true,
+    "fields": {
+      "verb": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "parameters",
+          "named": true
+        },
+        {
+          "type": "return_type",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "(",
     "named": false
   },
@@ -776,6 +852,10 @@
   },
   {
     "type": ">",
+    "named": false
+  },
+  {
+    "type": "@docs",
     "named": false
   },
   {
@@ -828,6 +908,10 @@
     "named": true
   },
   {
+    "type": "http_route",
+    "named": true
+  },
+  {
     "type": "method_name",
     "named": true
   },
@@ -877,6 +961,10 @@
   },
   {
     "type": "typ_tag",
+    "named": true
+  },
+  {
+    "type": "ws_route",
     "named": true
   },
   {

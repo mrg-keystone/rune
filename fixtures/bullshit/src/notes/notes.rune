@@ -1,0 +1,36 @@
+[MOD] notes
+
+[REQ] note.create(CreateNoteDto): NoteDto
+    id::generate(): id
+    [NEW] note
+    note.fill(body): note
+    db:note.save(NoteDto): void
+      timeout
+    note.toDto(): NoteDto
+
+
+[REQ] note.archive(NoteRefDto): NoteDto
+    db:note.load(id): NoteDto
+      not-found
+    note.markArchived(): note
+    db:note.save(NoteDto): void
+      timeout
+    note.toDto(): NoteDto
+
+
+[TYP] id: string
+    a unique note identifier
+[TYP] body: string
+    the note body text
+[TYP] archived: boolean
+    whether the note has been archived
+
+[DTO] CreateNoteDto: body
+    input to create a new note
+[DTO] NoteRefDto: id
+    a reference to an existing note
+[DTO] NoteDto: id, body, archived
+    a persisted note record
+
+[NON] note
+    a single note

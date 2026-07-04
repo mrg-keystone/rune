@@ -18,6 +18,7 @@ import {
   type TypNode,
 } from "@rune/domain/business/rune-parse/mod.ts";
 import {
+  applyCase,
   type Binding,
   transformName,
 } from "@rune/domain/business/rune-bindings/mod.ts";
@@ -57,6 +58,10 @@ export interface RenderImplOptions {
   /** [SRV] declarations by name: an adapter method calling `service:noun.verb`
    * documents its backing service, transport, and env vars (E20). */
   srvByName?: Map<string, SrvNode>;
+  /** Names of SHARED services (from core.rune). An adapter imports the shared
+   * `src/core/data/<name>` client + constructs it ONLY for these; a legacy
+   * local `[SRV]` keeps the JSDoc-only doc (no client to import). */
+  sharedSrvNames?: Set<string>;
 }
 
 // Group method signatures by noun across every [REQ] flow, INCLUDING the
@@ -126,6 +131,21 @@ export function renderImpl(
   const instance = methods.filter((m) => !m.isStatic);
   const statics = methods.filter((m) => m.isStatic);
   const usedDtos = new Set<string>();
+  // Distinct backing services this adapter calls (boundary methods whose [SRV]
+  // resolves). Each becomes a shared-client import from src/core/data/<name>
+  // PLUS a default-constructed constructor field — the field keeps the import
+  // used (deno lint) and hands the dev the client to implement against.
+  const serviceNames = opts.async
+    ? [...new Set(
+      methods
+        .map((m) => m.service)
+        .filter((s): s is string => !!s && !!opts.sharedSrvNames?.has(s)),
+    )].sort()
+    : [];
+  const camelName = (n: string): string => {
+    const p = toPascal(n);
+    return p.length ? p[0].toLowerCase() + p.slice(1) : p;
+  };
 
   const resolve = (name: string): string =>
     resolveType(name, opts, usedDtos) ?? "unknown";
@@ -157,6 +177,7 @@ export function renderImpl(
         const env = srv.envVars.length ? ` — env: ${srv.envVars.join(", ")}` : "";
         doc.push(`service: ${srv.name} (transport ${srv.transport})${env}`);
         if (srv.description) doc.push(srv.description);
+        if (srv.docsLink) doc.push(`@see ${srv.docsLink}`);
       } else {
         doc.push(`service: ${m.service} (no [SRV] declared)`);
       }
@@ -183,6 +204,12 @@ export function renderImpl(
   const nonDesc = opts.nonByNoun?.get(noun)?.description;
   if (nonDesc) body.push(`// ${nonDesc}`);
   body.push(`export class ${pascal} {`);
+  if (serviceNames.length > 0) {
+    const params = serviceNames
+      .map((n) => `private readonly ${camelName(n)} = new ${toPascal(n)}Service()`)
+      .join(", ");
+    body.push(`  constructor(${params}) {}`);
+  }
   for (const m of statics) emitMethod(m, true);
   for (const m of instance) emitMethod(m, false);
   body.push("}");
@@ -201,7 +228,14 @@ export function renderImpl(
     const file = transformName(name, opts.nameBinding!);
     lines.push(`import { ${name} } from "@/${dir}/${file}.ts";`);
   }
-  if (usedDtos.size > 0) lines.push("");
+  for (const name of serviceNames) {
+    lines.push(
+      `import { ${toPascal(name)}Service } from "@/src/core/data/${
+        applyCase(name, "kebab")
+      }/mod.ts";`,
+    );
+  }
+  if (usedDtos.size > 0 || serviceNames.length > 0) lines.push("");
   lines.push(...body);
   lines.push("");
   return lines.join("\n");
@@ -275,7 +309,16 @@ function paramIdentList(
   const seen = new Set<string>();
   return params.map((p, i) => {
     let id = toCamelIdent(p);
-    if (id === "" || seen.has(id)) id = `arg${i}`;
+    if (id === "" || seen.has(id)) {
+      // Make the fallback collision-free: an earlier real param may already
+      // hold `arg${i}` (e.g. a literal `arg1` at index 0 then an empty param at
+      // index 1), so loop the suffix until it's unused — never emit a duplicate
+      // identifier (which would fail `deno check` with TS2300).
+      let k = i;
+      do {
+        id = `arg${k++}`;
+      } while (seen.has(id));
+    }
     seen.add(id);
     return { ident: id, source: p };
   });

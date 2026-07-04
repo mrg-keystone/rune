@@ -70,6 +70,7 @@
       ],
       "description": "a request to charge a card",
       "isCore": false,
+      "isOpen": false,
       "line": 11
     },
     {
@@ -79,6 +80,7 @@
       ],
       "description": "an authorization from the gateway",
       "isCore": false,
+      "isOpen": false,
       "line": 14
     },
     {
@@ -89,6 +91,7 @@
       ],
       "description": "the settled charge",
       "isCore": false,
+      "isOpen": false,
       "line": 17
     }
   ],
@@ -119,6 +122,27 @@
       "line": 8
     }
   ],
-  "srvs": [],
+  "srvs": [
+    {
+      "transport": "HTTP",
+      "name": "ex",
+      "envVars": [
+        "EX_URL"
+      ],
+      "description": "external http service",
+      "docsLink": "https://docs.example.com/ex",
+      "line": 25
+    },
+    {
+      "transport": "SIDECAR",
+      "name": "db",
+      "envVars": [
+        "DB_URL"
+      ],
+      "description": "the primary datastore",
+      "docsLink": "https://docs.example.com/db",
+      "line": 29
+    }
+  ],
   "errors": []
 }

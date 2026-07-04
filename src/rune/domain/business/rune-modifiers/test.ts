@@ -10,13 +10,15 @@ Deno.test("parseTypModifiers — null raw yields empty result", () => {
 
 Deno.test("parseTypModifiers — every table id parses without error", () => {
   for (const [id, spec] of TYP_MODIFIERS) {
-    const item = spec.takesValue || spec.takesText ? `${id}=0` : id;
+    // A closed-set modifier (from) must use a member of its set, not "0".
+    const sample = spec.values ? spec.values[0] : "0";
+    const item = spec.takesValue || spec.takesText ? `${id}=${sample}` : id;
     const r = parseTypModifiers(item);
     assertEquals(r.errors, [], `modifier "${item}" should parse`);
     assertEquals(r.mods, [item]);
     assertEquals(
       r.values.get(id),
-      spec.takesValue || spec.takesText ? "0" : null,
+      spec.takesValue || spec.takesText ? sample : null,
     );
     assertEquals(r.values.has(id), true);
   }
@@ -36,6 +38,23 @@ Deno.test("parseTypModifiers — example takes free text, requires a value", () 
   }
 });
 
+Deno.test("parseTypModifiers — from takes a closed-set source value", () => {
+  for (const src of ["path", "path*", "query", "header"]) {
+    const r = parseTypModifiers(`from=${src}`);
+    assertEquals(r.errors, [], `from=${src} should parse`);
+    assertEquals(r.mods, [`from=${src}`]);
+    assertEquals(r.values.get("from"), src);
+  }
+  // A bare `from` (no value) is the generic free-text error.
+  assertEquals(parseTypModifiers("from").errors, [
+    '[TYP] modifier "from" requires a value (e.g. example=orders)',
+  ]);
+  // An out-of-set value is rejected byte-exactly.
+  assertEquals(parseTypModifiers("from=body").errors, [
+    '[TYP] modifier "from" must be one of path, path*, query, header (got "body")',
+  ]);
+});
+
 Deno.test("parseTypModifiers — min=0 and max=10 values are captured", () => {
   const r = parseTypModifiers("min=0,max=10");
   assertEquals(r.errors, []);
@@ -48,7 +67,7 @@ Deno.test("parseTypModifiers — unknown modifier error is byte-exact", () => {
   const r = parseTypModifiers("bogus");
   assertEquals(r.mods, []);
   assertEquals(r.errors, [
-    '[TYP] unknown modifier "bogus" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>)',
+    '[TYP] unknown modifier "bogus" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>, from=<path|path*|query|header>)',
   ]);
 });
 

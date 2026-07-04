@@ -18,7 +18,7 @@ function lineRuleBody(tag) {
       // before the parser can see the "." of the dotted form, producing a spurious
       // ERROR. So inline the rule: identifier, optional ".verb", then parameters.
       return tag.allowFunctionName
-        ? `seq(${t}, field("noun", $.identifier), optional(seq(choice(".", "::"), field("verb", $.method_name))), $.parameters, ":", $.return_type)`
+        ? `seq(${t}, field("noun", $.identifier), optional(seq(choice(".", "::"), field("verb", $.method_name))), optional($.http_route), $.parameters, ":", $.return_type)`
         : `seq(${t}, $.signature, ":", $.return_type)`;
     case "typedef":
       return `seq(${t}, $.typ_name, ":", $.typ_type)`;
@@ -146,10 +146,16 @@ ${tagRules}
         field("noun", $.identifier),
         choice(".", "::"),
         field("verb", $.method_name),
+        optional($.http_route),
         $.parameters
       ),
 
     method_name: ($) => /[a-zA-Z][a-zA-Z0-9_-]*/,
+
+    // [ENT] field-source binding: an optional "@ METHOD /path/{seg}/{seg-star}" clause between the
+    // verb and the parameters. One anchored token (@ + space + verb + space + slash-led path), so
+    // it never collides with @docs (no space after the @) or // line comments.
+    http_route: ($) => token(seq("@", /\\s+/, /[A-Za-z]+/, /\\s+/, "/", /[^\\s()]*/)),
 
     parameters: ($) => seq("(", optional($._param_list), ")"),
 
@@ -308,9 +314,10 @@ export function buildHighlights(reg) {
     "; String enum values",
     "(typ_enum_value) @rune.fault",
     "",
-    "; Parameters and DTO properties",
+    "; Parameters, DTO properties, and declared type names",
     "(param_name) @rune.param",
     "(property_name) @rune.param",
+    "(typ_name) @rune.param",
     "",
     "; Boundaries: system edges",
     "(service_prefix) @rune.boundary",

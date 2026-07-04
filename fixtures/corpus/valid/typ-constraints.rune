@@ -31,3 +31,8 @@
 
 [DTO] ItemDto: id, name, quantity, tag(s), location
     a stored inventory item with its location and tags
+
+[SRV] (SIDECAR)db: DB_URL
+    the primary datastore
+    @docs https://docs.example.com/db
+

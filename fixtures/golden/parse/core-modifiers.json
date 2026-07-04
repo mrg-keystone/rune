@@ -12,6 +12,7 @@
       ],
       "description": "a shared audit record usable from any module",
       "isCore": true,
+      "isOpen": false,
       "line": 6
     },
     {
@@ -21,6 +22,7 @@
       ],
       "description": "a module-local contract that references a core type",
       "isCore": false,
+      "isOpen": false,
       "line": 9
     }
   ],

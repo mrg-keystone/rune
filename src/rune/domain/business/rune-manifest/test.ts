@@ -1,5 +1,6 @@
-import { assertEquals, assertStringIncludes } from "#std/assert";
+import { assert, assertEquals, assertStringIncludes } from "#std/assert";
 import { artifactToOptions, DEFAULT_TEMPLATES, planManifest } from "./mod.ts";
+import type { SrvNode } from "@rune/domain/business/rune-parse/mod.ts";
 
 Deno.test("planManifest — coordinator + DTO + TYP for a simple rune", () => {
   const rune = `[MOD] recording
@@ -193,7 +194,7 @@ Deno.test("planManifest — [ENT]s on one surface become one keep controller", (
   // Delegates to the (input,output)-matched coordinators.
   assertStringIncludes(mod.content, "return orderCreate(body)");
   assertStringIncludes(mod.content, "return paymentPay(body)");
-  assertStringIncludes(mod.content, 'from "@mrg-keystone/keep"');
+  assertStringIncludes(mod.content, 'from "@mrg-keystone/rune"');
   assertStringIncludes(mod.content, 'endpointModule("Checkout", [HttpController])');
 });
 
@@ -915,10 +916,12 @@ Deno.test("planManifest — [TYP] constraint modifiers become decorators; int re
   // int REPLACES IsNumber.
   assertStringIncludes(c, "  @IsInt()\n  qty!: number;");
   assertEquals(c.includes("@IsNumber()\n  qty"), false);
-  // min=0 each-form on an (s) array (0 must survive — falsy value).
+  // min=0 each-form on an (s) array (0 must survive — falsy value). IsNumber's
+  // `each` goes in the SECOND arg — `@IsNumber({}, { each: true })`, not
+  // `@IsNumber({ each: true })` (which is a TS2353; `each` ∉ IsNumberOptions).
   assertStringIncludes(
     c,
-    "  @IsArray()\n  @IsNumber({ each: true })\n  @Min(0, { each: true })\n  @Max(100, { each: true })\n  scores!: number[];",
+    "  @IsArray()\n  @IsNumber({}, { each: true })\n  @Min(0, { each: true })\n  @Max(100, { each: true })\n  scores!: number[];",
   );
   assertStringIncludes(c, "  @IsNumber()\n  @IsPositive()\n  price!: number;");
   // ext is placement-only; the uuid beside it still validates.
@@ -1010,7 +1013,7 @@ Deno.test("planManifest — coordinator weave: input/read/write/output asserts",
     '  const taskLoad = assert(TaskDto, await taskData.load(validInput.id), "task.load");',
   );
   assertStringIncludes(c, "  const out = createCore(validInput, taskLoad);");
-  assertStringIncludes(c, "  // writes — side effects through the data adapters (validated before they leave)");
+  assertStringIncludes(c, "  // after the core — boundary calls in spec order (validated at the seam)");
   assertStringIncludes(
     c,
     '  await taskData.save(assert(TaskDto, out.save, "task.save input"));',
@@ -1019,6 +1022,214 @@ Deno.test("planManifest — coordinator weave: input/read/write/output asserts",
   // the raw `input.` reference and the old blind cast are gone.
   assertEquals(c.includes("input.id"), false);
   assertEquals(/ as TaskDto/.test(c), false);
+});
+
+Deno.test("planManifest — enum [TYP] becomes a quoted union + @IsIn, not bare identifiers", () => {
+  const rune = `[MOD] proxy
+
+[REQ] proxy.send(ReqDto): ResDto
+    noop::run(): void
+
+[DTO] ReqDto: method, verb(s)
+    a request
+[DTO] ResDto: status
+    a response
+
+[TYP:example=POST] method: GET | POST | PUT | PATCH | DELETE
+    the http method
+[TYP:example=GET] verb: GET | POST
+    a verb
+[TYP] status: number
+    a status`;
+  const plan = planManifest("specs/proxy.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  // Standalone [TYP] alias: members are QUOTED — bare `GET | POST` is a TS2304
+  // ("Cannot find name 'GET'"). The alias documents its field-level enforcement.
+  const alias = plan.toCreate.find((f) => f.path === "src/proxy/dto/method.ts")!.content;
+  assertStringIncludes(alias, 'export type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";');
+  assertStringIncludes(
+    alias,
+    '// enforced on DTO fields: @IsIn(["GET", "POST", "PUT", "PATCH", "DELETE"])',
+  );
+  // DTO scalar field: quoted union type + @IsIn validator + @ApiProperty enum,
+  // and crucially NOT the old bare-identifier union nor a bare @Allow().
+  const dto = plan.toCreate.find((f) => f.path === "src/proxy/dto/req.ts")!.content;
+  assertStringIncludes(dto, '  method!: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";');
+  assertStringIncludes(dto, '  @IsIn(["GET", "POST", "PUT", "PATCH", "DELETE"])');
+  assertStringIncludes(dto, 'enum: ["GET", "POST", "PUT", "PATCH", "DELETE"]');
+  assertEquals(dto.includes("method!: GET |"), false);
+  assertEquals(dto.includes("@Allow()\n  method"), false);
+  // (s) array enum: the element union is parenthesized before `[]`, and @IsIn
+  // takes the each-form. `"GET" | "POST"[]` (unparenthesized) is the wrong type.
+  assertStringIncludes(dto, '  verbs!: ("GET" | "POST")[];');
+  assertStringIncludes(dto, '  @IsIn(["GET", "POST"], { each: true })');
+  // IsIn is imported (it replaced @Allow for these fields).
+  assertStringIncludes(dto, 'import { IsArray, IsIn } from "class-validator";');
+});
+
+Deno.test("planManifest — [TYP:from=...] derives the route + emits @Endpoint sources", () => {
+  const rune = `[MOD] gateway
+
+[ENT] http.proxy(ProxyReqDto): ProxyResDto
+
+[REQ] proxy.run(ProxyReqDto): ProxyResDto
+    noop::run(): void
+
+[DTO] ProxyReqDto: target, rest, q, payload
+    a proxied request
+[DTO] ProxyResDto: status
+    a proxied response
+
+[TYP:from=path] target: string
+    the upstream target
+[TYP:from=path*] rest: string
+    the remaining path
+[TYP:from=query] q: string
+    a search query
+[TYP] payload: string
+    the forwarded body
+[TYP] status: number
+    the upstream status`;
+  const plan = planManifest("specs/gateway.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const ctrl =
+    plan.toCreate.find((f) => f.path === "src/gateway/entrypoints/http/mod.ts")!.content;
+  // Route is auto-derived: kebab action + a `:field` per path field (declaration order) + a
+  // trailing `*` for the path* catch-all. Query fields stay out of the path. sources map carries
+  // every non-body field for keep's binder, the swagger params, and the cake.
+  assertStringIncludes(
+    ctrl,
+    '@Endpoint({ path: "proxy/:target/:rest{.+}", input: ProxyReqDto, output: ProxyResDto, order: 1, sources: {"target":"path","rest":"path*","q":"query"} })',
+  );
+  // The handler signature is unchanged — the binder reassembles the full DTO server-side.
+  assertStringIncludes(ctrl, "proxy(body: ProxyReqDto): Promise<ProxyResDto>");
+  // Every field (path/query/body) stays on the validated input DTO; from= rides in the provenance.
+  const dto = plan.toCreate.find((f) => f.content.includes("export class ProxyReqDto"))!.content;
+  for (const f of ["target", "rest", "q", "payload"]) {
+    assertStringIncludes(dto, `${f}!:`);
+  }
+  assertStringIncludes(dto, "// rune declares: [TYP:from=path] target: string");
+});
+
+Deno.test("planManifest — explicit [ENT] @ METHOD /template drives route + method + sources", () => {
+  const rune = `[MOD] gateway
+
+[ENT] http.proxy @ GET /proxy/{target}/{path*}(ProxyReqDto): ProxyResDto
+
+[REQ] proxy.run(ProxyReqDto): ProxyResDto
+    noop::run(): void
+
+[DTO] ProxyReqDto: target, path, q
+    a proxied request
+[DTO] ProxyResDto: status
+    the upstream response
+
+[TYP] target: string
+    the upstream host
+[TYP] path: string
+    the remaining path
+[TYP:from=query] q: string
+    a forwarded query parameter
+[TYP] status: number
+    the upstream status`;
+  const plan = planManifest("specs/gw.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const ctrl =
+    plan.toCreate.find((f) => f.path === "src/gateway/entrypoints/http/mod.ts")!.content;
+  // {name} → :name, {name*} → :name{.+}; the explicit GET is emitted; template path segments and
+  // the from=query field merge into one sources map.
+  assertStringIncludes(
+    ctrl,
+    '@Endpoint({ path: "proxy/:target/:path{.+}", method: "get", input: ProxyReqDto, output: ProxyResDto, order: 1, sources: {"q":"query","target":"path","path":"path*"} })',
+  );
+});
+
+Deno.test("planManifest — a bad [ENT] @ METHOD is an error", () => {
+  const rune = `[MOD] m
+
+[ENT] http.go @ FETCH /go(InDto): OutDto
+
+[REQ] go.run(InDto): OutDto
+    noop::run(): void
+
+[DTO] InDto: a
+    in
+[DTO] OutDto: b
+    out
+
+[TYP] a: string
+    x
+[TYP] b: string
+    y`;
+  const plan = planManifest("specs/m.rune", rune, new Set());
+  assertEquals(
+    plan.errors.some((e) =>
+      e.includes(
+        '[ENT] HTTP method must be one of GET, POST, PUT, PATCH, DELETE (got "FETCH")',
+      )
+    ),
+    true,
+  );
+});
+
+Deno.test("planManifest — a DTO with no from= emits no sources key (backward-compatible)", () => {
+  const rune = `[MOD] plain
+
+[ENT] http.make(MakeDto): DoneDto
+
+[REQ] make.run(MakeDto): DoneDto
+    noop::run(): void
+
+[DTO] MakeDto: name
+    an input
+[DTO] DoneDto: ok
+    an output
+
+[TYP] name: string
+    a name
+[TYP] ok: boolean
+    a flag`;
+  const plan = planManifest("specs/plain.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const ctrl =
+    plan.toCreate.find((f) => f.path === "src/plain/entrypoints/http/mod.ts")!.content;
+  assertStringIncludes(ctrl, '@Endpoint({ path: "make", input: MakeDto, output: DoneDto, order: 1 })');
+  assertEquals(ctrl.includes("sources:"), false);
+});
+
+Deno.test("planManifest — coordinator hoists a value-producer step feeding a read", () => {
+  const rune = `[MOD] control
+
+[REQ] settings.apply(ApplyDto): ResultDto
+    settingsKey::current(): settingsKey
+    db:settings.load(settingsKey): SettingsDto
+
+[DTO] ApplyDto: mode
+    the request — note: no settingsKey field, it is produced mid-flow
+[DTO] ResultDto: ok
+    the result
+[DTO] SettingsDto: value
+    loaded settings
+
+[TYP] mode: string
+    a mode
+[TYP] settingsKey: string
+    the settings key
+[TYP] ok: boolean
+    ok
+[TYP] value: string
+    a value`;
+  const plan = planManifest("specs/control.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const c = plan.toCreate.find((f) => f.path.endsWith("settings-apply/mod.ts"))!.content;
+  // settingsKey is produced by a value-producer step, not a field of ApplyDto, so
+  // it is hoisted as a real local and the read consumes that local…
+  assertStringIncludes(c, "  const settingsKey = SettingsKey.current();");
+  assertStringIncludes(c, "await settingsData.load(settingsKey)");
+  // …and is NEVER read off the input DTO (the `input.settingsKey` TS2339 bug).
+  assertEquals(c.includes(".settingsKey"), false);
+  // the producer is emitted before the read that consumes it.
+  assert(c.indexOf("const settingsKey =") < c.indexOf("settingsData.load"));
 });
 
 Deno.test("planManifest — coordinator weave: no reads / no writes omit their sections", () => {
@@ -1077,7 +1288,7 @@ Deno.test("planManifest — coordinator weave: empty-output boundary is a write 
   // the proven invalid-TS shape is gone…
   assertEquals(c.includes("as ;"), false);
   // …replaced by a fire-and-forget write fed from the validated input.
-  assertStringIncludes(c, "  // writes — side effects through the data adapters (validated before they leave)");
+  assertStringIncludes(c, "  // after the core — boundary calls in spec order (validated at the seam)");
   assertStringIncludes(c, "  await logData.append(validInput.message);");
   // it contributes no read variable and no core-output field.
   assertEquals(c.includes("logAppend"), false);
@@ -1089,7 +1300,7 @@ Deno.test("planManifest — coordinator weave: primitive and opaque read seams",
   const rune = `[MOD] geo
 
 [REQ] place.find(FindDto): PlaceDto
-    db:counter.next(): id
+    db:counter.peek(): id
     ex:geo.lookup(query): GeoPoint
 
 [DTO] FindDto: query
@@ -1103,14 +1314,148 @@ Deno.test("planManifest — coordinator weave: primitive and opaque read seams",
   const plan = planManifest("specs/geo.rune", rune, new Set());
   const c = plan.toCreate.find((f) => f.path.endsWith("place-find/mod.ts"))!.content;
   // [TYP] alias to a primitive: assert.<prim>, no cast — the alias IS the primitive.
-  assertStringIncludes(c, '  const counterNext = assert.string(await counterData.next(), "counter.next");');
+  assertStringIncludes(c, '  const counterPeek = assert.string(await counterData.peek(), "counter.peek");');
   // unresolvable named type keeps the cast, flagged as unvalidated.
   assertStringIncludes(
     c,
     '  const geoLookup = await geoData.lookup(validInput.query) as GeoPoint; // unvalidated: GeoPoint has no runtime contract',
   );
   // the core signature collapses the alias to its primitive.
-  assertStringIncludes(c, "counterNext: string, geoLookup: GeoPoint");
+  assertStringIncludes(c, "counterPeek: string, geoLookup: GeoPoint");
+});
+
+// Bug report 2026-07-01 (infra) #1: a multi-arg kv WRITE seam (`kv:role.set(roleId,
+// RoleDto): void`) generated the adapter with the 2-arg signature but the
+// coordinator call site with ONE arg (the DTO only) — TS2554, the tree failed
+// `deno check` before a single red test could run. Every declared param must be
+// bound, in order, from the shared resolution table: a core-minted scalar
+// resolves to `out.<p>` (and the core returns it), an input field to
+// `validInput.<p>`.
+Deno.test("planManifest — multi-arg write seam binds every declared param (TS2554 fix)", () => {
+  const rune = `[MOD] widgets
+
+[REQ] widget.define(DefineWidgetDto): WidgetDto
+    widget::newId(): widgetId
+    widget::build(DefineWidgetDto, widgetId): WidgetDto
+    kv:widget.set(widgetId, WidgetDto): void
+      timeout
+    [RET] WidgetDto
+
+[DTO] WidgetDto: widgetId, name
+    a stored widget
+[DTO] DefineWidgetDto: name
+    input to define a widget
+[TYP] widgetId: string
+    widget id
+[TYP] name: string
+    widget name
+[NON] widget
+    builds widgets`;
+  const plan = planManifest("widgets.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const c = plan.toCreate.find((f) => f.path.endsWith("widget-define/mod.ts"))!.content;
+  // BOTH args, in declared order: the core-minted scalar id, then the asserted DTO.
+  assertStringIncludes(
+    c,
+    '  await widgetData.set(out.widgetId, assert(WidgetDto, out.set, "widget.set input"));',
+  );
+  // the core returns the minted scalar alongside the write DTO.
+  assertStringIncludes(c, "): { set: WidgetDto; widgetId: string; result: WidgetDto } {");
+  // the adapter side of the same seam declares the same two params.
+  const adapter = plan.toCreate.find((f) => f.path.endsWith("domain/data/widget/mod.ts"))!.content;
+  assertStringIncludes(adapter, "set(widgetId: string, widgetDto: WidgetDto): Promise<void>");
+});
+
+// Bug report 2026-07-01 (infra) #3: an allow/attach-shaped recipe emitted the
+// mid-recipe kv MUTATION (`kv:widget.addPart(...): WidgetDto`) inside the reads
+// block, ABOVE the core — no position existed where authority guards could run
+// before the escalating write landed. Mutation verbs now run AFTER the core
+// (the guard position), and a write consuming the mutation's output chains the
+// real result instead of a core-fabricated copy.
+Deno.test("planManifest — value-returning mutation runs post-core, after the guard position", () => {
+  const rune = `[MOD] widgets
+
+[REQ] widget.attach(WidgetPartDto): WidgetDto
+    kv:widget.get(widgetId): WidgetDto
+      not-found
+    kv:part.get(partId): PartDto
+      not-found
+    kv:widget.addPart(widgetId, partId): WidgetDto
+      timeout
+    log:audit.widgetPartAttached(WidgetDto): void
+    [RET] WidgetDto
+
+[DTO] WidgetDto: widgetId, name
+    a stored widget
+[DTO] PartDto: partId, name
+    a stored part
+[DTO] WidgetPartDto: widgetId, partId
+    attach input
+[TYP] widgetId: string
+    widget id
+[TYP] partId: string
+    part id
+[TYP] name: string
+    a name`;
+  const plan = planManifest("widgets.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const c = plan.toCreate.find((f) => f.path.endsWith("widget-attach/mod.ts"))!.content;
+  // the loads stay pre-core…
+  assertStringIncludes(c, '  const widgetGet = assert(WidgetDto, await widgetData.get(validInput.widgetId), "widget.get");');
+  // …the mutation runs AFTER the core, with BOTH scalar args, under the guard note.
+  const coreIdx = c.indexOf("// core — pure business logic");
+  const mutIdx = c.indexOf(".addPart(");
+  assert(coreIdx !== -1 && mutIdx !== -1 && coreIdx < mutIdx, "mutation must follow the core");
+  assertStringIncludes(c, "  // (guards run in the core above: a throw there prevents every call below)");
+  assertStringIncludes(
+    c,
+    '  const widgetAddPart = assert(WidgetDto, await widgetData.addPart(validInput.widgetId, validInput.partId), "widget.addPart");',
+  );
+  // the audit write consumes the mutation's REAL result (chained), not a core copy…
+  assertStringIncludes(c, "  await auditData.widgetPartAttached(widgetAddPart);");
+  // …and the mutation is the result source; the guard-only core returns void.
+  assertStringIncludes(c, "  return widgetAddPart;");
+  assertStringIncludes(c, "): void {");
+});
+
+// The authorize→record shape: both are mutation verbs, both post-core in spec
+// order; record consumes authorize's asserted local (the core runs first, so it
+// can never fabricate a boundary result), and record's output is the [RET].
+Deno.test("planManifest — chained post-core mutations feed each other's results", () => {
+  const rune = `[MOD] pay
+
+[REQ] payment.charge(ChargeDto): ChargeResultDto
+    card.validate(ChargeDto): ChargeDto
+    ex:gateway.authorize(ChargeDto): AuthDto
+      declined
+    db:ledger.record(AuthDto): ChargeResultDto
+      timeout
+    [RET] ChargeResultDto
+
+[NON] card
+    a payment card
+[DTO] ChargeDto: amount
+    a charge request
+[DTO] AuthDto: token
+    a gateway authorization
+[DTO] ChargeResultDto: token, amount
+    the settled charge
+[TYP] amount: number
+    the amount
+[TYP] token: string
+    the token`;
+  const plan = planManifest("pay.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const c = plan.toCreate.find((f) => f.path.endsWith("payment-charge/mod.ts"))!.content;
+  // guard-only core: called unbound, typed void — card.validate + guards live there.
+  assertStringIncludes(c, "  chargeCore(validInput);");
+  assertStringIncludes(c, "function chargeCore(input: ChargeDto): void {");
+  // authorize consumes the validated input; record chains authorize's result.
+  assertStringIncludes(c, '  const gatewayAuthorize = assert(AuthDto, await gatewayData.authorize(validInput), "gateway.authorize");');
+  assertStringIncludes(c, '  const ledgerRecord = assert(ChargeResultDto, await ledgerData.record(gatewayAuthorize), "ledger.record");');
+  assertStringIncludes(c, "  return ledgerRecord;");
+  // the core-fabricated echo of a boundary result is gone.
+  assertEquals(c.includes("out."), false);
 });
 
 // Bug report 2026-06-14 (Datrix) #2: a [REQ] whose noun has no instance steps
@@ -1510,8 +1855,9 @@ Deno.test("planManifest — mod-root front-door doc + [MOD] desc + glossary (E10
 [NON] order
     a created order in flight
 
-[SRV] sk:firebase: FIREBASE_API_KEY, FIREBASE_PROJECT_ID
-    Firebase callable`;
+[SRV] (SDK)firebase: FIREBASE_API_KEY, FIREBASE_PROJECT_ID
+    Firebase callable
+    @docs https://firebase.google.com/docs/functions`;
   const plan = planManifest("checkout.rune", rune, new Set());
   assertEquals(plan.errors, []);
   const mr = [...plan.toCreate, ...plan.toRegenerate].find((f) =>
@@ -1522,8 +1868,8 @@ Deno.test("planManifest — mod-root front-door doc + [MOD] desc + glossary (E10
   assertStringIncludes(mr.content, "//   order: a created order in flight");
   assertStringIncludes(mr.content, "// Type vocabulary (from [TYP]):");
   assertStringIncludes(mr.content, "//   item: string — the item to order");
-  assertStringIncludes(mr.content, "// Backing services (from [SRV]):");
-  assertStringIncludes(mr.content, "//   firebase (sk): FIREBASE_API_KEY, FIREBASE_PROJECT_ID");
+  assertStringIncludes(mr.content, "// Backing services (shared, from src/core/core.rune):");
+  assertStringIncludes(mr.content, "//   firebase (SDK): FIREBASE_API_KEY, FIREBASE_PROJECT_ID");
   // int-test carries the recipe with spec-line provenance (E33/E36)
   const it = [...plan.toCreate, ...plan.toRegenerate].find((f) =>
     f.path.endsWith("order-create/int.test.ts")
@@ -1633,6 +1979,444 @@ Deno.test("planManifest — a noun that is BOTH [PLY] and a boundary keeps its a
   // and NO concrete business class for the poly noun (it gets a base/variants)
   assertEquals(
     plan.toCreate.some((f) => f.path.endsWith("domain/business/gw/mod.ts")),
+    false,
+  );
+});
+
+Deno.test("planManifest — core.rune generates shared service clients", () => {
+  const rune = `[MOD] core
+[SRV] (SIDECAR)db: DB_URL
+    the datastore
+    @docs https://docs.example.com/db
+[SRV] (HTTP)ex: EX_BASE_URL
+    external http
+    @docs https://example.com/api`;
+  const plan = planManifest("src/core/core.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const all = [...plan.toCreate, ...plan.toRegenerate, ...plan.toSkip];
+  const db = all.find((f) => f.path === "src/core/data/db/mod.ts");
+  assert(db !== undefined);
+  assertStringIncludes(db!.content, "export class DbService {");
+  assertStringIncludes(db!.content, "db (transport SIDECAR) — env: DB_URL");
+  assertStringIncludes(db!.content, "@see https://docs.example.com/db");
+  const ex = all.find((f) => f.path === "src/core/data/ex/mod.ts");
+  assert(ex !== undefined);
+  assertStringIncludes(ex!.content, "export class ExService {");
+});
+
+Deno.test("planManifest — module spec resolves boundary services from sharedSrvs", () => {
+  const sharedSrvs = new Map<string, SrvNode>([
+    ["db", {
+      transport: "SIDECAR",
+      name: "db",
+      envVars: ["DB_URL"],
+      description: "datastore",
+      docsLink: "https://x",
+      line: 0,
+    }],
+  ]);
+  const rune = `[MOD] tasks
+[REQ] task.create(InDto): OutDto
+    db:task.save(InDto): void
+    [RET] OutDto
+[DTO] InDto: id
+    x
+[DTO] OutDto: id
+    y
+[TYP] id: string
+    z`;
+  const plan = planManifest("src/tasks/tasks.rune", rune, new Set(), {}, sharedSrvs);
+  assertEquals(plan.errors, []);
+  const all = [...plan.toCreate, ...plan.toRegenerate, ...plan.toSkip];
+  // The module does NOT emit the shared client — only core.rune does.
+  assertEquals(all.some((f) => f.path.startsWith("src/core/data/")), false);
+  // Its data adapter imports + constructs the shared client.
+  const adapter = all.find((f) => f.path === "src/tasks/domain/data/task/mod.ts");
+  assert(adapter !== undefined);
+  assertStringIncludes(
+    adapter!.content,
+    'import { DbService } from "@/src/core/data/db/mod.ts";',
+  );
+  assertStringIncludes(adapter!.content, "new DbService()");
+  // mod-root lists the shared service it references.
+  const mr = all.find((f) => f.path === "src/tasks/mod-root.ts");
+  assertStringIncludes(mr!.content, "Backing services (shared, from src/core/core.rune):");
+  assertStringIncludes(mr!.content, "db (SIDECAR): DB_URL");
+});
+
+Deno.test("planManifest — strictServices errors on an undeclared boundary service", () => {
+  const rune = `[MOD] catalog
+[REQ] product.add(InDto): OutDto
+    cache:product.save(InDto): void
+    [RET] OutDto
+[DTO] InDto: id
+    x
+[DTO] OutDto: id
+    y
+[TYP] id: string
+    z`;
+  // Raw codegen (no strictServices) tolerates an undeclared service.
+  assertEquals(
+    planManifest("src/catalog/catalog.rune", rune, new Set()).errors,
+    [],
+  );
+  // strictServices (what check/sync/manifest set) makes it a hard error.
+  const strict = planManifest("src/catalog/catalog.rune", rune, new Set(), {
+    strictServices: true,
+  });
+  assert(strict.errors.some((e) => e.includes('undeclared service "cache"')));
+  // Declaring it via core.rune (sharedSrvs) clears the error.
+  const shared = new Map<string, SrvNode>([
+    ["cache", {
+      transport: "SIDECAR",
+      name: "cache",
+      envVars: ["CACHE_URL"],
+      description: "",
+      docsLink: "https://x",
+      line: 0,
+    }],
+  ]);
+  assertEquals(
+    planManifest("src/catalog/catalog.rune", rune, new Set(), {
+      strictServices: true,
+    }, shared).errors,
+    [],
+  );
+});
+
+Deno.test("planManifest — strictServices: no core.rune under the root reports a root-resolution error, not undeclared-service", () => {
+  const rune = `[MOD] catalog
+[REQ] product.add(InDto): OutDto
+    cache:product.save(InDto): void
+    [RET] OutDto
+[DTO] InDto: id
+    x
+[DTO] OutDto: id
+    y
+[TYP] id: string
+    z`;
+  // The entrypoint resolved a root but found NO core.rune there
+  // (coreSpecFound:false) — almost always a mis-resolved root (the spec is
+  // staged above the project), NOT a genuinely undeclared service. The planner
+  // must emit ONE root-resolution error, never N spec red-herrings that send the
+  // user to edit a core.rune that's correct and simply elsewhere.
+  const plan = planManifest("spec/runes/catalog.rune", rune, new Set(), {
+    strictServices: true,
+    projectRoot: "/repo",
+    coreSpecFound: false,
+  });
+  assertEquals(plan.errors.length, 1);
+  const msg = plan.errors[0];
+  assertStringIncludes(msg, "no core.rune found under the resolved project root");
+  assertStringIncludes(msg, '"/repo"'); // names the wrong root it actually looked in
+  assertStringIncludes(msg, "--root"); // surfaces the fix
+  assertStringIncludes(msg, '"cache"'); // names what couldn't resolve
+  // Crucially NOT the message that points the user at editing the spec/core.
+  assert(!msg.includes("undeclared service"));
+});
+
+Deno.test("planManifest — strictServices: core.rune present but lacking the service keeps the per-service undeclared error", () => {
+  const rune = `[MOD] catalog
+[REQ] product.add(InDto): OutDto
+    cache:product.save(InDto): void
+    [RET] OutDto
+[DTO] InDto: id
+    x
+[DTO] OutDto: id
+    y
+[TYP] id: string
+    z`;
+  // core.rune EXISTS (coreSpecFound:true) but genuinely doesn't declare `cache` —
+  // here the actionable "declare it in src/core/core.rune" message is correct.
+  const plan = planManifest("src/catalog/catalog.rune", rune, new Set(), {
+    strictServices: true,
+    projectRoot: "/repo",
+    coreSpecFound: true,
+  });
+  assert(plan.errors.some((e) => e.includes('undeclared service "cache"')));
+  assert(!plan.errors.some((e) => e.includes("no core.rune found")));
+});
+
+Deno.test("planManifest — strictServices: multiple unresolved services collapse into one plural root-resolution error", () => {
+  const rune = `[MOD] catalog
+[REQ] product.add(InDto): OutDto
+    cache:product.save(InDto): void
+    db:product.write(InDto): void
+    [RET] OutDto
+[DTO] InDto: id
+    x
+[DTO] OutDto: id
+    y
+[TYP] id: string
+    z`;
+  const plan = planManifest("spec/runes/catalog.rune", rune, new Set(), {
+    strictServices: true,
+    projectRoot: "/repo",
+    coreSpecFound: false,
+  });
+  // Both services named in a SINGLE error (plural phrasing), not one error each.
+  const root = plan.errors.find((e) => e.includes("no core.rune found"));
+  assert(root !== undefined, `expected a root-resolution error, got: ${JSON.stringify(plan.errors)}`);
+  assertStringIncludes(root!, '"cache"');
+  assertStringIncludes(root!, '"db"');
+  assertStringIncludes(root!, "services"); // plural
+  assert(!plan.errors.some((e) => e.includes("undeclared service")));
+});
+
+Deno.test("planManifest — (s?) lenient array keeps @IsArray, drops element validation", () => {
+  const rune = `[MOD] webhook
+
+[REQ] webhook.ingest(InDto): OutDto
+    id::create(name): id
+
+[DTO] InDto: tag(s), pathwayTag(s?)
+    desc
+
+[TYP] id: string
+    desc
+[TYP] name: string
+    desc
+[TYP] tag: string
+    desc
+[TYP] pathwayTag: string
+    desc`;
+  const plan = planManifest("specs/webhook.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const dto = plan.toCreate.find((f) => f.path === "src/webhook/dto/in.ts");
+  assert(dto, "in.ts DTO must be generated");
+  const c = dto!.content;
+  // Both array fields are present and named (pluralized).
+  assertStringIncludes(c, "tags!: string[]");
+  assertStringIncludes(c, "pathwayTags!: string[]");
+  // Both enforce array-ness.
+  assertStringIncludes(c, "@IsArray()");
+  // Only the STRICT (s) field validates element type — exactly one @IsString each-form.
+  const eachCount = (c.match(/@IsString\(\{ each: true \}\)/g) || []).length;
+  assertEquals(eachCount, 1, "only the strict tag(s) field emits @IsString each-form");
+  // The (s?) field is marked lenient in its provenance comment.
+  assertStringIncludes(c, "(s?)");
+  assertStringIncludes(c, "elements not validated");
+});
+
+Deno.test("planManifest — [DTO:open] emits the keep-open marker + provenance, validates declared fields", () => {
+  const rune = `[MOD] webhook
+
+[REQ] webhook.ingest(EventDto): OutDto
+    id::create(callId): id
+
+[DTO:open] EventDto: callId, status
+    an opaque third-party webhook payload
+
+[TYP] id: string
+    desc
+[TYP] callId: string
+    desc
+[TYP] status: string
+    desc`;
+  const plan = planManifest("specs/webhook.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const dto = plan.toCreate.find((f) => f.path === "src/webhook/dto/event.ts");
+  assert(dto, "event.ts DTO must be generated");
+  const c = dto!.content;
+  // The marker keep's assert reads, and the provenance tag.
+  assertStringIncludes(c, "static readonly __keepOpen = true;");
+  assertStringIncludes(c, "[DTO:open]");
+  // Declared fields are still validated and typed.
+  assertStringIncludes(c, "@IsString()");
+  assertStringIncludes(c, "callId!: string;");
+  assertStringIncludes(c, "status!: string;");
+});
+
+// ---- S1: a `*/` in a description must not break the emitted JSDoc ----
+Deno.test("planManifest — S1: `*/` in a [TYP]/[DTO] description is escaped in JSDoc", () => {
+  const rune = `[MOD] billing
+
+[ENT] http.make(InvoiceDto): InvoiceDto
+
+[DTO] InvoiceDto: amount
+    The invoice */ payload.
+
+[TYP] amount: number
+    The amount in cents. End comment */ then more prose.`;
+  const plan = planManifest("specs/billing.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const all = [...plan.toCreate, ...plan.toRegenerate];
+  // The [TYP] file and the [DTO] file both carry the description as JSDoc.
+  const typFile = all.find((f) => f.path.endsWith("/amount.ts"))!;
+  const dtoFile = all.find((f) => f.path.endsWith("/dto/invoice.ts")) ??
+    all.find((f) => f.path.endsWith("invoice-dto.ts")) ??
+    all.find((f) => f.path.includes("invoice"));
+  assert(typFile, "amount.ts must be generated");
+  assert(dtoFile, "InvoiceDto file must be generated");
+  for (const f of [typFile, dtoFile!]) {
+    // No raw `*/` survives inside the body except the legitimate JSDoc closers.
+    // A bare `*/ then more prose. */` would close the comment early and dump
+    // tokens. Assert the verbatim broken sequence never appears.
+    assertEquals(
+      f.content.includes("*/ then more prose. */"),
+      false,
+      `${f.path} must not contain an unescaped comment-close from the description`,
+    );
+    assertEquals(
+      f.content.includes("*/ payload. */"),
+      false,
+      `${f.path} must not contain an unescaped comment-close from the DTO description`,
+    );
+  }
+});
+
+// ---- S2: ENT dep graph must key by surface identity, not bare action ----
+Deno.test("planManifest — S2: two ENTs on different surfaces with the same action do not collide", () => {
+  const rune = `[MOD] m
+
+[ENT] alpha.make(AInDto): AOutDto
+[ENT] beta.make(BInDto): BOutDto
+
+[DTO] AInDto: seed
+[DTO] AOutDto: bar
+[DTO] BInDto: bar
+[DTO] BOutDto: result
+
+[TYP] seed: string
+[TYP] bar: string
+[TYP] result: string`;
+  const plan = planManifest("specs/m.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const all = [...plan.toCreate, ...plan.toRegenerate];
+  const betaCtl = all.find((f) => f.path.endsWith("entrypoints/beta/mod.ts"))!;
+  assert(betaCtl, "beta controller must be generated");
+  // beta.make consumes `bar`, which alpha.make MINTS — so beta must wire the
+  // producer edge, not fall back to a $-external bind. The collision (both
+  // actions == "make") previously made dependsOnReaches("make","make") true,
+  // dropping the cross-surface producer.
+  assertStringIncludes(betaCtl.content, `dependsOn: ["make"]`);
+  assertStringIncludes(betaCtl.content, `bind: {"bar":"make.bar"}`);
+  assertEquals(
+    betaCtl.content.includes(`bind: {"bar":"$bar"}`),
+    false,
+    "beta must not fall back to an external bind for a field alpha produces",
+  );
+});
+
+// ---- S6: array schema-hints must nest under items, not sit on the field ----
+Deno.test("planManifest — S6: array field min/max/int schema-hints nest under items", () => {
+  const rune = `[MOD] m
+
+[ENT] http.make(ScoreDto): ScoreDto
+
+[DTO] ScoreDto: score(s), qty(s)
+
+[TYP:min=0,max=100] score: number
+    a score
+[TYP:int] qty: number
+    a qty`;
+  const plan = planManifest("specs/m.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const all = [...plan.toCreate, ...plan.toRegenerate];
+  const dto = all.find((f) => f.path.endsWith("/score.ts"))!;
+  assert(dto, "ScoreDto file must be generated");
+  const c = dto.content;
+  // For an ARRAY field the numeric bounds and integer type belong under an
+  // `items` schema, never as a scalar on the array property (which OpenAPI
+  // applies to the array itself / overrides the array type entirely).
+  assertEquals(
+    /@ApiProperty\(\{[^}]*\bminimum: 0\b[^}]*\}\)/.test(c) &&
+      !/items:/.test(c.slice(c.indexOf("minimum"))),
+    false,
+    "array bounds must not be emitted as a scalar minimum on the field",
+  );
+  assertStringIncludes(c, "items:");
+  // The integer array must not declare a scalar `type: "integer"` on the field
+  // (that overrides the array type in the produced OpenAPI schema).
+  assertEquals(
+    /@ApiProperty\(\{(?:(?!items)[^}])*type: "integer"[^}]*\}\)/.test(c),
+    false,
+    "integer array must nest type under items, not on the field",
+  );
+});
+
+// ---- S7: an empty [PLY] (no [CSE]) must be a manifest error, not bad codegen ----
+Deno.test("planManifest — S7: a [PLY] with no [CSE] emits an error and no broken barrel", () => {
+  const rune = `[MOD] m
+
+[REQ] order.place(InDto): OutDto
+    [PLY] shape.draw(InDto): OutDto
+    [RET] OutDto
+
+[DTO] InDto: id
+[DTO] OutDto: id
+[TYP] id: string`;
+  const plan = planManifest("specs/m.rune", rune, new Set());
+  // The empty PLY must surface a manifest error.
+  assert(
+    plan.errors.some((e) => /\[PLY\]/.test(e) && /\[CSE\]/.test(e)),
+    `expected a [PLY] requires [CSE] error, got: ${JSON.stringify(plan.errors)}`,
+  );
+  // And it must NOT emit a poly-mod barrel pointing at a nonexistent module.
+  const all = [...plan.toCreate, ...plan.toRegenerate];
+  const polyMod = all.find((f) => f.path.endsWith("/poly-mod.ts"));
+  if (polyMod) {
+    assertEquals(
+      polyMod.content.includes("./implementations//mod.ts"),
+      false,
+      "must not emit a double-slash re-export from an empty PLY",
+    );
+  }
+});
+
+Deno.test("planManifest — [ENT:ws] emits a WebSocket controller, not an HTTP one", () => {
+  const rune = `[MOD] chat
+
+[ENT:ws] chat @ /rooms/{room}
+    join(JoinDto): JoinedDto
+    send(ChatDto): EchoDto
+    leave(LeaveDto): void
+
+[DTO] JoinDto: room
+    join
+[DTO] JoinedDto: room, members
+    joined
+[DTO] ChatDto: text
+    chat
+[DTO] EchoDto: text, at
+    echo
+[DTO] LeaveDto: room
+    leave
+
+[TYP] room: string
+    r
+[TYP] members: number
+    m
+[TYP] text: string
+    t
+[TYP] at: number
+    a`;
+  const plan = planManifest("specs/chat.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const mod = plan.toCreate.find((f) => f.path === "src/chat/entrypoints/chat/mod.ts");
+  assert(mod, "WS controller file must be emitted");
+  // The handshake path mounts via @WsEndpointController; {room} → :room.
+  assertStringIncludes(mod.content, '@WsEndpointController("rooms/:room")');
+  assertStringIncludes(mod.content, "WsEndpoint, WsEndpointController");
+  // One @WsEndpoint per topic; the topic is the verb.
+  assertStringIncludes(
+    mod.content,
+    '@WsEndpoint({ topic: "join", input: JoinDto, output: JoinedDto })',
+  );
+  assertStringIncludes(
+    mod.content,
+    '@WsEndpoint({ topic: "send", input: ChatDto, output: EchoDto })',
+  );
+  // A void topic mints no reply: no `output:` and a Promise<void> handler.
+  assertStringIncludes(mod.content, '@WsEndpoint({ topic: "leave", input: LeaveDto })');
+  assertStringIncludes(mod.content, "leave(data: LeaveDto): Promise<void>");
+  // It is a WS controller, never an HTTP one (no HTTP decorators leak in).
+  assert(!mod.content.includes("@EndpointController"), "no HTTP @EndpointController");
+  assert(!mod.content.includes("@Endpoint("), "no HTTP @Endpoint");
+  assert(!/@(Get|Post|Put|Patch|Delete)\b/.test(mod.content), "no HTTP method decorator");
+  // No HTTP e2e harness for a WS socket in v1.
+  assertEquals(
+    plan.toCreate.some((f) => f.path === "src/chat/entrypoints/chat/e2e.test.ts"),
     false,
   );
 });

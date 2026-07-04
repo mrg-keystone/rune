@@ -139,7 +139,7 @@ Deno.test("renderStubsModule — header, stub flag, mint endpoint, types", () =>
   // Imports: keep + class-validator only.
   assertStringIncludes(
     out,
-    'import { Endpoint, EndpointController, endpointModule } from "@mrg-keystone/keep";',
+    'import { Endpoint, EndpointController, endpointModule } from "@mrg-keystone/rune";',
   );
   assertStringIncludes(out, 'import { IsBoolean, IsNumber, IsString } from "class-validator";');
   assertEquals(out.includes("danet"), false);
@@ -253,4 +253,120 @@ Deno.test("planInputDiagnostics — an example silences the 422 warning", () => 
     { path: "src/catalog/catalog.rune", text: DISCOVER },
   ]);
   assertEquals(notes, []);
+});
+
+// ---- S4: a field name that is not a valid TS identifier must not produce
+//      uncompilable code (e.g. `class 3dModelStubDto`, `dto.3dModel = …`). ----
+Deno.test("renderStubsModule — S4: a leading-digit field name yields compilable TS", async () => {
+  const out = renderStubsModule([{ name: "3dModel", tsType: "string" }]);
+  // The class/method identifiers must be valid TS — a leading digit is illegal.
+  assertEquals(
+    out.includes("class 3dModelStubDto"),
+    false,
+    "class identifier must be sanitized, not start with a digit",
+  );
+  assertEquals(
+    out.includes("mint3dModel("),
+    false,
+    "method identifier must be sanitized",
+  );
+  // The field name itself must stay literally `3dModel` (keep binds `$3dModel`
+  // to the field of that exact name) — so it must be QUOTED, never a bare ident.
+  assertEquals(
+    /\n  3dModel!:/.test(out),
+    false,
+    "a non-identifier property must be quoted, not bare",
+  );
+  assertEquals(
+    out.includes("dto.3dModel ="),
+    false,
+    "a non-identifier property access must be bracketed, not dotted",
+  );
+  // Ground truth: the output must actually type-check.
+  const dir = await Deno.makeTempDir();
+  const file = `${dir}/stubs_gen.ts`;
+  // Drop the keep import (not resolvable here) — we only check identifier/syntax
+  // validity of the generated DTO + handler shapes.
+  const stripped = out.replace(
+    /import \{ Endpoint, EndpointController, endpointModule \} from "@mrg-keystone\/rune";/,
+    "const Endpoint = (_: unknown) => (_t: unknown, _k?: unknown) => {};\nconst EndpointController = (_: unknown) => (_t: unknown) => {};\nconst endpointModule = (_: unknown, __: unknown) => ({});",
+  );
+  await Deno.writeTextFile(file, stripped);
+  const cmd = new Deno.Command(Deno.execPath(), {
+    args: ["check", file],
+    stderr: "piped",
+    stdout: "piped",
+  });
+  const { code, stderr } = await cmd.output();
+  await Deno.remove(dir, { recursive: true });
+  assertEquals(
+    code,
+    0,
+    `generated stubs.ts must type-check; got:\n${new TextDecoder().decode(stderr)}`,
+  );
+});
+
+// ---- S8: two modules declaring the SAME [TYP:ext] field with DIFFERENT
+//      primitives must not be silently resolved by file order. ----
+const S8_ALPHA = `[MOD] alpha
+
+[ENT] http.a(AInDto): AOutDto
+
+[DTO] AInDto: amount
+    x
+[DTO] AOutDto: aId
+    x
+
+[TYP:ext] amount: number
+    a numeric amount
+[TYP] aId: string
+    x`;
+
+const S8_BETA = `[MOD] beta
+
+[ENT] http.b(BInDto): BOutDto
+
+[DTO] BInDto: amount
+    x
+[DTO] BOutDto: bId
+    x
+
+[TYP:ext] amount: string
+    a string amount
+[TYP] bId: string
+    x`;
+
+Deno.test("planStubs — S8: a conflicting cross-module [TYP:ext] type is order-independent", () => {
+  const ab = planStubs([
+    { path: "src/alpha/alpha.rune", text: S8_ALPHA },
+    { path: "src/beta/beta.rune", text: S8_BETA },
+  ]);
+  const ba = planStubs([
+    { path: "src/beta/beta.rune", text: S8_BETA },
+    { path: "src/alpha/alpha.rune", text: S8_ALPHA },
+  ]);
+  // The stub result must NOT silently flip with input order. Either the field is
+  // diagnosed/dropped, or it is resolved deterministically regardless of order —
+  // never "whichever spec was processed first wins".
+  assertEquals(
+    JSON.stringify(ab),
+    JSON.stringify(ba),
+    "a conflicting ext-type must not depend on spec/path order",
+  );
+});
+
+Deno.test("planInputDiagnostics — S8: conflicting cross-module ext type is reported", () => {
+  const notes = planInputDiagnostics([
+    { path: "src/alpha/alpha.rune", text: S8_ALPHA },
+    { path: "src/beta/beta.rune", text: S8_BETA },
+  ]);
+  assertEquals(
+    notes.some((n) =>
+      n.includes("amount") && /conflict|differ|mismatch|number|string/i.test(n)
+    ),
+    true,
+    `expected a conflicting-type diagnostic for amount, got: ${
+      JSON.stringify(notes)
+    }`,
+  );
 });

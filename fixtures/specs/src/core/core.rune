@@ -1,0 +1,9 @@
+[MOD] core
+
+// Shared services for this project. Declared ONCE here; the todos and library
+// modules both resolve their db: boundary against this single [SRV]. Generates
+// the shared client at src/core/data/db/.
+
+[SRV] (SIDECAR)db: DB_URL
+    the project's primary datastore (sidecar)
+    @docs https://docs.example.com/datastore

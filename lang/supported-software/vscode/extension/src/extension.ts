@@ -17,16 +17,19 @@ let client: LanguageClient | undefined;
 const tokenTypes = ['keyword', 'type', 'function', 'variable', 'string', 'comment', 'number', 'operator'];
 const legend = new vscode.SemanticTokensLegend(tokenTypes, []);
 
-// Map tree-sitter captures to standard token types
+// Map tree-sitter captures to standard token types.
+// Capture names mirror lang/queries/highlights.scm (the single source of truth);
+// keep this in sync when that query's @rune.* groups change.
 const captureToTokenIndex: Record<string, number> = {
-  'rune.tag': 0,      // keyword
-  'rune.noun': 1,     // type
-  'rune.verb': 2,     // function
-  'rune.dto': 3,      // variable
-  'rune.builtin': 1,  // type
-  'rune.boundary': 0, // keyword
-  'rune.fault': 4,    // string (for visibility)
-  'rune.comment': 5,  // comment
+  'rune.tag': 0,      // keyword  — [REQ], [TYP], [DTO], ... tags
+  'rune.noun': 1,     // type     — subjects / declared names
+  'rune.verb': 2,     // function — actions after . or ::
+  'rune.type': 1,     // type     — DTO + primitive type references
+  'rune.param': 3,    // variable — params, DTO properties, declared [TYP] names
+  'rune.boundary': 0, // keyword  — service: boundary prefixes
+  'rune.fault': 4,    // string   — faults + enum values (warm, for visibility)
+  'rune.comment': 5,  // comment  — descriptions, @docs, comments
+  'rune.chrome': 5,   // comment  — optional marker, array suffix (muted)
 };
 
 class RuneSemanticTokensProvider implements vscode.DocumentSemanticTokensProvider {

@@ -1,10 +1,11 @@
 {
+  "workspace": ["./keep", "./e2e/cake", "./e2e/checkout", "./examples/in-process-client"],
   "tasks": {
     "hooks": "git config core.hooksPath .githooks",
-    "setup": "deno run --allow-read --allow-run --allow-write src/bootstrap/config.ts && deno run --allow-read --allow-write scripts/gen-shape-docs.ts",
+    "setup": "deno run --allow-read --allow-run --allow-write src/bootstrap/config.ts && deno run --allow-read --allow-write scripts/gen-shape-docs.ts && deno run --allow-read --allow-run --allow-write --allow-env scripts/gen-version.ts",
     "check": "deno run --allow-read --allow-write --allow-net --allow-env --allow-run src/bootstrap/mod.ts",
     "dev": "deno run --allow-read --allow-write --allow-net --allow-env --allow-run src/bootstrap/mod.ts",
-    "gen": "deno run --allow-read --allow-write generate.mjs",
+    "gen": "deno run --allow-read --allow-write scripts/generate.mjs",
     "studio": "cd rune-studio && deno task dev",
     "build:rust": "cd lang && cargo build --release",
     "compile": "deno task setup && deno compile --allow-read --allow-write --allow-net --allow-env --allow-run -o dist/rune src/bootstrap/mod.ts",
@@ -12,21 +13,29 @@
     "install": "sh scripts/install.sh --dev",
     "install:release": "sh scripts/install.sh",
     "uninstall": "sh scripts/uninstall.sh",
-    "verify": "deno run -A scripts/verify.ts"
+    "check:lockstep": "deno run --allow-read scripts/check-keep-lockstep.ts",
+    "check:spec-refs": "deno run -A scripts/sync-spec-skill-refs.ts --check",
+    "sync:spec-refs": "deno run -A scripts/sync-spec-skill-refs.ts",
+    "verify": "deno task check:lockstep && deno task check:spec-refs && deno run -A scripts/verify.ts",
+    "test:keep": "cd keep && deno task test",
+    "check:keep-jsr": "cd keep && deno task check:jsr",
+    "test:e2e": "deno test -A --unstable-raw-imports --config e2e/cake/deno.json e2e/cake/ && deno test -A --unstable-raw-imports --config e2e/checkout/deno.json e2e/checkout/",
+    "test:e2e:checkout": "deno test -A --unstable-raw-imports --config e2e/checkout/deno.json e2e/checkout/",
+    "cake": "deno run -A npm:playwright install chromium chromium-headless-shell && KEEP_BROWSER=1 KEEP_HEADED=1 deno test -A --unstable-raw-imports --config e2e/cake/deno.json e2e/cake/cake.e2e.test.ts",
+    "example": "deno run -A examples/in-process-client/main.ts"
   },
   "imports": {
     "@/": "./src/",
     "@core/": "./src/core/",
     "@rune/": "./src/rune/",
-    "@keywords": "./keywords.json",
+    "@keywords": "./lang/keywords.json",
     "#zod": "npm:zod",
     "#std/assert": "jsr:@std/assert",
     "#std/path": "jsr:@std/path",
     "class-validator": "npm:class-validator@^0.14",
     "class-transformer": "npm:class-transformer@^0.5",
     "reflect-metadata": "npm:reflect-metadata@0.1.13",
-    "@mrg-keystone/keep": "jsr:@mrg-keystone/keep@^1",
-    "#assert": "jsr:@mrg-keystone/keep@^1/assert",
+    "#assert": "./keep/src/assert/mod.ts",
     "#api-doc": "jsr:@danet/swagger@^2.1.1/decorators"
   },
   "compilerOptions": {
@@ -35,12 +44,8 @@
     "emitDecoratorMetadata": true
   },
   "exclude": [
-    "src/calendar/",
-    "src/client/",
-    "src/engine/",
-    "src/providers/",
-    "src/submit/",
-    "src/sync/",
-    "src/todos/"
+    "examples/",
+    "fixtures/",
+    "rune-studio/"
   ]
 }

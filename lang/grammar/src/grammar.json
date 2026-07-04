@@ -67,11 +67,19 @@
         },
         {
           "type": "SYMBOL",
+          "name": "srv_docs_line"
+        },
+        {
+          "type": "SYMBOL",
           "name": "boundary_line"
         },
         {
           "type": "SYMBOL",
           "name": "step_line"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "ws_topic_line"
         },
         {
           "type": "SYMBOL",
@@ -138,6 +146,18 @@
                   }
                 }
               ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "http_route"
             },
             {
               "type": "BLANK"
@@ -217,23 +237,57 @@
       }
     },
     "ent_line": {
-      "type": "SEQ",
+      "type": "CHOICE",
       "members": [
         {
-          "type": "SYMBOL",
-          "name": "ent_tag"
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "ent_tag"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "signature"
+            },
+            {
+              "type": "STRING",
+              "value": ":"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "return_type"
+            }
+          ]
         },
         {
-          "type": "SYMBOL",
-          "name": "signature"
-        },
-        {
-          "type": "STRING",
-          "value": ":"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "return_type"
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "ent_tag"
+            },
+            {
+              "type": "FIELD",
+              "name": "ws_surface",
+              "content": {
+                "type": "SYMBOL",
+                "name": "identifier"
+              }
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "ws_route"
+                },
+                {
+                  "type": "BLANK"
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -611,6 +665,18 @@
           }
         },
         {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "http_route"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
           "type": "SYMBOL",
           "name": "parameters"
         }
@@ -619,6 +685,62 @@
     "method_name": {
       "type": "PATTERN",
       "value": "[a-zA-Z][a-zA-Z0-9_-]*"
+    },
+    "http_route": {
+      "type": "TOKEN",
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "STRING",
+            "value": "@"
+          },
+          {
+            "type": "PATTERN",
+            "value": "\\s+"
+          },
+          {
+            "type": "PATTERN",
+            "value": "[A-Za-z]+"
+          },
+          {
+            "type": "PATTERN",
+            "value": "\\s+"
+          },
+          {
+            "type": "STRING",
+            "value": "/"
+          },
+          {
+            "type": "PATTERN",
+            "value": "[^\\s()]*"
+          }
+        ]
+      }
+    },
+    "ws_route": {
+      "type": "TOKEN",
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "STRING",
+            "value": "@"
+          },
+          {
+            "type": "PATTERN",
+            "value": "\\s+"
+          },
+          {
+            "type": "STRING",
+            "value": "/"
+          },
+          {
+            "type": "PATTERN",
+            "value": "[^\\s()]*"
+          }
+        ]
+      }
     },
     "parameters": {
       "type": "SEQ",
@@ -1024,6 +1146,31 @@
         }
       ]
     },
+    "ws_topic_line": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "FIELD",
+          "name": "verb",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "parameters"
+        },
+        {
+          "type": "STRING",
+          "value": ":"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "return_type"
+        }
+      ]
+    },
     "boundary_line": {
       "type": "SEQ",
       "members": [
@@ -1051,6 +1198,27 @@
         "type": "PATTERN",
         "value": "[^\\n]+"
       }
+    },
+    "srv_docs_line": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "@docs"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "srv_spec"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
     },
     "dto_def_name": {
       "type": "PATTERN",

@@ -68,7 +68,9 @@
       "input": "NewOrderDto",
       "output": "OrderDto",
       "modifier": null,
-      "line": 2
+      "line": 2,
+      "method": null,
+      "pathTemplate": null
     },
     {
       "surface": "http",
@@ -76,7 +78,9 @@
       "input": "PayDto",
       "output": "ReceiptDto",
       "modifier": null,
-      "line": 3
+      "line": 3,
+      "method": null,
+      "pathTemplate": null
     }
   ],
   "dtos": [
@@ -87,6 +91,7 @@
       ],
       "description": "a new order to create",
       "isCore": false,
+      "isOpen": false,
       "line": 15
     },
     {
@@ -97,6 +102,7 @@
       ],
       "description": "a created order",
       "isCore": false,
+      "isOpen": false,
       "line": 17
     },
     {
@@ -106,6 +112,7 @@
       ],
       "description": "a payment for an order",
       "isCore": false,
+      "isOpen": false,
       "line": 19
     },
     {
@@ -115,6 +122,7 @@
       ],
       "description": "a receipt for a payment",
       "isCore": false,
+      "isOpen": false,
       "line": 21
     }
   ],
@@ -148,6 +156,17 @@
     }
   ],
   "nons": [],
-  "srvs": [],
+  "srvs": [
+    {
+      "transport": "SIDECAR",
+      "name": "db",
+      "envVars": [
+        "DB_URL"
+      ],
+      "description": "the primary datastore",
+      "docsLink": "https://docs.example.com/db",
+      "line": 31
+    }
+  ],
   "errors": []
 }

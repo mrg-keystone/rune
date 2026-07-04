@@ -67,7 +67,7 @@ function normalizeProperty(raw: string): string | null {
   // "metadata?" → "metadata"
   let s = raw.endsWith("?") ? raw.slice(0, -1) : raw;
   // "url(s)" → "urls", "address(es)" → "addresses", "child(ren)" → "children"
-  const arrMatch = s.match(/^([A-Za-z_][A-Za-z0-9_]*)\(([a-z]+)\)$/);
+  const arrMatch = s.match(/^([A-Za-z_][A-Za-z0-9_]*)\(([a-z]+)\??\)$/);
   if (arrMatch) {
     return `${arrMatch[1]}${arrMatch[2]}`;
   }

@@ -1,0 +1,31 @@
+[MOD] notify
+
+[REQ] notification.send(SendDto): ReceiptDto
+    id::generate(): id
+    [NEW] notification
+    notification.fill(message): notification
+    [PLY] channel.deliver(SendDto): ReceiptDto
+        [CSE] email
+        ex:channel.sendEmail(SendDto): ReceiptDto
+          timeout invalid-address
+        [CSE] push
+        ex:channel.sendPush(SendDto): ReceiptDto
+          timeout
+    notification.toDto(): ReceiptDto
+
+[TYP] id: string
+    a unique notification id
+[TYP] message: string
+    the notification body text
+[TYP] status: string
+    the delivery status of the notification
+
+[DTO] SendDto: message
+    input to send a notification
+[DTO] ReceiptDto: id, status
+    proof that a notification was delivered
+
+[NON] notification
+    a queued outbound notification
+[NON] channel
+    a delivery channel (email or push)

@@ -22,6 +22,26 @@ Deno.test("parse — duplicate [MOD] is an error", () => {
   assertEquals(ast.errors[0].message.includes("duplicate"), true);
 });
 
+Deno.test("parse — [MOD] accepts a kebab-case name", () => {
+  const ast = parse("[MOD] user-api");
+  assertEquals(ast.module, "user-api");
+  assertEquals(ast.errors, []);
+});
+
+Deno.test("parse — [MOD] digit-leading name is an error", () => {
+  const ast = parse("[MOD] 2module");
+  assertEquals(ast.module, null);
+  assertEquals(ast.errors.length, 1);
+  assertEquals(ast.errors[0].message.includes("invalid name"), true);
+});
+
+Deno.test("parse — [MOD] name with illegal punctuation is an error", () => {
+  const ast = parse(`[MOD] my"module`);
+  assertEquals(ast.module, null);
+  assertEquals(ast.errors.length, 1);
+  assertEquals(ast.errors[0].message.includes("invalid name"), true);
+});
+
 Deno.test("parse — bare [REQ]", () => {
   const ast = parse("[REQ] recording.set(GetRecordingDto): IdDto");
   assertEquals(ast.reqs.length, 1);
@@ -92,8 +112,9 @@ Deno.test("parse — [SRV] declares transport + name + env vars + description", 
       timeout
     [RET] ReceiptDto
 
-[SRV] sk:firebase: FIREBASE_API_KEY, FIREBASE_PROJECT_ID
-    Firebase callable; charge() idempotent by idemKey`,
+[SRV] (SDK)firebase: FIREBASE_API_KEY, FIREBASE_PROJECT_ID
+    Firebase callable; charge() idempotent by idemKey
+    @docs https://firebase.google.com/docs/functions`,
   );
   assertEquals(ast.errors, []);
   // [MOD] description (inline + continuation line).
@@ -105,10 +126,12 @@ Deno.test("parse — [SRV] declares transport + name + env vars + description", 
   // [SRV] node.
   assertEquals(ast.srvs.length, 1);
   const srv = ast.srvs[0];
-  assertEquals(srv.transport, "sk");
+  assertEquals(srv.transport, "SDK");
   assertEquals(srv.name, "firebase");
   assertEquals(srv.envVars, ["FIREBASE_API_KEY", "FIREBASE_PROJECT_ID"]);
   assertEquals(srv.description, "Firebase callable; charge() idempotent by idemKey");
+  // The @docs line is routed to docsLink, NOT appended to the prose description.
+  assertEquals(srv.docsLink, "https://firebase.google.com/docs/functions");
   // The boundary call carries the service name as its prefix.
   const step = ast.reqs[0].steps[0];
   assertEquals(step.kind, "boundary");
@@ -132,9 +155,53 @@ Deno.test("parse — service: prefix vs Noun:: static are disambiguated", () => 
 });
 
 Deno.test("parse — [SRV] rejects an unknown transport", () => {
-  const ast = parse(`[SRV] xx:thing: A_KEY`);
+  const ast = parse(`[SRV] (BOGUS)thing: A_KEY\n    @docs https://x.dev`);
   assertEquals(ast.errors.length, 1);
   assertEquals(ast.errors[0].message.includes("unknown transport"), true);
+});
+
+Deno.test("parse — [SRV] accepts the NATIVE transport with no env vars", () => {
+  // NATIVE = an in-process runtime/std-lib boundary (filesystem, subprocess,
+  // crypto, clock). It needs no external config, so the env-var list is omitted.
+  const ast = parse(
+    `[SRV] (NATIVE)fs:\n    local filesystem via native Deno APIs\n    @docs https://docs.deno.com/api/deno/~/Deno.writeTextFile`,
+  );
+  assertEquals(ast.errors, []);
+  assertEquals(ast.srvs.length, 1);
+  assertEquals(ast.srvs[0].transport, "NATIVE");
+  assertEquals(ast.srvs[0].name, "fs");
+  assertEquals(ast.srvs[0].envVars, []);
+});
+
+Deno.test("parse — [SRV] without an @docs line is a hard error", () => {
+  const ast = parse(`[SRV] (SDK)firebase: A_KEY\n    the firebase backend`);
+  assertEquals(ast.srvs.length, 1);
+  assertEquals(ast.srvs[0].docsLink, "");
+  assertEquals(ast.errors.length, 1);
+  assertEquals(ast.errors[0].message.includes("requires an @docs"), true);
+});
+
+Deno.test("parse — [SRV] @docs with no URL is an error", () => {
+  const ast = parse(`[SRV] (SDK)firebase: A_KEY\n    @docs`);
+  assertEquals(ast.srvs[0].docsLink, "");
+  // both "@docs needs a URL" and the post-loop "requires an @docs" fire.
+  assertEquals(ast.errors.some((e) => e.message.includes("needs a URL")), true);
+});
+
+Deno.test("parse — [SRV] duplicate @docs is an error", () => {
+  const ast = parse(
+    `[SRV] (SDK)firebase: A_KEY\n    @docs https://a.dev\n    @docs https://b.dev`,
+  );
+  // first wins; the second is flagged, never overwrites docsLink.
+  assertEquals(ast.srvs[0].docsLink, "https://a.dev");
+  assertEquals(ast.errors.some((e) => e.message.includes("duplicate @docs")), true);
+});
+
+Deno.test("parse — @docs under a [DTO] stays plain prose (SRV-only)", () => {
+  const ast = parse(`[DTO] FooDto: x\n    @docs https://x.dev`);
+  // No [SRV] in scope, so the @docs line is just the DTO's prose description.
+  assertEquals(ast.dtos[0].description, "@docs https://x.dev");
+  assertEquals(ast.srvs.length, 0);
 });
 
 Deno.test("parse — [PLY] with two [CSE] cases", () => {
@@ -263,7 +330,7 @@ Deno.test("parse — unknown [TYP] modifier message is byte-exact", () => {
   assertEquals(ast.errors.length, 1);
   assertEquals(
     ast.errors[0].message,
-    '[TYP] unknown modifier "bogus" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>)',
+    '[TYP] unknown modifier "bogus" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>, from=<path|path*|query|header>)',
   );
   // The typ itself still parses; the invalid modifier is dropped.
   assertEquals(ast.typs[0].modifiers, []);
@@ -356,6 +423,79 @@ Deno.test("parse — [ENT] entrypoint", () => {
   assertEquals(ast.ents[0].output, "IdDto");
 });
 
+Deno.test("parse — [ENT:ws] socket header + topics become kind:ws ents", () => {
+  const ast = parse(
+    `[ENT:ws] chat @ /rooms/{room}
+    join(JoinDto): JoinedDto
+    send(ChatDto): EchoDto
+    leave(LeaveDto): void`,
+  );
+  assertEquals(ast.errors, []);
+  assertEquals(ast.ents.length, 3);
+  for (const e of ast.ents) {
+    assertEquals(e.kind, "ws");
+    assertEquals(e.surface, "chat");
+    assertEquals(e.pathTemplate, "/rooms/{room}");
+    assertEquals(e.method, null);
+    assertEquals(e.modifier, null);
+  }
+  assertEquals(ast.ents.map((e) => e.action), ["join", "send", "leave"]);
+  assertEquals(ast.ents[0].input, "JoinDto");
+  assertEquals(ast.ents[0].output, "JoinedDto");
+  assertEquals(ast.ents[2].output, "void"); // a topic may mint no reply
+});
+
+Deno.test("parse — [ENT:ws] topic with an empty payload", () => {
+  const ast = parse(`[ENT:ws] ping @ /ping\n    beat(): PongDto`);
+  assertEquals(ast.errors, []);
+  assertEquals(ast.ents.length, 1);
+  assertEquals(ast.ents[0].kind, "ws");
+  assertEquals(ast.ents[0].action, "beat");
+  assertEquals(ast.ents[0].input, "");
+  assertEquals(ast.ents[0].output, "PongDto");
+});
+
+Deno.test("parse — [ENT:ws] socket closes on dedent; an http [ENT] after it still parses", () => {
+  const ast = parse(
+    `[ENT:ws] chat @ /rooms/{room}
+    send(ChatDto): EchoDto
+[ENT] http.health(VoidDto): OkDto`,
+  );
+  assertEquals(ast.errors, []);
+  assertEquals(ast.ents.length, 2);
+  assertEquals(ast.ents[0].kind, "ws");
+  assertEquals(ast.ents[1].kind, undefined); // http is the default (no kind set)
+  assertEquals(ast.ents[1].surface, "http");
+  assertEquals(ast.ents[1].action, "health");
+});
+
+Deno.test("parse — [ENT:ws] header without a path keeps the surface, null path", () => {
+  const ast = parse(`[ENT:ws] notify\n    push(MsgDto): AckDto`);
+  assertEquals(ast.errors, []);
+  assertEquals(ast.ents.length, 1);
+  assertEquals(ast.ents[0].surface, "notify");
+  assertEquals(ast.ents[0].pathTemplate, null);
+});
+
+Deno.test("parse — [ENT:ws] with no topics is an error (dedent and EOF)", () => {
+  const dedent = parse(`[ENT:ws] chat @ /rooms/{room}\n[DTO] X: a\n[TYP] a: string`);
+  assertEquals(dedent.errors.some((e) => e.message.includes("has no topics")), true);
+
+  const eof = parse(`[ENT:ws] chat @ /rooms/{room}`);
+  assertEquals(eof.errors.some((e) => e.message.includes("has no topics")), true);
+});
+
+Deno.test("parse — [ENT:ws] malformed topic is an error", () => {
+  const ast = parse(`[ENT:ws] chat @ /rooms/{room}\n    not a topic`);
+  assertEquals(ast.errors.some((e) => e.message.includes("malformed topic")), true);
+});
+
+Deno.test("parse — [ENT:ws] header carrying a full signature is rejected", () => {
+  const ast = parse(`[ENT:ws] chat.send(ChatDto): EchoDto`);
+  assertEquals(ast.errors.some((e) => e.message.includes("[ENT:ws] malformed")), true);
+  assertEquals(ast.ents.length, 0);
+});
+
 Deno.test("parse — comments stripped, pure-comment lines ignored", () => {
   const ast = parse(
     `// header comment
@@ -428,5 +568,23 @@ Deno.test("parse — descriptions are free text (periods, @, parentheticals)", (
   assertEquals(
     ast.dtos.find((d) => d.name === "OutDto")?.description,
     "an operational alert to rafac@monsterrg.com (see config)",
+  );
+});
+
+Deno.test("parse — [DTO] modifiers: :open and :core accepted, a typo is a hard error", () => {
+  const open = parse(`[MOD] m\n[DTO:open] X: a\n[TYP] a: string`);
+  assertEquals(open.errors, []);
+  assertEquals(open.dtos[0].isOpen, true);
+  assertEquals(open.dtos[0].isCore, false);
+
+  const core = parse(`[MOD] m\n[DTO:core] X: a\n[TYP] a: string`);
+  assertEquals(core.errors, []);
+  assertEquals(core.dtos[0].isCore, true);
+  assertEquals(core.dtos[0].isOpen, false);
+
+  const typo = parse(`[MOD] m\n[DTO:opne] X: a\n[TYP] a: string`);
+  assertEquals(
+    typo.errors.some((e) => e.message.includes('unknown modifier "opne"')),
+    true,
   );
 });

@@ -3,6 +3,9 @@
 // Type vocabulary (from [TYP]):
 //   page: number — the page
 //   items: string — the items
+//
+// Backing services (shared, from src/core/core.rune):
+//   db (SIDECAR): DB_URL
 // Public API surface for module "catalog".
 
 export { list } from "./domain/coordinators/product-list/mod.ts";

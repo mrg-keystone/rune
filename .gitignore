@@ -7,7 +7,14 @@ lang/target/
 
 # generated
 src/core/dto/lsp-config.ts
+src/core/dto/version.gen.ts
 
 # scratch / os
+.claude/
 .playwright-mcp/
+claude/skills/*-workspace/
+.skill-active
 .DS_Store
+.env
+.env*
+*.log

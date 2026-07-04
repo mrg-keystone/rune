@@ -4,7 +4,7 @@
  * Run: deno run --allow-read --allow-write scripts/gen-shape-docs.ts
  */
 
-const SPEC_PATH = "keywords.json";
+const SPEC_PATH = "lang/keywords.json";
 const OUT_PATH = Deno.args[0] ?? "docs/canonical-shape.md";
 
 type Node = Record<string, unknown>;

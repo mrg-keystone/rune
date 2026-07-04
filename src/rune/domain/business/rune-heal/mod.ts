@@ -1,11 +1,12 @@
 // Heal-rules scaffolding: turn the fault slugs a project's endpoints declare
-// into a starter `fixtures/heal-rules.json` for keep's cake self-healing panel.
+// into a starter `spec/misc/heal-rules.json` for keep's cake self-healing panel.
 //
 // keep owns the generic heal tier (missing $input → run producer, validation →
 // fix field, timeout/unauthorized → retry); the PROJECT owns the slug-specific
 // rules. rune knows every endpoint's fault slugs from the spec, so it emits the
 // starter content keyed on exactly the vocabulary keep matches on (the failed
-// response body's `message`). See coordination.md for the contract.
+// response body's `message`). That slug→suggestion shape is the cross-repo
+// contract keep and rune keep in lockstep.
 //
 // Pure: text in → JSON value out. The sync entrypoint does the file I/O and the
 // merge-don't-clobber write.

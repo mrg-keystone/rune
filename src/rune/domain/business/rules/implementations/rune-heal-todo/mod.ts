@@ -6,7 +6,7 @@ import {
 } from "@rune/domain/business/rune-heal/mod.ts";
 import { basename } from "#std/path";
 
-// rune-heal-todo: every entry in a generated `fixtures/heal-rules.json` should be
+// rune-heal-todo: every entry in a generated `spec/misc/heal-rules.json` should be
 // ENRICHED before a module ships — its scaffold `todo: true` flag replaced with a
 // real suggestion + `why`. rune sync nudges about this on every run (the always-on
 // signal); this rule is the enforcement teeth.
@@ -60,7 +60,7 @@ export async function check(
 
 export const SYSTEM_PROMPT = `You are enforcing the rune-heal-todo rule.
 
-A generated fixtures/heal-rules.json drives keep's cake self-heal panel: when an endpoint fails, its fault slug is looked up here and the suggestions become one-click fixes. rune scaffolds one entry per slug with a placeholder marked \`todo: true\`. An un-enriched entry shows the user a TODO label instead of a real fix.
+A generated spec/misc/heal-rules.json drives keep's cake self-heal panel: when an endpoint fails, its fault slug is looked up here and the suggestions become one-click fixes. rune scaffolds one entry per slug with a placeholder marked \`todo: true\`. An un-enriched entry shows the user a TODO label instead of a real fix.
 
 Enrichment means answering, for each slug: what state makes this slug fire, and what is the cheapest path out? Prefer, in order: run-step (a concrete or regex endpoint that repairs the state) -> pick/set-input (a value already present in captures) -> retry (transient causes only, with the reason in \`why\`) -> note (pure guidance, e.g. an env var to set; add retryAfter when a retry helps after the human acts). Never propose a destructive endpoint as a run-step. The \`why\` is shown verbatim to the user, so write it as the one-line explanation of the fix. Then remove the \`todo: true\` flag.`;
 

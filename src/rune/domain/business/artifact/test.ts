@@ -91,6 +91,6 @@ Deno.test("canonicalPaths is sourced from the keywords.json artifact", async () 
   assert(Array.isArray(canonicalPaths["$rootFiles"]), "$rootFiles list present");
   assert("<module-name>/" in canonicalPaths["src/"], "module node present under src/");
   // and it must match what the artifact actually carries (no drift)
-  const kw = JSON.parse(await Deno.readTextFile(new URL("../../../../../keywords.json", import.meta.url)));
+  const kw = JSON.parse(await Deno.readTextFile(new URL("../../../../../lang/keywords.json", import.meta.url)));
   assertEquals(canonicalPaths, kw.canonicalPaths);
 });
