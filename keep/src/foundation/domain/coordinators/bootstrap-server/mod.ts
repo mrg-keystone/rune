@@ -21,9 +21,20 @@ import {
   type SessionVerifier,
 } from "@foundation/domain/business/token/mod.ts";
 import {
+  createKvSessionStore,
+  createMemorySessionStore,
+  type IntakeInput,
+  type IntakeResult,
+  intakeSession,
+  resolveSession,
+  type SessionStore,
+} from "@foundation/domain/business/session-store/mod.ts";
+import {
   extractBearer,
   grantsForApp,
   isTrustedOrigin,
+  readCookie,
+  SESSION_COOKIE_NAME,
   validateCredential,
 } from "@foundation/domain/business/token-auth/mod.ts";
 import type { Context } from "#hono";
@@ -198,6 +209,32 @@ function configureLoggingFromEnv(appName: string) {
   });
 }
 
+/** The session-store profile read a gateway surfaces as `GET /auth/me` — see {@link BootstrapServer.sessionProfile}. */
+export interface SessionProfile {
+  /** The user's real display name (infra profile), when known. */
+  name?: string;
+  /** The user's real email (infra profile), when known. */
+  email?: string;
+  /**
+   * The session's app-scoped grants — UX-only, so the UI can render the right controls. NOT a trust
+   * boundary: the guard still enforces grants deny-by-default from the *verified* bearer on every
+   * request, so a client that fakes these only fools its own UI and every gated call still 403s.
+   */
+  grants: string[];
+}
+
+/** The slice of the infra client {@link BootstrapServer} keeps for intake + silent refresh. */
+interface InfraExchange {
+  exchange(token: string): Promise<string>;
+  exchangeProfile(
+    token: string,
+  ): Promise<{ token: string; name?: string; email?: string }>;
+  loginProfile(
+    idToken: string,
+    email?: string,
+  ): Promise<{ token: string; name?: string; email?: string }>;
+}
+
 export class BootstrapServer {
   private adapter: DanetHttpAdapter;
   private module: Type;
@@ -208,18 +245,79 @@ export class BootstrapServer {
   /** Cleared on stop() so the revocation poll timer never outlives the server. */
   private revocationPoller?: number;
 
+  /**
+   * The server-side session store, present only when `KEEP_SESSION_KV` enabled it. The `sprig_session`
+   * cookie is resolved through this on every request (with silent refresh); a host gateway (e.g.
+   * sprig's `serveSprig`) mints sessions with {@link intakeSession} and clears them with
+   * {@link destroySession}, setting/clearing the httpOnly cookie itself. `undefined` ⇒ cookie
+   * sessions are off and only the `Authorization` header / `?token=` query authorize.
+   */
+  readonly sessions?: SessionStore;
+  private readonly appName: string;
+  private readonly infra?: InfraExchange;
+
   private constructor(
     module: Type,
     adapter: DanetHttpAdapter,
     backend: BackendClient,
     docs: SwaggerDocEntry[],
+    appName: string,
     revocationPoller?: number,
+    sessions?: SessionStore,
+    infra?: InfraExchange,
   ) {
     this.module = module;
     this.adapter = adapter;
     this.backend = backend;
     this.docs = docs;
+    this.appName = appName;
     this.revocationPoller = revocationPoller;
+    this.sessions = sessions;
+    this.infra = infra;
+  }
+
+  /**
+   * Intake a credential into a server-side session: exchange it at infra for a signed bearer, store
+   * the ORIGINAL credential + bearer + profile, and return the opaque id a gateway drops into the
+   * httpOnly `sprig_session` cookie (the bearer never reaches the browser). Throws when the session
+   * store is off (no `KEEP_SESSION_KV`) or infra rejects the credential. The gateway owns the
+   * `Set-Cookie`; keep owns the exchange + store + silent refresh on subsequent requests.
+   */
+  intakeSession(input: IntakeInput): Promise<IntakeResult> {
+    if (!this.sessions || !this.infra) {
+      throw new Error(
+        "Session store is disabled — set KEEP_SESSION_KV (and INFRA_URL) to enable cookie sessions.",
+      );
+    }
+    return intakeSession(this.sessions, this.infra, input, this.appName);
+  }
+
+  /** Destroy a session (logout): the gateway clears the cookie; this drops the stored credential. */
+  destroySession(id: string): Promise<void> {
+    return this.sessions?.destroy(id) ?? Promise.resolve();
+  }
+
+  /**
+   * Resolve the `sprig_session` cookie to the session's cached profile — the read behind a
+   * `GET /auth/me` (surfaced by sprig's `serveSprig` gateway). Because the client is cookie-based and
+   * never sees the bearer, this is the only way `getUserData()` learns `{ name, email, grants }`.
+   * Returns `null` when the cookie is absent, the session is gone, or the session store is off — the
+   * gateway maps `null` → 401. Silent refresh runs here too (via the stored credential), so a
+   * long-lived tab keeps a fresh session. `grants` are UX-only — see {@link SessionProfile.grants}.
+   */
+  async sessionProfile(
+    cookieHeader: string | undefined,
+  ): Promise<SessionProfile | null> {
+    if (!this.sessions) return null;
+    const id = readCookie(cookieHeader, SESSION_COOKIE_NAME);
+    if (!id) return null;
+    const rec = await resolveSession(
+      this.sessions,
+      id,
+      this.infra ? { exchange: (c) => this.infra!.exchange(c) } : {},
+    );
+    if (!rec) return null;
+    return { name: rec.name, email: rec.email, grants: rec.grants ?? [] };
   }
 
   static async create(
@@ -302,6 +400,38 @@ export class BootstrapServer {
           ? jwksTtl
           : DEFAULT_JWKS_TTL_SECONDS,
       })
+      : undefined;
+
+    // Server-side session store (opt-in). Holds the ORIGINAL credential so a lapsed ~1h bearer is
+    // re-minted transparently, and lets a request authenticate from the tiny httpOnly `sprig_session`
+    // cookie instead of the client holding the bearer. KEEP_SESSION_KV ("1"/"true" → default KV
+    // location, or a path) persists sessions in Deno KV (native per-key TTL, survives restarts /
+    // scales across instances); if KV won't open (no --unstable-kv) it falls back to a process-local
+    // store. Needs INFRA_URL for the silent re-exchange. KEEP_SESSION_TTL_DAYS bounds idle retention.
+    const sessionEnv = Deno.env.get("KEEP_SESSION_KV");
+    let sessionStore: SessionStore | undefined;
+    if (sessionEnv && sessionEnv.toLowerCase() !== "false") {
+      if (!infraClient) {
+        warnOnce(
+          `[${appName}] KEEP_SESSION_KV set but ${INFRA_URL_ENV} is not — cookie sessions can't silently re-exchange; disabling the session store.`,
+        );
+      } else {
+        const ttlDays = Number(Deno.env.get("KEEP_SESSION_TTL_DAYS"));
+        const ttl = Number.isFinite(ttlDays) && ttlDays > 0
+          ? ttlDays
+          : undefined;
+        const lower = sessionEnv.toLowerCase();
+        const path = lower === "1" || lower === "true" ? undefined : sessionEnv;
+        sessionStore = (await createKvSessionStore(path, ttl)) ??
+          createMemorySessionStore(ttl);
+      }
+    }
+    // Resolve the `sprig_session` cookie → a fresh bearer (silent refresh from the stored credential).
+    const cookieSession = sessionStore && infraClient
+      ? (id: string) =>
+        resolveSession(sessionStore!, id, {
+          exchange: (cred) => infraClient.exchange(cred),
+        }).then((r) => r?.bearer ?? null)
       : undefined;
 
     // The `*` skeleton key bypasses required claims — UNLESS disabled. The infra control plane sets
@@ -999,6 +1129,7 @@ export class BootstrapServer {
       revokeAll: () => revokeAllState.value,
       honorSkeleton,
       logger: log,
+      cookieSession,
     });
     // deno-lint-ignore no-explicit-any
     await (adapter.app as any).injector.registerInjectables([{
@@ -1037,7 +1168,10 @@ export class BootstrapServer {
       adapter,
       backend,
       docs,
+      appName,
       revocationPoller,
+      sessionStore,
+      infraClient,
     );
   }
 

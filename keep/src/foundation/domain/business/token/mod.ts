@@ -107,7 +107,9 @@ export function createJwksVerifier(opts: JwksVerifierOptions): SessionVerifier {
         jwks = await opts.fetchJwks();
       } catch (err) {
         throw new TokenError(
-          `Could not fetch infra JWKS: ${err instanceof Error ? err.message : String(err)}`,
+          `Could not fetch infra JWKS: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
         );
       }
       const keys = new Map<string, InfraJwk>();
@@ -154,10 +156,14 @@ export function createJwksVerifier(opts: JwksVerifierOptions): SessionVerifier {
         );
       } catch (err) {
         throw new TokenError(
-          err instanceof Error ? err.message : "Invalid session bearer signature.",
+          err instanceof Error
+            ? err.message
+            : "Invalid session bearer signature.",
         );
       }
-      if (!ok) throw new TokenError("Session bearer signature does not verify.");
+      if (!ok) {
+        throw new TokenError("Session bearer signature does not verify.");
+      }
 
       const sessionExp = isoToEpochSeconds(env.sessionExpiry);
       if (sessionExp === undefined) {
@@ -174,6 +180,46 @@ export function createJwksVerifier(opts: JwksVerifierOptions): SessionVerifier {
       };
     },
   };
+}
+
+/** A bearer decoded WITHOUT signature verification — profile + expiry, for the session store. */
+export interface DecodedBearer {
+  creator: string;
+  source: string;
+  claims: Record<string, string>;
+  /** Unix seconds, or undefined when malformed. */
+  sessionExpiry: number | undefined;
+}
+
+/**
+ * Decode a bearer's fields WITHOUT verifying its signature. Returns `undefined` when the envelope
+ * can't be parsed. For session-store bookkeeping only (caching the profile at intake, scheduling
+ * the next silent re-exchange): the bearer here came straight from infra's exchange response over a
+ * trusted server-to-server channel, and the REQUEST path still verifies the signature before
+ * trusting any grant. Never use this to authorize.
+ */
+export function decodeBearer(bearer: string): DecodedBearer | undefined {
+  let env: BearerEnvelope;
+  try {
+    env = parseEnvelope(bearer);
+  } catch {
+    return undefined;
+  }
+  return {
+    creator: env.creator,
+    source: env.source,
+    claims: claimsToMap(env.claims),
+    sessionExpiry: isoToEpochSeconds(env.sessionExpiry),
+  };
+}
+
+/**
+ * Read a bearer's `sessionExpiry` (Unix seconds) WITHOUT verifying its signature. Returns
+ * `undefined` when the envelope can't be parsed or the expiry is malformed. Scheduling hint only —
+ * see {@link decodeBearer}.
+ */
+export function sessionExpiryOf(bearer: string): number | undefined {
+  return decodeBearer(bearer)?.sessionExpiry;
 }
 
 /**
@@ -229,7 +275,10 @@ function parseEnvelope(bearer: string): BearerEnvelope {
     if (typeof cc.key !== "string") {
       throw new TokenError(`Session bearer claim[${i}] has no \`key\`.`);
     }
-    return { key: cc.key, value: typeof cc.value === "string" ? cc.value : String(cc.value ?? "") };
+    return {
+      key: cc.key,
+      value: typeof cc.value === "string" ? cc.value : String(cc.value ?? ""),
+    };
   });
   return {
     creator: str("creator"),
@@ -259,7 +308,9 @@ function canonicalize(env: BearerEnvelope): string {
 }
 
 /** Project the verified claim array into a per-app map: `[{key,value}]` → `{ key: value }`. */
-function claimsToMap(claims: Array<{ key: string; value: string }>): Record<string, string> {
+function claimsToMap(
+  claims: Array<{ key: string; value: string }>,
+): Record<string, string> {
   const out: Record<string, string> = {};
   for (const c of claims) out[c.key] = c.value;
   return out;
