@@ -249,7 +249,7 @@ export const emulatorClientJs: string = String.raw`
 
   // ── paths ──────────────────────────────────────────────────────────────────
   var pagePath = location.pathname.replace(/\/+$/, "");
-  // Mount prefix ("" standalone, "/api" under Fresh) — other modules' session keys carry it.
+  // Mount prefix ("" standalone, "/api" under a host) — other modules' session keys carry it.
   var pathPrefix = pagePath.replace(/\/docs\/[^/]+$/, "");
   // App root: works standalone (/docs/<m>) and mounted under a prefix (/api/docs/<m>).
   var appRoot = location.origin + pathPrefix;

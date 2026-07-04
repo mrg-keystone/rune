@@ -1045,7 +1045,8 @@ export class BootstrapServer {
    * The standalone request dispatcher — the same `(Request) => Response` that `listen()` serves.
    * Use it to run on Deno Deploy without binding a port (`Deno.serve(app.handler)` or
    * `export default { fetch: app.handler }`), or to compose the backend into another app (e.g.
-   * mount it under `/api` alongside a Fresh frontend with `withBasePath`).
+   * mount it under `/api` alongside a sprig UI — `serveSprig`/`sprigUi` from `@sprig/keep` do this,
+   * or the framework-agnostic `withBasePath`).
    */
   get handler(): FetchHandler {
     return this.adapter.handler;

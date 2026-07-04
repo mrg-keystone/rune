@@ -11,7 +11,7 @@
  * Standard Swagger UI lives at `<page>/swagger` and the raw spec at `<page>/json` for deeper
  * inspection. The spec is inlined into the page (no gated fetch needed to render); live endpoint
  * calls reuse the docs `?token=`→localStorage bearer flow, and resolve the app root from the page
- * path so it works standalone (`/docs/<m>`) or mounted under Fresh (`/api/docs/<m>`).
+ * path so it works standalone (`/docs/<m>`) or mounted under a host (`/api/docs/<m>`).
  */
 
 import type { OpenApiDocument } from "@types";

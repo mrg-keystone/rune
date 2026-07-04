@@ -326,13 +326,10 @@ async function buildTransport(
 
   if (opts.baseUrl) {
     // The specifier is a variable so bundlers can't follow it into playwright-core (whose
-    // internal requires rollup can't resolve, which broke `vite build` for every consumer).
-    // It only executes for baseUrl runs, which never happen inside a bundled Fresh app; the
-    // cast keeps full typing and erases at emit.
+    // internal requires most bundlers can't resolve). It only executes for baseUrl runs, which
+    // never happen inside a bundled app; the cast keeps full typing and erases at emit.
     const playwrightSpecifier = "#playwright";
-    const { request } = await import(
-      /* @vite-ignore */ playwrightSpecifier
-    ) as typeof import("#playwright");
+    const { request } = await import(playwrightSpecifier) as typeof import("#playwright");
     const ctx = await request.newContext({
       baseURL: opts.baseUrl,
       extraHTTPHeaders: headers,
