@@ -33,6 +33,8 @@ import {
   extractBearer,
   grantsForApp,
   isTrustedOrigin,
+  readCookie,
+  SESSION_COOKIE_NAME,
   validateCredential,
 } from "@foundation/domain/business/token-auth/mod.ts";
 import type { Context } from "#hono";
@@ -207,6 +209,32 @@ function configureLoggingFromEnv(appName: string) {
   });
 }
 
+/** The session-store profile read a gateway surfaces as `GET /auth/me` — see {@link BootstrapServer.sessionProfile}. */
+export interface SessionProfile {
+  /** The user's real display name (infra profile), when known. */
+  name?: string;
+  /** The user's real email (infra profile), when known. */
+  email?: string;
+  /**
+   * The session's app-scoped grants — UX-only, so the UI can render the right controls. NOT a trust
+   * boundary: the guard still enforces grants deny-by-default from the *verified* bearer on every
+   * request, so a client that fakes these only fools its own UI and every gated call still 403s.
+   */
+  grants: string[];
+}
+
+/** The slice of the infra client {@link BootstrapServer} keeps for intake + silent refresh. */
+interface InfraExchange {
+  exchange(token: string): Promise<string>;
+  exchangeProfile(
+    token: string,
+  ): Promise<{ token: string; name?: string; email?: string }>;
+  loginProfile(
+    idToken: string,
+    email?: string,
+  ): Promise<{ token: string; name?: string; email?: string }>;
+}
+
 export class BootstrapServer {
   private adapter: DanetHttpAdapter;
   private module: Type;
@@ -226,10 +254,7 @@ export class BootstrapServer {
    */
   readonly sessions?: SessionStore;
   private readonly appName: string;
-  private readonly infra?: {
-    exchange(t: string): Promise<string>;
-    login(id: string, email?: string): Promise<string>;
-  };
+  private readonly infra?: InfraExchange;
 
   private constructor(
     module: Type,
@@ -239,10 +264,7 @@ export class BootstrapServer {
     appName: string,
     revocationPoller?: number,
     sessions?: SessionStore,
-    infra?: {
-      exchange(t: string): Promise<string>;
-      login(id: string, email?: string): Promise<string>;
-    },
+    infra?: InfraExchange,
   ) {
     this.module = module;
     this.adapter = adapter;
@@ -273,6 +295,29 @@ export class BootstrapServer {
   /** Destroy a session (logout): the gateway clears the cookie; this drops the stored credential. */
   destroySession(id: string): Promise<void> {
     return this.sessions?.destroy(id) ?? Promise.resolve();
+  }
+
+  /**
+   * Resolve the `sprig_session` cookie to the session's cached profile — the read behind a
+   * `GET /auth/me` (surfaced by sprig's `serveSprig` gateway). Because the client is cookie-based and
+   * never sees the bearer, this is the only way `getUserData()` learns `{ name, email, grants }`.
+   * Returns `null` when the cookie is absent, the session is gone, or the session store is off — the
+   * gateway maps `null` → 401. Silent refresh runs here too (via the stored credential), so a
+   * long-lived tab keeps a fresh session. `grants` are UX-only — see {@link SessionProfile.grants}.
+   */
+  async sessionProfile(
+    cookieHeader: string | undefined,
+  ): Promise<SessionProfile | null> {
+    if (!this.sessions) return null;
+    const id = readCookie(cookieHeader, SESSION_COOKIE_NAME);
+    if (!id) return null;
+    const rec = await resolveSession(
+      this.sessions,
+      id,
+      this.infra ? { exchange: (c) => this.infra!.exchange(c) } : {},
+    );
+    if (!rec) return null;
+    return { name: rec.name, email: rec.email, grants: rec.grants ?? [] };
   }
 
   static async create(

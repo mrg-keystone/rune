@@ -133,10 +133,25 @@ export async function resolveSession(
 
 // ── Intake ───────────────────────────────────────────────────────────────────
 
-/** The infra exchange surface {@link intakeSession} needs (a slice of `InfraClient`). */
+/**
+ * The envelope an intake exchange yields: the signed bearer plus the real `{ name, email }` infra
+ * attaches. Structurally infra-client's `AuthExchange`; kept local so this module stays decoupled
+ * from the HTTP client. `name`/`email` are `undefined` on an older infra that returns no profile.
+ */
+export interface ExchangeEnvelope {
+  token: string;
+  name?: string;
+  email?: string;
+}
+
+/**
+ * The infra exchange surface {@link intakeSession} needs (a slice of `InfraClient`). Uses the
+ * profile-returning variants so the real `{ name, email }` is captured on the session at intake
+ * (instead of the bearer's machine `creator`).
+ */
 export interface SessionExchange {
-  exchange(token: string): Promise<string>;
-  login(idToken: string, email?: string): Promise<string>;
+  exchangeProfile(token: string): Promise<ExchangeEnvelope>;
+  loginProfile(idToken: string, email?: string): Promise<ExchangeEnvelope>;
 }
 
 /** What a caller presents at intake: an opaque infra token, or a Firebase idToken. */
@@ -151,6 +166,8 @@ export interface IntakeInput {
 export interface IntakeResult {
   id: string;
   creator: string;
+  /** The user's real display name (infra profile), falling back to the bearer's `creator`. */
+  name?: string;
   email?: string;
   grants: string[];
   claims: Record<string, string>;
@@ -169,28 +186,32 @@ export async function intakeSession(
   input: IntakeInput,
   appName: string,
 ): Promise<IntakeResult> {
-  const bearer = input.credentialKind === "firebase"
-    ? await infra.login(input.credential, input.email)
-    : await infra.exchange(input.credential);
+  const envelope = input.credentialKind === "firebase"
+    ? await infra.loginProfile(input.credential, input.email)
+    : await infra.exchangeProfile(input.credential);
+  const bearer = envelope.token;
   const decoded = decodeBearer(bearer);
   const claims = decoded?.claims ?? {};
   const grants = (claims[appName] ?? "")
     .split(",")
     .map((g) => g.trim())
     .filter((g) => g.length > 0);
-  const email = input.email ??
+  // Prefer infra's real profile; fall back to the caller-supplied email, then an email-shaped
+  // `creator`, and for the name to the bearer's `creator` (the machine principal) as a last resort.
+  const email = envelope.email ?? input.email ??
     (decoded?.creator.includes("@") ? decoded.creator : undefined);
+  const name = envelope.name ?? decoded?.creator;
   const id = await store.create({
     credential: input.credential,
     credentialKind: input.credentialKind,
     bearer,
     sessionExpiry: decoded?.sessionExpiry ?? nowSeconds() + 3600,
     email,
-    name: decoded?.creator,
+    name,
     grants,
     claims,
   });
-  return { id, creator: decoded?.creator ?? "", email, grants, claims };
+  return { id, creator: decoded?.creator ?? "", name, email, grants, claims };
 }
 
 // ── In-memory backend ────────────────────────────────────────────────────────

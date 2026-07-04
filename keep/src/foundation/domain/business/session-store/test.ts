@@ -137,8 +137,9 @@ Deno.test("intakeSession: opaque token → exchange → stored session + profile
     claims: { app: "read,write" },
   });
   const infra: SessionExchange = {
-    exchange: (t) => Promise.resolve(t === "mtk_1" ? bearer : "wrong"),
-    login: () => Promise.reject(new Error("not used")),
+    exchangeProfile: (t) =>
+      Promise.resolve({ token: t === "mtk_1" ? bearer : "wrong" }),
+    loginProfile: () => Promise.reject(new Error("not used")),
   };
   const res = await intakeSession(
     store,
@@ -148,9 +149,34 @@ Deno.test("intakeSession: opaque token → exchange → stored session + profile
   );
   assertEquals(res.grants, ["read", "write"]); // per-app projection
   assertEquals(res.email, "u@x.com");
+  assertEquals(res.name, "u@x.com"); // no infra profile → falls back to the bearer's creator
   const rec = (await store.read(res.id))!;
   assertEquals(rec.credential, "mtk_1"); // ORIGINAL credential kept for silent refresh
   assertEquals(rec.bearer, bearer);
+});
+
+Deno.test("intakeSession: infra's real name+email win over the bearer's creator", async () => {
+  const store = createMemorySessionStore();
+  const bearer = await signer.sign({
+    creator: "mrg-keystone~alfred", // a machine principal, NOT a usable profile
+    claims: { app: "read" },
+  });
+  const infra: SessionExchange = {
+    exchangeProfile: () =>
+      Promise.resolve({ token: bearer, name: "Alfred Pennyworth", email: "alfred@wayne.co" }),
+    loginProfile: () => Promise.reject(new Error("not used")),
+  };
+  const res = await intakeSession(
+    store,
+    infra,
+    { credential: "mtk_1", credentialKind: "opaque" },
+    "app",
+  );
+  assertEquals(res.name, "Alfred Pennyworth");
+  assertEquals(res.email, "alfred@wayne.co");
+  const rec = (await store.read(res.id))!;
+  assertEquals(rec.name, "Alfred Pennyworth"); // real profile cached for /auth/me
+  assertEquals(rec.email, "alfred@wayne.co");
 });
 
 Deno.test("intakeSession: firebase idToken routes through login()", async () => {
@@ -161,13 +187,13 @@ Deno.test("intakeSession: firebase idToken routes through login()", async () => 
   });
   let via = "";
   const infra: SessionExchange = {
-    exchange: () => {
+    exchangeProfile: () => {
       via = "exchange";
-      return Promise.resolve("no");
+      return Promise.resolve({ token: "no" });
     },
-    login: (id, email) => {
+    loginProfile: (id, email) => {
       via = `login:${id}:${email}`;
-      return Promise.resolve(bearer);
+      return Promise.resolve({ token: bearer });
     },
   };
   const res = await intakeSession(
