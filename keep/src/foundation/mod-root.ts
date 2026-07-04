@@ -43,16 +43,37 @@ export { traceShipper } from "@foundation/domain/business/tracer/ship.ts";
 export { traceShellHtml } from "@foundation/domain/business/trace-ui/mod.ts";
 export {
   createJwksVerifier,
+  decodeBearer,
+  sessionExpiryOf,
   TokenError,
   verifyToken,
 } from "@foundation/domain/business/token/mod.ts";
 export type {
+  DecodedBearer,
   InfraJwk,
   InfraJwks,
   JwksVerifierOptions,
   SessionBearerPayload,
   SessionVerifier,
 } from "@foundation/domain/business/token/mod.ts";
+export {
+  createKvSessionStore,
+  createMemorySessionStore,
+  DEFAULT_REFRESH_SKEW_SECONDS,
+  intakeSession,
+  KvSessionStore,
+  resolveSession,
+} from "@foundation/domain/business/session-store/mod.ts";
+export type {
+  CredentialKind,
+  IntakeInput,
+  IntakeResult,
+  NewSession,
+  ResolveOptions,
+  SessionExchange,
+  SessionRecord,
+  SessionStore,
+} from "@foundation/domain/business/session-store/mod.ts";
 export {
   createInfraClient,
   InfraError,
@@ -62,8 +83,15 @@ export type {
   InfraClientConfig,
   RevocationStatus,
 } from "@foundation/domain/business/infra-client/mod.ts";
-export { createTokenAuthMiddleware } from "@foundation/domain/business/token-auth/mod.ts";
-export type { TokenAuthConfig } from "@foundation/domain/business/token-auth/mod.ts";
+export {
+  createTokenAuthMiddleware,
+  readCookie,
+  SESSION_COOKIE_NAME,
+} from "@foundation/domain/business/token-auth/mod.ts";
+export type {
+  SessionResolver,
+  TokenAuthConfig,
+} from "@foundation/domain/business/token-auth/mod.ts";
 export { withBasePath } from "@foundation/domain/business/mount/mod.ts";
 export type { FetchHandler } from "@types";
 export {
