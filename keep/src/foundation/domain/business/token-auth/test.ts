@@ -5,6 +5,7 @@ import {
   createCredentialGuard,
   createTokenAuthMiddleware,
   getIdentity,
+  readCookie,
 } from "./mod.ts";
 import { createJwksVerifier } from "@foundation/domain/business/token/mod.ts";
 import { createTestSigner } from "@foundation/domain/business/token/session.testkit.ts";
@@ -31,6 +32,7 @@ function appWith(opts: {
   withVerifier?: boolean;
   revokeAll?: () => boolean;
   publicPaths?: string[];
+  cookieSession?: (id: string) => Promise<string | null>;
 } = {}) {
   const logger = new Logger();
   logger.configure({ appName: "test" });
@@ -43,6 +45,7 @@ function appWith(opts: {
       internalKey: INTERNAL,
       revokeAll: opts.revokeAll,
       publicPaths: opts.publicPaths,
+      cookieSession: opts.cookieSession,
     }),
   );
   app.get("/protected", (c) => {
@@ -66,7 +69,22 @@ const bearer = (token: string) => ({
 const internal = (key: string) => ({
   headers: { [INTERNAL_REQUEST_HEADER]: key },
 });
+const cookie = (raw: string) => ({ headers: { cookie: raw } });
 const req = (init?: RequestInit) => new Request("http://app/protected", init);
+
+// ---- readCookie ----
+
+Deno.test("readCookie: finds a value among many, URL-decodes, ignores lookalikes", () => {
+  assertEquals(
+    readCookie("a=1; sprig_session=abc%20def; b=2", "sprig_session"),
+    "abc def",
+  );
+  assertEquals(readCookie("sprig_session=xyz", "sprig_session"), "xyz");
+  assertEquals(readCookie("other=1", "sprig_session"), undefined);
+  assertEquals(readCookie(undefined, "sprig_session"), undefined);
+  // a name that is a prefix of another cookie must not match
+  assertEquals(readCookie("sprig_session_x=1", "sprig_session"), undefined);
+});
 
 // ---- middleware: trust + credential kinds ----
 
@@ -92,6 +110,64 @@ Deno.test("network request with no token is rejected with 401", async () => {
   const res = await appWith().fromNetwork(req());
   assertEquals(res.status, 401);
   assertEquals((await res.json()).message, "Missing credentials.");
+});
+
+Deno.test("sprig_session cookie resolves to a bearer and authorizes (3rd source)", async () => {
+  const token = await bearerFor({ source: "kiosk" });
+  const seen: string[] = [];
+  const { fromNetwork, sources } = appWith({
+    cookieSession: (id) => {
+      seen.push(id);
+      return Promise.resolve(id === "sess-1" ? token : null);
+    },
+  });
+  const res = await fromNetwork(req(cookie("sprig_session=sess-1")));
+  assertEquals(res.status, 200);
+  assertEquals(sources[0], "kiosk");
+  assertEquals(seen, ["sess-1"]); // the opaque session id, never the bearer, rode in the cookie
+});
+
+Deno.test("cookie is only tried when no header/query credential is present", async () => {
+  let calls = 0;
+  const { fromNetwork } = appWith({
+    cookieSession: () => {
+      calls++;
+      return Promise.resolve(null);
+    },
+  });
+  const token = await bearerFor({ source: "hdr" });
+  const res = await fromNetwork(
+    new Request("http://app/protected", {
+      headers: {
+        authorization: `Bearer ${token}`,
+        cookie: "sprig_session=sess-1",
+      },
+    }),
+  );
+  assertEquals(res.status, 200);
+  assertEquals(calls, 0); // header won; the session store was never consulted
+});
+
+Deno.test("an unknown/expired session cookie (resolver → null) is rejected 401", async () => {
+  const { fromNetwork } = appWith({
+    cookieSession: () => Promise.resolve(null),
+  });
+  const res = await fromNetwork(req(cookie("sprig_session=gone")));
+  assertEquals(res.status, 401);
+});
+
+Deno.test("cookie auth is off when no resolver is configured", async () => {
+  const { fromNetwork } = appWith();
+  const res = await fromNetwork(req(cookie("sprig_session=whatever")));
+  assertEquals(res.status, 401);
+});
+
+Deno.test("a resolved cookie bearer is still verified — a bogus one is rejected", async () => {
+  const { fromNetwork } = appWith({
+    cookieSession: () => Promise.resolve("not-a-real-bearer"),
+  });
+  const res = await fromNetwork(req(cookie("sprig_session=sess-1")));
+  assertEquals(res.status, 401);
 });
 
 Deno.test("an expired session bearer is rejected with 401", async () => {
@@ -226,6 +302,34 @@ Deno.test("guard: @Public route is allowed with no credential", async () => {
   );
 });
 
+Deno.test("guard: sprig_session cookie resolves a bearer and authorizes a held grant", async () => {
+  const token = await bearerFor({ source: "kiosk", claims: { test: "go" } });
+  const { g } = guard({
+    cookieSession: (id) => Promise.resolve(id === "s1" ? token : null),
+  });
+  const ctx = guardCtx({
+    grants: ["go"],
+    headers: { cookie: "a=b; sprig_session=s1; c=d" },
+  });
+  assertEquals(await g.canActivate(ctx as unknown as Context), true);
+});
+
+Deno.test("guard: an unresolvable session cookie on a protected route throws 401", async () => {
+  const { g } = guard({ cookieSession: () => Promise.resolve(null) });
+  await assertRejects(
+    () =>
+      Promise.resolve(
+        g.canActivate(
+          guardCtx({
+            grants: ["go"],
+            headers: { cookie: "sprig_session=gone" },
+          }) as unknown as Context,
+        ),
+      ),
+    UnauthorizedException,
+  );
+});
+
 Deno.test("guard: valid session bearer authorizes (a held grant) and sets source", async () => {
   const { g, logger } = guard();
   const token = await bearerFor({ source: "svc", claims: { test: "go" } });
@@ -322,7 +426,7 @@ Deno.test("guard: @Grant without any credential is 401", async () => {
 
 // ---- @Grant("::key") dynamic form ----
 
-Deno.test("guard: @Grant(\"::key\") resolves the required grant from the query", async () => {
+Deno.test('guard: @Grant("::key") resolves the required grant from the query', async () => {
   const { g } = guard();
   const token = await bearerFor({ claims: { test: "admin" } });
   const ctx = guardCtx({
@@ -333,7 +437,7 @@ Deno.test("guard: @Grant(\"::key\") resolves the required grant from the query",
   assertEquals(await g.canActivate(ctx as unknown as Context), true);
 });
 
-Deno.test("guard: @Grant(\"::key\") resolves the required grant from the JSON body", async () => {
+Deno.test('guard: @Grant("::key") resolves the required grant from the JSON body', async () => {
   const { g } = guard();
   const token = await bearerFor({ claims: { test: "admin" } });
   const ctx = guardCtx({
@@ -344,7 +448,7 @@ Deno.test("guard: @Grant(\"::key\") resolves the required grant from the JSON bo
   assertEquals(await g.canActivate(ctx as unknown as Context), true);
 });
 
-Deno.test("guard: @Grant(\"::key\") with the key absent denies (403)", async () => {
+Deno.test('guard: @Grant("::key") with the key absent denies (403)', async () => {
   const { g } = guard();
   const token = await bearerFor({ claims: { test: "admin" } });
   const ctx = guardCtx({
@@ -357,7 +461,7 @@ Deno.test("guard: @Grant(\"::key\") with the key absent denies (403)", async () 
   );
 });
 
-Deno.test("guard: @Grant(\"::key\") resolves a value the caller does NOT hold → 403", async () => {
+Deno.test('guard: @Grant("::key") resolves a value the caller does NOT hold → 403', async () => {
   const { g } = guard();
   const token = await bearerFor({ claims: { test: "editor" } });
   const ctx = guardCtx({

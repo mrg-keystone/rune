@@ -29,6 +29,17 @@ import {
  * cached session bearer and rejects it (401) so the client re-authenticates at infra.
  */
 
+/** The default httpOnly cookie the server-side session store is keyed by. */
+export const SESSION_COOKIE_NAME = "sprig_session";
+
+/**
+ * Resolve a `sprig_session` cookie's opaque id to a fresh infra bearer (with silent refresh),
+ * or `null` when the session is gone. Wired at boot to the Deno-KV session store; a session id
+ * from the cookie becomes a THIRD credential source, tried after the `Authorization` header and
+ * `?token=` query. Absent ⇒ cookie auth is off and only header/query credentials resolve.
+ */
+export type SessionResolver = (sessionId: string) => Promise<string | null>;
+
 export interface TokenAuthConfig {
   /** Offline verifier for infra-signed session bearers (JWKS). */
   verifier?: SessionVerifier;
@@ -39,6 +50,10 @@ export interface TokenAuthConfig {
   revokeAll?: () => boolean;
   /** Path prefixes that bypass auth entirely (public). */
   publicPaths?: string[];
+  /** Resolve the `sprig_session` cookie to a fresh bearer (server-side session store). */
+  cookieSession?: SessionResolver;
+  /** Cookie name the session id rides in. Default {@link SESSION_COOKIE_NAME}. */
+  sessionCookieName?: string;
 }
 
 export function createTokenAuthMiddleware(
@@ -52,7 +67,8 @@ export function createTokenAuthMiddleware(
     if (isPublicPath(c.req.path, publicPaths)) return next();
 
     const credential = bearer(c.req.header("authorization")) ??
-      c.req.query("token");
+      c.req.query("token") ??
+      await cookieCredential(c, config.cookieSession, config.sessionCookieName);
     if (!credential) return unauthorized(c, "Missing credentials.");
 
     const outcome = await resolveNetworkCredential(credential, {
@@ -86,6 +102,10 @@ export interface CredentialGuardConfig {
    * **infra runs with `honorSkeleton: false`** so `*` never opens the control plane.
    */
   honorSkeleton?: boolean;
+  /** Resolve the `sprig_session` cookie to a fresh bearer (server-side session store). */
+  cookieSession?: SessionResolver;
+  /** Cookie name the session id rides in. Default {@link SESSION_COOKIE_NAME}. */
+  sessionCookieName?: string;
 }
 
 /**
@@ -140,11 +160,18 @@ export function createCredentialGuard(
       if (isTrustedOrigin(context, config.internalKey)) return true;
 
       const credential = extractBearer(context.req.header("authorization")) ??
-        context.req.query("token");
+        context.req.query("token") ??
+        await cookieCredential(
+          context,
+          config.cookieSession,
+          config.sessionCookieName,
+        );
 
       let resolved: ResolvedCredential | null = null;
       if (credential) {
-        resolved = await validateCredential(credential, { verifier: config.verifier });
+        resolved = await validateCredential(credential, {
+          verifier: config.verifier,
+        });
         if (resolved) {
           config.logger.setSource(resolved.source);
           const grants = grantsForApp(resolved.claims, config.appName);
@@ -154,7 +181,9 @@ export function createCredentialGuard(
             claims: resolved.claims,
             grants,
           };
-          if (typeof ctx.set === "function") ctx.set(IDENTITY_CONTEXT_KEY, identity);
+          if (typeof ctx.set === "function") {
+            ctx.set(IDENTITY_CONTEXT_KEY, identity);
+          }
         } else if (!isPublic) {
           // Present but unresolvable on a protected route → reject.
           throw new UnauthorizedException();
@@ -173,7 +202,9 @@ export function createCredentialGuard(
       // Authorization — FAIL-CLOSED.
       const grants = grantsForApp(resolved.claims, config.appName);
       // `*` universal grant: app-scoped (`app:*` → value "*") OR global bare (`*` → its own claim key).
-      if (honorSkeleton && (grants.includes("*") || "*" in resolved.claims)) return true;
+      if (honorSkeleton && (grants.includes("*") || "*" in resolved.claims)) {
+        return true;
+      }
       if (isPublic) return true;
 
       // @LoggedIn AND @Grant — both enforced when present; neither present (non-@Public, no `*`) = closed.
@@ -213,7 +244,9 @@ async function resolveGrantArgs(
   const out: Array<string | null> = [];
   for (const a of args) {
     if (a.startsWith(DYNAMIC_GRANT_PREFIX)) {
-      out.push(await lookupRequestValue(context, a.slice(DYNAMIC_GRANT_PREFIX.length)));
+      out.push(
+        await lookupRequestValue(context, a.slice(DYNAMIC_GRANT_PREFIX.length)),
+      );
     } else {
       out.push(a);
     }
@@ -347,6 +380,45 @@ function bearer(header: string | undefined): string | undefined {
   if (!header) return undefined;
   const match = /^Bearer\s+(.+)$/i.exec(header.trim());
   return match?.[1];
+}
+
+/**
+ * The THIRD credential source: resolve the `sprig_session` cookie's opaque id to a fresh infra
+ * bearer via the server-side session store (which silently re-exchanges a near-expiry bearer).
+ * Returns the bearer to feed the SAME offline verification the header/query paths use — the cookie
+ * carries only a session id, never the bearer itself. Returns `undefined` when cookie auth is off,
+ * the cookie is absent, or the session is gone.
+ */
+async function cookieCredential(
+  c: Context,
+  resolve: SessionResolver | undefined,
+  cookieName: string = SESSION_COOKIE_NAME,
+): Promise<string | undefined> {
+  if (!resolve) return undefined;
+  const id = readCookie(c.req.header("cookie"), cookieName);
+  if (!id) return undefined;
+  const bearer = await resolve(id);
+  return bearer ?? undefined;
+}
+
+/** Extract one cookie value from a `Cookie` header, URL-decoded, or `undefined` when absent. */
+export function readCookie(
+  header: string | undefined,
+  name: string,
+): string | undefined {
+  if (!header) return undefined;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    if (part.slice(0, eq).trim() !== name) continue;
+    const raw = part.slice(eq + 1).trim();
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      return raw;
+    }
+  }
+  return undefined;
 }
 
 /** Constant-time string compare so probing the internal-key header can't leak it via timing. */
