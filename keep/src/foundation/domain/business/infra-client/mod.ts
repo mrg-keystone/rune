@@ -25,6 +25,21 @@ export interface RevocationStatus {
   polledAt?: string;
 }
 
+/**
+ * infra's exchange/login envelope: the signed session bearer, plus the real user profile infra now
+ * returns alongside it. `name`/`email` are the user's actual identity (not the bearer's machine
+ * `creator`) — an older infra that doesn't return them leaves the fields `undefined`, and the caller
+ * falls back to the bearer's `creator`.
+ */
+export interface AuthExchange {
+  /** The signed session bearer. */
+  token: string;
+  /** The user's real display name, when infra returns one. */
+  name?: string;
+  /** The user's real email, when infra returns one. */
+  email?: string;
+}
+
 /** Thrown when an infra call fails. `status` carries the upstream HTTP status. */
 export class InfraError extends Error {
   readonly status: number;
@@ -55,6 +70,15 @@ export interface InfraClient {
    * survives unattended (kiosk/wallboard) sessions.
    */
   login(idToken: string, email?: string): Promise<string>;
+  /**
+   * Like {@link exchange}, but also surfaces the real `{ name, email }` infra attaches to the
+   * exchange response, so a session can cache a usable profile for a `/auth/me`-style read. Falls
+   * back to the bearer alone (name/email `undefined`) on an older infra that returns no profile.
+   * Used at intake; silent refresh keeps using {@link exchange} (the bearer alone suffices there).
+   */
+  exchangeProfile(token: string): Promise<AuthExchange>;
+  /** Like {@link login}, returning infra's `{ name, email }` profile alongside the bearer. */
+  loginProfile(idToken: string, email?: string): Promise<AuthExchange>;
 }
 
 export interface InfraClientConfig {
@@ -114,22 +138,52 @@ export function createInfraClient(config: InfraClientConfig): InfraClient {
       };
     },
 
-    exchange(token: string): Promise<string> {
-      return bearerFrom(fetchImpl, exchangeUrl, { token });
+    async exchange(token: string): Promise<string> {
+      return (await envelopeFrom(fetchImpl, exchangeUrl, { token })).token;
     },
 
-    login(idToken: string, email?: string): Promise<string> {
-      return bearerFrom(fetchImpl, loginUrl, { idToken, email: email ?? "" });
+    async login(idToken: string, email?: string): Promise<string> {
+      return (await envelopeFrom(fetchImpl, loginUrl, {
+        idToken,
+        email: email ?? "",
+      })).token;
+    },
+
+    exchangeProfile(token: string): Promise<AuthExchange> {
+      return envelopeFrom(fetchImpl, exchangeUrl, { token });
+    },
+
+    loginProfile(idToken: string, email?: string): Promise<AuthExchange> {
+      return envelopeFrom(fetchImpl, loginUrl, { idToken, email: email ?? "" });
     },
   };
 }
 
-/** POST a credential body to infra and read the `{ token: <bearer> }` it signs back. */
-async function bearerFrom(
+/**
+ * Read the real `{ name, email }` infra may attach to an exchange/login response. Tolerates a flat
+ * envelope (`{ token, name, email }`) or the profile nested under a `user` object; empty strings and
+ * non-strings collapse to `undefined` so the caller cleanly falls back to the bearer's `creator`.
+ */
+function profileFrom(
+  parsed: Record<string, unknown>,
+): { name?: string; email?: string } {
+  const src = parsed.user && typeof parsed.user === "object"
+    ? parsed.user as Record<string, unknown>
+    : parsed;
+  const str = (v: unknown): string | undefined =>
+    typeof v === "string" && v.length > 0 ? v : undefined;
+  return { name: str(src.name), email: str(src.email) };
+}
+
+/**
+ * POST a credential body to infra and read the `{ token: <bearer> }` it signs back, plus any real
+ * `{ name, email }` profile infra attaches ({@link profileFrom}).
+ */
+async function envelopeFrom(
   fetchImpl: typeof fetch,
   url: string,
   body: Record<string, string>,
-): Promise<string> {
+): Promise<AuthExchange> {
   let res: Response;
   try {
     res = await fetchImpl(url, {
@@ -166,7 +220,7 @@ async function bearerFrom(
   if (typeof bearer !== "string" || bearer.length === 0) {
     throw new InfraError(`infra ${url} returned no session bearer.`, 502);
   }
-  return bearer;
+  return { token: bearer, ...profileFrom(parsed) };
 }
 
 async function getJson(

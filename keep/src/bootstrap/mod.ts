@@ -92,6 +92,7 @@ export {
 export { assert, RuneAssertError } from "../assert/mod.ts";
 export type { Assert, AssertFailure } from "../assert/mod.ts";
 export type {
+  AuthExchange,
   CredentialGuardConfig,
   CredentialKind,
   DanetGuard,
@@ -100,6 +101,7 @@ export type {
   EndpointMethod,
   EndpointOptions,
   EndpointResult,
+  ExchangeEnvelope,
   ExerciseAuth,
   ExerciseOptions,
   ExerciseReport,
@@ -136,6 +138,7 @@ export type {
   SeedOverrides,
   SessionBearerPayload,
   SessionExchange,
+  SessionProfile,
   SessionRecord,
   SessionResolver,
   SessionStore,

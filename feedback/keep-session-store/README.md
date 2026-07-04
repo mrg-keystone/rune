@@ -139,3 +139,15 @@ under `--unstable-kv`), and token-auth cookie resolution in both the middleware 
 > Still owed by **sprig** (companion `tooling/sprig/feedback/framework-auth/README.md`): the gateway
 > routes calling `keep.intakeSession` and setting/clearing the httpOnly cookie, and the client
 > `authFetch`/`getUserData`/`logout` surface. The single path only works once both ship.
+
+## AUDIT (2026-07-04): keep's half confirmed done — sprig has NOT wired it
+
+Verified this side is complete: `intakeSession` / `destroySession` are exposed on `bootstrapServer`,
+the guard resolves the `sprig_session` cookie, `resolveSession` silently re-exchanges, `expireIn`
+TTL is in place — nothing further is owed here. **But the seam is unused:** `grep -rn
+"Set-Cookie.*sprig_session=" tooling/{sprig,rune}` finds no caller — `intakeSession` has **zero
+callers**, and sprig's `/auth/*` gateway still returns the raw bearer while the sprig client stores
+it in `localStorage` + a JS-readable cookie. So `sprig_session` currently holds the **whole bearer**
+(sprig's write), not the **opaque id** this store expects — they can't interoperate until sprig
+wires the gateway to `intakeSession` + the httpOnly id-cookie. Full call-to-action with the exact
+diff is in the sprig doc's **"AUDIT (2026-07-04)"** section. Ball is entirely in sprig's court.

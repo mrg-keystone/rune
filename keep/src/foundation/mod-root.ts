@@ -7,6 +7,7 @@ export { SwaggerDescription } from "@foundation/domain/business/swagger-descript
 export { setupWithSwagger } from "@foundation/domain/coordinators/setup-with-swagger/mod.ts";
 export { DanetDocumentBuilder } from "@foundation/domain/business/document-builder/mod.ts";
 export { bootstrapServer } from "@foundation/domain/coordinators/bootstrap-server/mod.ts";
+export type { SessionProfile } from "@foundation/domain/coordinators/bootstrap-server/mod.ts";
 export {
   InjectClass,
   InjectFactory,
@@ -66,6 +67,7 @@ export {
 } from "@foundation/domain/business/session-store/mod.ts";
 export type {
   CredentialKind,
+  ExchangeEnvelope,
   IntakeInput,
   IntakeResult,
   NewSession,
@@ -79,6 +81,7 @@ export {
   InfraError,
 } from "@foundation/domain/business/infra-client/mod.ts";
 export type {
+  AuthExchange,
   InfraClient,
   InfraClientConfig,
   RevocationStatus,

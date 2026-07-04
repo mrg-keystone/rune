@@ -166,6 +166,56 @@ Deno.test("exchange/login honor path overrides", async () => {
   assertEquals(await client.exchange("t"), "T");
 });
 
+Deno.test("exchangeProfile surfaces infra's real {name,email} alongside the bearer", async () => {
+  const client = createInfraClient({
+    baseUrl: BASE,
+    fetchImpl: stubFetch({
+      [`${BASE}/api/authz/exchange`]: () =>
+        Response.json({
+          token: "BEARER-XYZ",
+          name: "Alfred Pennyworth",
+          email: "alfred@wayne.co",
+        }),
+    }),
+  });
+  assertEquals(await client.exchangeProfile("mtk_opaque"), {
+    token: "BEARER-XYZ",
+    name: "Alfred Pennyworth",
+    email: "alfred@wayne.co",
+  });
+});
+
+Deno.test("loginProfile reads a profile nested under `user`", async () => {
+  const client = createInfraClient({
+    baseUrl: BASE,
+    fetchImpl: stubFetch({
+      [`${BASE}/api/session/login`]: () =>
+        Response.json({
+          token: "FB-BEARER",
+          user: { name: "Bruce", email: "bruce@wayne.co" },
+        }),
+    }),
+  });
+  assertEquals(await client.loginProfile("fb-id", "bruce@wayne.co"), {
+    token: "FB-BEARER",
+    name: "Bruce",
+    email: "bruce@wayne.co",
+  });
+});
+
+Deno.test("exchangeProfile omits name/email when an older infra returns only a token", async () => {
+  const client = createInfraClient({
+    baseUrl: BASE,
+    fetchImpl: stubFetch({
+      [`${BASE}/api/authz/exchange`]: () => Response.json({ token: "T-ONLY" }),
+    }),
+  });
+  const env = await client.exchangeProfile("t");
+  assertEquals(env.token, "T-ONLY");
+  assertEquals(env.name, undefined);
+  assertEquals(env.email, undefined);
+});
+
 Deno.test("exchange throws InfraError on a non-2xx", async () => {
   const client = createInfraClient({
     baseUrl: BASE,
