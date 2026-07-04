@@ -85,7 +85,7 @@ export const mapClientJs: string = String.raw`
   var DATA = window.__KEEP_MAP__;
 
   // ── paths ──────────────────────────────────────────────────────────────────
-  // The page lives at <prefix>/docs/_map: standalone the prefix is "", mounted under Fresh it
+  // The page lives at <prefix>/docs/_map: standalone the prefix is "", mounted under a host it
   // is e.g. "/api" — every emulator link and localStorage key below carries it.
   var pagePath = location.pathname.replace(/\/+$/, "");
   var prefix = pagePath.replace(/\/docs\/_map$/, "");

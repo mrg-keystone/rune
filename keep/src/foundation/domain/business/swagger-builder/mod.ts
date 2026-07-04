@@ -137,7 +137,7 @@ export class SwaggerBuilder {
     this.documentBuilder = new DanetDocumentBuilder();
     // particleCount left at the builder's modest default — 100 just bloated every rendered page.
     // Relative prefix: the index is served at "/docs" standalone and "/api/docs" mounted under
-    // Fresh, and "docs/app" resolves correctly from both — "/docs/app" would escape the mount.
+    // a host, and "docs/app" resolves correctly from both — "/docs/app" would escape the mount.
     this.indexPageBuilder = new IndexPageBuilder({
       prefix: "docs/",
     });

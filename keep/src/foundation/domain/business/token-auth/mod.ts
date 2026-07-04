@@ -29,11 +29,6 @@ import {
  * cached session bearer and rejects it (401) so the client re-authenticates at infra.
  */
 
-/** @deprecated No fresh bearer is ever minted by keep now; kept only for import stability. */
-export const SESSION_BEARER_HEADER = "x-session-bearer";
-/** @deprecated Kept for import stability; keep no longer stashes a freshly-minted bearer. */
-export const SESSION_BEARER_CONTEXT_KEY = "danet:session-bearer";
-
 export interface TokenAuthConfig {
   /** Offline verifier for infra-signed session bearers (JWKS). */
   verifier?: SessionVerifier;
