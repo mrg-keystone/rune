@@ -20,6 +20,10 @@ import {
   applyCase,
   type Binding,
   bindings,
+  canonicalSpecPath,
+  CORE_SPEC_REL,
+  isCoreSpec,
+  isProjectSpec,
   moduleFromSpecPath,
   processName,
   transformName,
@@ -202,6 +206,28 @@ export function planManifest(
   // overrides on name collision.
   const srvByName = new Map<string, SrvNode>(sharedSrvs ?? []);
   for (const s of ast.srvs) srvByName.set(s.name, s);
+
+  // STRICT [SRV] placement (entrypoint policy) — the check/sync twin of the
+  // rune-service-core-only lint rule, so `rune check` and `rune lint` agree:
+  // inside a project, [SRV] is declared exactly once, in src/core/core.rune.
+  // Gated like the lint rule (project spec, not core — drafts judged by their
+  // canonical name so authors catch it at check time); standalone specs (docs,
+  // corpus fixtures — not project paths) still accept a self-contained [SRV].
+  // The local decls stay merged above so this surfaces as ONE clear error, not
+  // a cascade of "undeclared service" red herrings.
+  if (opts.strictServices) {
+    const canonical = canonicalSpecPath(runePath);
+    if (isProjectSpec(canonical) && !isCoreSpec(canonical)) {
+      for (const s of ast.srvs) {
+        plan.errors.push(
+          `[SRV] (${s.transport})${s.name} declared in a module spec (line ${
+            s.line + 1
+          }) — shared services must be declared once in ${CORE_SPEC_REL} ` +
+            `(rune-service-core-only)`,
+        );
+      }
+    }
+  }
   const types: TypeContext = {
     typMap,
     dtoByName,

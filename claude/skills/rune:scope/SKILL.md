@@ -47,6 +47,18 @@ These are the **founding documents**: prose intent that the machine pipeline
 tested backend. This skill ends the moment the user has **signed off on both** —
 then it hands the module/endpoint inventory to **`rune:spec`**.
 
+## Conduct (applies to you, the orchestrator, and every agent you spawn)
+
+- **Never search the filesystem for references or artifacts.** Every skill reference lives at
+  `~/.claude/skills/<skill>/references/<file>` — read exact paths. No `find /`, `find ~`, or
+  whole-disk/home scans, ever (a measured orchestrator ran `find /` for a file whose path it knew).
+- **Brief completely — an agent that has to search was under-briefed.** Every path you pass is
+  ABSOLUTE and copied verbatim from a prior stage's return, never retyped. An agent reporting
+  `blocked: missing path` means the brief was wrong: fix the brief and re-delegate; never answer
+  "search for it."
+- **After spawning agents, END YOUR TURN** — task notifications re-invoke you; never `sleep`-poll
+  (measured: 32% of a build's wall-clock was orchestrator sleeps).
+
 ## Specialist & what's delegated
 
 This skill is **mostly a main-session playbook**: the discovery interview, drafting

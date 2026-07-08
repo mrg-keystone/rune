@@ -2084,6 +2084,62 @@ Deno.test("planManifest — strictServices errors on an undeclared boundary serv
   );
 });
 
+Deno.test("planManifest — strictServices flags a local [SRV] in a module spec (rune-service-core-only twin)", () => {
+  const rune = `[MOD] catalog
+[REQ] product.list(InDto): OutDto
+    db:product.query(InDto): OutDto
+    [RET] OutDto
+[DTO] InDto: id
+    x
+[DTO] OutDto: id
+    y
+[TYP] id: string
+    z
+[SRV] (SIDECAR)db: DB_URL
+    the datastore
+    @docs https://x`;
+  // Raw codegen (no strictServices) keeps tolerating the local [SRV].
+  assertEquals(
+    planManifest("src/catalog/catalog.rune", rune, new Set()).errors,
+    [],
+  );
+  // strictServices in a PROJECT module spec: the check/sync twin of the
+  // rune-service-core-only lint rule fires — check and lint now agree.
+  const strict = planManifest("src/catalog/catalog.rune", rune, new Set(), {
+    strictServices: true,
+  });
+  assert(strict.errors.some((e) => e.includes("rune-service-core-only")));
+  assert(strict.errors.some((e) => e.includes("src/core/core.rune")));
+  // A DRAFT of a module spec is judged by its canonical name — authors catch
+  // the misplacement at `rune check` time, before the build pays a heal round.
+  const draft = planManifest(
+    "spec/runes/catalog.in-prog.rune",
+    rune,
+    new Set(),
+    { strictServices: true },
+  );
+  assert(draft.errors.some((e) => e.includes("rune-service-core-only")));
+  // core.rune itself is the one allowed [SRV] site.
+  const core = `[MOD] core
+[SRV] (SIDECAR)db: DB_URL
+    the datastore
+    @docs https://x`;
+  assertEquals(
+    planManifest("src/core/core.rune", core, new Set(), {
+      strictServices: true,
+    }).errors,
+    [],
+  );
+  // A standalone (non-project) spec — docs, corpus fixtures — still accepts a
+  // self-contained [SRV]; the lint rule doesn't apply there either.
+  assertEquals(
+    planManifest("fixtures/corpus/valid/module-catalog.rune", rune, new Set(), {
+      strictServices: true,
+    }).errors,
+    [],
+  );
+});
+
 Deno.test("planManifest — strictServices: no core.rune under the root reports a root-resolution error, not undeclared-service", () => {
   const rune = `[MOD] catalog
 [REQ] product.add(InDto): OutDto

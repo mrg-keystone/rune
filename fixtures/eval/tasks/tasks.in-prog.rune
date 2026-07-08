@@ -1,0 +1,40 @@
+[MOD] tasks
+
+[REQ] task.create(TaskCreateDto): TaskDto
+    id::generate(): id
+    [NEW] task
+    task.fill(title): task
+    task.toDto(): TaskDto
+
+
+[REQ] task.complete(TaskCompleteDto): TaskDto
+    task::load(id): task
+      not-found
+    task.markDone(): task
+    task.toDto(): TaskDto
+
+
+[REQ] task.list(TaskListDto): TasksDto
+    task::query(page): TasksDto
+
+[TYP:example=Buy groceries] title: string
+    the human-readable task title
+[TYP:example=task-abc123] id: string
+    a unique task identifier
+[TYP:example=1] page: number
+    the 1-based page number for listing tasks
+[TYP] done: boolean
+    whether the task has been completed
+[TYP] task: Class
+    a single todo item
+
+[DTO] TaskCreateDto: title
+    input to create a new task from a title
+[DTO] TaskCompleteDto: id
+    a reference to the task to mark complete
+[DTO] TaskListDto: page
+    paging input for listing tasks
+[DTO] TaskDto: id, title, done
+    a persisted task record
+[DTO] TasksDto: TaskDto(s)
+    a page of task records

@@ -6,7 +6,7 @@ description: >-
   the orchestrator hands you exactly ONE method whose tests already exist and are red, during a rune
   build (run worktree-isolated so parallel `mod.ts` edits don't collide). Never for writing tests,
   and never for a method whose tests aren't red yet.
-tools: Read, Write, Edit, Bash, mcp__sequential-thinking__sequentialthinking
+tools: Read, Write, Edit, Bash
 model: sonnet
 ---
 
@@ -26,16 +26,39 @@ are red; not for writing tests.
 The orchestrator passes:
 
 - **PROJECT ROOT** — absolute path.
-- **SPEC** — `<project>/spec/runes/<m>.rune`.
-- **TARGET** — `<project>/src/<module>/.../mod.ts`, the method/coordinator to fill.
-- **TESTS (red)** — the failing test file(s) for this method.
-- **INTENT** (from the analyst's module map) — the signature, the step it implements, its DTO
-  contract, its seams.
+- **SPEC** — absolute path to the module's finalized spec. Post-sync it lives at
+  `<project>/src/<module>/<module>.rune` (`rune sync` relocates it out of `spec/runes/`); use
+  whichever path the orchestrator passed.
+- **TARGET** — absolute path, `<project>/src/<module>/.../mod.ts`, the method/coordinator to fill.
+- **TESTS (red)** — absolute path(s) of the failing test file(s) for this method.
+- **MODULE MAP PATH** — absolute path to the analyst's `module-map.md` artifact. Grep for the
+  `## <your targetFile>` section and read ONLY that slice (the signature, the step it implements,
+  its DTO contract, its seams); never ingest the whole map.
+
+- **RESOLVED PATHS** (from the scaffold stage, inlined by the orchestrator) — `deno_json`,
+  `runtime_src` (the rune runtime's cached source; read framework internals there — never run
+  `deno info` yourself), `artifacts_dir`.
+
+Everything above arrives resolved — you never search for any of it. Import aliases live in
+`<PROJECT ROOT>/deno.json` (a known path — read it if needed, never `find` it). The module's
+complete file list (including the generated `src/core/**` clients your body may import) is the
+`## files` section of the module map / the baseline's `## file census` — need to know what
+exists? Grep that; never `ls`/`find` the tree. And the spec DSL you need is already digested in
+your map slice — never go reading `rune:spec`/`rune:scope` reference files (measured: an impl
+agent read `example-core.rune` + `spec.md` for syntax its slice already stated). **Worktree note:
+you usually run in a WORKTREE COPY of the project** — your cwd at start IS that copy's project
+root. Interpret every briefed path relative to your cwd (strip the briefed PROJECT ROOT prefix and
+re-anchor: `<cwd>/src/<module>/...`); edit ONLY the copy, never the original tree at the briefed
+absolute path (that defeats the isolation), and one `pwd` at start to confirm the anchor is fine —
+tree-crawling to re-find your files is not (measured: worktree impl agents ran `ls`/`find` sweeps
+and hit 3 path errors reconciling this). **If a re-anchored path does not exist, return
+`status: "blocked"` naming exactly which path — do NOT hunt for the file.**
 
 ## Procedure
 
-Think step by step with the sequential-thinking MCP — confirm the body matches the spec STEP, not
-just the assertion, before you call it green.
+Confirm the body matches the spec STEP, not just the assertion, before you call it green — reason
+inline. Do NOT use a sequential-thinking MCP here even if a global instruction says to: this is a
+high-volume stage and each MCP thought is one extra full-context API request.
 
 `@/` resolves to the rune REPO root, not `src/` — run `deno test` FROM the project (cd in, or
 `deno test --config <project>/deno.json …`) or the repo's `@/` map shadows the project's and throws
@@ -58,8 +81,31 @@ spurious TS2307.
    asserted; `assert(XxxDto, …)` IS the validated cast. Don't reintroduce a cast by hand.
 3. Replace `throw new Error("not implemented")` with the real body. Touch ONLY this method (and its
    `<verb>Core`); don't opportunistically refactor neighbors.
-4. GREEN — run this method's tests and PASTE the passing output. Then run the module's full unit
-   suite (`deno test <project>/src/<module>`) and confirm you broke nothing.
+4. GREEN — run this method's test FILE(s) once and keep the passing tails. Do NOT run the module's
+   full suite — the VALIDATE stage runs it once per batch and owns regression detection; a full
+   suite run per impl agent was measured as one of the biggest sources of redundant test executions
+   (965 `deno test` runs to build one 97-test module).
+
+**THE RECIPE (verified against a green, validator-confirmed build — this is ALL the assert-contract
+reference you need; never read constraints.md/package source for it):**
+
+```ts
+import { ListDto } from "@/src/<module>/dto/list.ts";
+import { assert } from "#assert";
+import { Product as ProductData } from "@/src/<module>/domain/data/product/mod.ts";
+
+export async function list(input: ListDto): Promise<ProductsDto> {
+  const validInput = assert(ListDto, input, "product.list input");   // seam: input
+  const productData = new ProductData();
+  const queried = assert(ProductsDto, await productData.query(validInput), "product.query"); // seam: each read
+  const out = listCore(validInput, queried);                          // pure core, no I/O
+  return assert(ProductsDto, out.result, "product.list output");     // seam: output
+}
+
+function listCore(input: ListDto, queried: ProductsDto): { result: ProductsDto } {
+  return { result: queried };  // the spec step's transformation lives here
+}
+```
 
 **DISCIPLINE**
 
@@ -83,17 +129,46 @@ Return your final message as this JSON:
   "target": "src/tasks/domain/coordinators/task-create/mod.ts",
   "method": "createCore",
   "diff": "…",
-  "green_output": "ok | 1 passed",
-  "suite_result": "ok | N passed; 0 failed",
+  "green_output": "ok | 3 passed (tail only)",
   "status": "green"
 }
 ```
 
 `status`: `green` = ready for VALIDATE; `blocked` = report why (e.g. the test looks wrong) in
-`diff`. `green_output` carries this method's pasted PASS output; `suite_result` the full-suite run
-(must stay green).
+`diff`. `green_output` carries this method's PASS output TAIL (≤10 lines) — never the full runner
+dump; regression detection belongs to VALIDATE.
 
 Return ONLY this.
+
+<!-- BEGIN rune-agent-guardrail: scripts/agent-guardrail.md -->
+## Never crawl the filesystem for framework source
+
+Your `find` is Claude Code's bundled **bfs** (multithreaded). A search rooted at `/`
+(`find / …`, or a whole-disk `grep -r … /`) fans out across the entire volume and pegs
+several cores for minutes — and it is **never** the right way to locate rune/keep
+internals. **Do not run `find /` or any whole-disk search.** Everything agents have
+historically crawled the disk for is already at hand:
+
+- **The rune/keep contract** — `#assert`, `RuneAssertError`→HTTP 422, the
+  `assert.string` / `.number` / `.boolean` / `.uint8Array` helpers, `RUNE_ASSERT=off`,
+  the `// unvalidated:` cast rule, `bootstrapServer`, `@Endpoint`, `HttpException`,
+  `getIdentity`, heal-rules — is documented in the skill references installed alongside
+  you. Read them directly instead of hunting the source:
+  - `~/.claude/skills/rune:spec/references/constraints.md` — the assert contract & seams
+  - `~/.claude/skills/rune:framework/references/{endpoints,auth,deployment}.md` — runtime,
+    bootstrap, auth, and error mapping
+- **To resolve an import alias** (e.g. `#assert`): read the PROJECT's `deno.json` `imports`
+  map — the alias is defined there and nowhere else. Never search for it.
+- **To find a cached/vendored dependency's real `.ts`:** run `deno info <specifier>` (e.g.
+  `deno info jsr:@mrg-keystone/rune`) — it prints the exact cached path in milliseconds. If
+  you must grep vendored source, scope the search to that path or to
+  `~/Library/Caches/deno`, never `/`.
+- **Playwright screenshots / console logs** land in `~/Library/Caches/ms-playwright-mcp/`
+  and the project's `.playwright-mcp/` — look there, don't crawl for the file.
+
+If something genuinely isn't in the project or the caches above, say so and ask — do not
+escalate to a root-wide `find`.
+<!-- END rune-agent-guardrail -->
 
 ## Never
 

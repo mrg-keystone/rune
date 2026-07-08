@@ -185,7 +185,7 @@ export function isInProgSpec(path: string): boolean {
 }
 
 /** Strip the `.in-prog` draft tag, leaving the canonical `<name>.rune` path. */
-function canonicalSpecPath(path: string): string {
+export function canonicalSpecPath(path: string): string {
   return isInProgSpec(path)
     ? path.slice(0, -IN_PROG_SUFFIX.length) + ".rune"
     : path;

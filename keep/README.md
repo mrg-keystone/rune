@@ -100,16 +100,18 @@ The Datadog site is fixed to `us5.datadoghq.com`, and alert emails use a
 
 #### Authorization environment variable
 
-| Variable    | Enables                                                                                | If missing/blank                                                             |
-| ----------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `INFRA_URL` | verifying infra-signed session bearers offline (JWKS) and polling the revoke-all flag  | warns once; bearer verification is off, so only in-process callers authorize |
+| Variable    | Enables                                                                                | Default / if blank                                                                               |
+| ----------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `INFRA_URL` | verifying infra-signed session bearers offline (JWKS) and polling the revoke-all flag  | defaults to the keystone infra when unset; set it empty (`INFRA_URL=`) to opt out (in-proc only) |
 
-`INFRA_URL` is the base URL of the **infra** service (e.g.
-`https://infra.mrg-keystone.deno.net`); keep reaches `<INFRA_URL>/authz/jwks`
-(infra's Ed25519 public keys, which it verifies bearers against) and
-`<INFRA_URL>/authz/status` (the break-glass revoke-all flag it polls). keep signs
-and mints nothing — infra does. If `INFRA_URL` is unset, no network request can
-authorize. See
+`INFRA_URL` is the base URL of the **infra** service; keep reaches
+`<INFRA_URL>/authz/jwks` (infra's Ed25519 public keys, which it verifies bearers
+against) and `<INFRA_URL>/authz/status` (the break-glass revoke-all flag it
+polls). keep signs and mints nothing — infra does. **When `INFRA_URL` is unset it
+defaults to the keystone infra (`https://infra.mrg-keystone.deno.net`)** so a keep
+app authorizes out of the box; point a fork at its own infra by exporting
+`INFRA_URL`, or opt out entirely with an explicit empty value (`INFRA_URL=`), in
+which case no network request can authorize and only in-process callers do. See
 [Access tokens & authorization](#access-tokens--authorization).
 
 ### Access tokens & authorization
@@ -1101,9 +1103,10 @@ path, which needs no credential.
 
 **Deno Deploy notes**
 
-- Set env vars in the Deploy project: `INFRA_URL` (so keep can verify infra
-  session bearers against its JWKS and poll revoke-all), plus `DD_API_KEY` /
-  `POSTMARK_*` as needed.
+- Env vars in the Deploy project are optional for infra: `INFRA_URL` defaults to
+  the keystone infra, so keep verifies session bearers against its JWKS and polls
+  revoke-all out of the box — only set `INFRA_URL` to target a different infra (or
+  empty to disable). Add `DD_API_KEY` / `POSTMARK_*` as needed.
 - The start command is `deno serve serve.ts` — `serveSprig` returns the
   `{ fetch }` export `deno serve` expects, and the backend singleton runs in the
   same process as the UI.

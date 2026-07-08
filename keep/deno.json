@@ -19,9 +19,9 @@
   },
   "tasks": {
     "check:jsr": "deno run --allow-net --allow-read scripts/check-jsr-deps.ts && deno publish --dry-run --allow-dirty --no-provenance --allow-slow-types",
-    "test": "deno test -A --unstable-raw-imports",
-    "test:browser": "KEEP_BROWSER=1 deno test -A --unstable-raw-imports src/foundation/domain/business/emulator-ui/browser.test.ts src/foundation/domain/business/map-ui/browser.test.ts",
-    "test:smoke": "KEEP_PLAYWRIGHT_SMOKE=1 deno test -A --unstable-raw-imports src/foundation/domain/coordinators/exercise-harness/smk.test.ts"
+    "test": "INFRA_URL= deno test -A --unstable-raw-imports",
+    "test:browser": "INFRA_URL= KEEP_BROWSER=1 deno test -A --unstable-raw-imports src/foundation/domain/business/emulator-ui/browser.test.ts src/foundation/domain/business/map-ui/browser.test.ts",
+    "test:smoke": "INFRA_URL= KEEP_PLAYWRIGHT_SMOKE=1 deno test -A --unstable-raw-imports src/foundation/domain/coordinators/exercise-harness/smk.test.ts"
   },
   "imports": {
     "#reflect-metadata": "npm:reflect-metadata@0.1.13",

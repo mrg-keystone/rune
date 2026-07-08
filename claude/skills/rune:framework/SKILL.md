@@ -33,6 +33,12 @@ knowledge split across three reference-expert specialists; the main session read
 the request, routes it to the right specialist, and synthesizes the answer. It
 does **not** answer runtime questions inline — it delegates.
 
+## Conduct
+
+- **Never search the filesystem for references or artifacts.** Every skill reference lives at
+  `~/.claude/skills/<skill>/references/<file>` — read exact paths. No `find /`, `find ~`, or
+  whole-disk/home scans, ever (a measured orchestrator ran `find /` for a file whose path it knew).
+
 ## When this skill applies
 
 Tuning or debugging the *running* app (not the `.rune` spec): a 401/403, what
