@@ -1224,6 +1224,13 @@ export async function bootstrapServer(
   backend: BackendClient;
   handler: FetchHandler;
   docs: SwaggerDocEntry[];
+  // The session engine, surfaced so a host gateway (sprig's `serveSprig({ keep })`) can mint/read/clear
+  // the httpOnly `sprig_session` cookie. Without these three, serveSprig's /auth gateway stays in legacy
+  // bearer-proxy mode and NEVER sets a cookie, so an SSR guard reading `ctx.session` always bounces —
+  // even though the store is on by default. `sessions` is the store the SSR pipeline reads per request.
+  sessions?: SessionStore;
+  intakeSession: (input: IntakeInput) => Promise<IntakeResult>;
+  destroySession: (id: string) => Promise<void>;
 }> {
   const server = await BootstrapServer.create(appName, module, options);
   return {
@@ -1232,5 +1239,8 @@ export async function bootstrapServer(
     backend: server.backend,
     handler: server.handler,
     docs: server.docs,
+    sessions: server.sessions,
+    intakeSession: (input) => server.intakeSession(input),
+    destroySession: (id) => server.destroySession(id),
   };
 }
