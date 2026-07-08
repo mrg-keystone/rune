@@ -250,7 +250,8 @@ export class BootstrapServer {
   private revocationPoller?: number;
 
   /**
-   * The server-side session store, present only when `KEEP_SESSION_KV` enabled it. The `sprig_session`
+   * The server-side session store, present by default (absent only when explicitly disabled via
+   * `KEEP_SESSION_KV=false/0/off/empty` or when `INFRA_URL` is empty). The `sprig_session`
    * cookie is resolved through this on every request (with silent refresh); a host gateway (e.g.
    * sprig's `serveSprig`) mints sessions with {@link intakeSession} and clears them with
    * {@link destroySession}, setting/clearing the httpOnly cookie itself. `undefined` ⇒ cookie
@@ -284,13 +285,14 @@ export class BootstrapServer {
    * Intake a credential into a server-side session: exchange it at infra for a signed bearer, store
    * the ORIGINAL credential + bearer + profile, and return the opaque id a gateway drops into the
    * httpOnly `sprig_session` cookie (the bearer never reaches the browser). Throws when the session
-   * store is off (no `KEEP_SESSION_KV`) or infra rejects the credential. The gateway owns the
+   * store is off (`KEEP_SESSION_KV=false/0/off/empty`, or `INFRA_URL` empty) or infra rejects the
+   * credential. The gateway owns the
    * `Set-Cookie`; keep owns the exchange + store + silent refresh on subsequent requests.
    */
   intakeSession(input: IntakeInput): Promise<IntakeResult> {
     if (!this.sessions || !this.infra) {
       throw new Error(
-        "Session store is disabled — set KEEP_SESSION_KV (and INFRA_URL) to enable cookie sessions.",
+        "Session store is disabled — it is on by default; re-enable by unsetting KEEP_SESSION_KV=false/0/off and leaving INFRA_URL non-empty.",
       );
     }
     return intakeSession(this.sessions, this.infra, input, this.appName);
@@ -409,18 +411,22 @@ export class BootstrapServer {
       })
       : undefined;
 
-    // Server-side session store (opt-in). Holds the ORIGINAL credential so a lapsed ~1h bearer is
-    // re-minted transparently, and lets a request authenticate from the tiny httpOnly `sprig_session`
-    // cookie instead of the client holding the bearer. KEEP_SESSION_KV ("1"/"true" → default KV
-    // location, or a path) persists sessions in Deno KV (native per-key TTL, survives restarts /
-    // scales across instances); if KV won't open (no --unstable-kv) it falls back to a process-local
-    // store. Needs INFRA_URL for the silent re-exchange. KEEP_SESSION_TTL_DAYS bounds idle retention.
-    const sessionEnv = Deno.env.get("KEEP_SESSION_KV");
+    // Server-side session store: ON by default so cookie sessions work out of the box. Holds the
+    // ORIGINAL credential so a lapsed ~1h bearer is re-minted transparently, and lets a request
+    // authenticate from the tiny httpOnly `sprig_session` cookie instead of the client holding the
+    // bearer. KEEP_SESSION_KV selects the store: unset or "1"/"true" → Deno KV at the default
+    // location; a path → KV at that path (native per-key TTL, survives restarts / scales across
+    // instances). Opt OUT with "false"/"0"/"off"/empty. If KV won't open (no --unstable-kv) it falls
+    // back to a process-local store (warns once) — fine for local dev; Deno Deploy has KV natively.
+    // Needs infra for the silent re-exchange (INFRA_URL, itself defaulted above). KEEP_SESSION_TTL_DAYS
+    // bounds idle retention.
+    const sessionEnv = Deno.env.get("KEEP_SESSION_KV") ?? "1";
+    const sessionOff = ["false", "0", "off", ""].includes(sessionEnv.toLowerCase());
     let sessionStore: SessionStore | undefined;
-    if (sessionEnv && sessionEnv.toLowerCase() !== "false") {
+    if (!sessionOff) {
       if (!infraClient) {
         warnOnce(
-          `[${appName}] KEEP_SESSION_KV set but ${INFRA_URL_ENV} is not — cookie sessions can't silently re-exchange; disabling the session store.`,
+          `[${appName}] session store wanted but ${INFRA_URL_ENV} is empty — cookie sessions can't silently re-exchange; disabling the session store (set ${INFRA_URL_ENV} to re-enable).`,
         );
       } else {
         const ttlDays = Number(Deno.env.get("KEEP_SESSION_TTL_DAYS"));
