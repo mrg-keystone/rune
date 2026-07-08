@@ -82,7 +82,11 @@ interface BootstrapOptions {
 
 // infra is the minting + signing authority; keep is a verifier + exchange broker. One env var points
 // keep at infra — it serves grants, the JWKS to verify session bearers, opaque-token exchange, and
-// the revocation poll. Read from the environment so it never lives in the (public) package source.
+// the revocation poll. INFRA_URL overrides; when unset we fall back to the keystone infra so a keep
+// app authorizes out of the box without every environment re-declaring the same URL. Point a fork at
+// its own infra by exporting INFRA_URL (the org already ships this URL in the README + package name,
+// so it is not a secret — only the fallback, not a credential).
+const DEFAULT_INFRA_URL = "https://infra.mrg-keystone.deno.net";
 const INFRA_URL_ENV = "INFRA_URL"; // exchange + revocation poll + JWKS (the single infra endpoint)
 const INFRA_JWKS_URL_ENV = "INFRA_JWKS_URL"; // optional explicit JWKS URL (else derived from INFRA_URL)
 const HONOR_SKELETON_ENV = "HONOR_SKELETON"; // default true; set false for the infra service itself
@@ -376,10 +380,13 @@ export class BootstrapServer {
       headers: otlpToken ? { "X-Keep-Token": otlpToken } : undefined,
     });
 
-    // infra connection: the exchange broker + JWKS verifier + revocation poller. Without an
-    // INFRA_URL, keep cannot exchange opaque tokens or verify session bearers — only trusted origins
-    // (in-process / localhost) authorize, and every network call fails closed.
-    const infraBaseUrl = Deno.env.get(INFRA_URL_ENV) ?? "";
+    // infra connection: the exchange broker + JWKS verifier + revocation poller. INFRA_URL overrides;
+    // unset falls back to the keystone infra (DEFAULT_INFRA_URL) so a keep app can exchange opaque
+    // tokens and verify session bearers without every environment re-declaring the same URL. Setting
+    // INFRA_URL="" (empty) explicitly opts out — only trusted origins (in-process / localhost)
+    // authorize and every infra network call fails closed.
+    const infraEnv = Deno.env.get(INFRA_URL_ENV);
+    const infraBaseUrl = infraEnv === undefined ? DEFAULT_INFRA_URL : infraEnv;
     const infraClient: InfraClient | undefined = infraBaseUrl
       ? createInfraClient({
         baseUrl: infraBaseUrl,
@@ -388,7 +395,7 @@ export class BootstrapServer {
       : undefined;
     if (!infraClient) {
       warnOnce(
-        `[${appName}] ${INFRA_URL_ENV} not set — opaque-token exchange and session-bearer verification are disabled (only trusted origins authorize).`,
+        `[${appName}] ${INFRA_URL_ENV} set empty — opaque-token exchange and session-bearer verification are disabled (only trusted origins authorize).`,
       );
     }
     // Offline session-bearer verifier, backed by infra's JWKS (cached, kid-selected, alg-from-key).

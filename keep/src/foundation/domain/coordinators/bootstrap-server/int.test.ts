@@ -175,7 +175,9 @@ Deno.test("global guard: deny-by-default for controllers, @Public exempts", asyn
     assertEquals(inproc.status, 200);
     await server.stop();
   } finally {
-    Deno.env.delete("INFRA_URL");
+    // Restore the hermetic opt-out (empty), not unset — an unset INFRA_URL now
+    // falls back to the real keystone infra, which would leak into later tests.
+    Deno.env.set("INFRA_URL", "");
     await infra.stop();
   }
 });
@@ -236,7 +238,9 @@ Deno.test("docs: shell is public, spec /json is token-gated (seeded via ?token)"
     assertEquals((await ok.json()).openapi !== undefined || true, true);
     await server.stop();
   } finally {
-    Deno.env.delete("INFRA_URL");
+    // Restore the hermetic opt-out (empty), not unset — an unset INFRA_URL now
+    // falls back to the real keystone infra, which would leak into later tests.
+    Deno.env.set("INFRA_URL", "");
     await infra.stop();
   }
 });
@@ -512,7 +516,9 @@ Deno.test("boot awaits the revocation poll: revokeAll is fresh before the first 
     );
     await server.stop();
   } finally {
-    Deno.env.delete("INFRA_URL");
+    // Restore the hermetic opt-out (empty), not unset — an unset INFRA_URL now
+    // falls back to the real keystone infra, which would leak into later tests.
+    Deno.env.set("INFRA_URL", "");
     await infra.stop();
   }
 });

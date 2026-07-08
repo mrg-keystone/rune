@@ -29,6 +29,8 @@ The design stage of a rune data-design pass, after the surveyor's inventory exis
 
 The orchestrator passes: the surveyor's inventory, the project root, the spec dir, the absolute path to this skill's `scripts/validate_data.ts`, and any decision it already confirmed with the user (the local-only verdict, a store tradeoff, a retention window). Assume nothing else.
 
+All paths (specs, UI prototype, the skill's scripts) arrive resolved and absolute — a missing one is `blocked: <path> missing`, never a search.
+
 ## Procedure
 
 Reason each non-obvious call with the sequential-thinking MCP. PROPOSE genuinely ambiguous calls (below) back to the orchestrator — never guess on them.
@@ -68,6 +70,36 @@ Surface these for the user, with your recommendation + rationale, instead of dec
 ## Output contract
 
 Return: the path to the written `spec/misc/data.json`; the `validate_data.ts` exit-0 proof; a per-entity one-line summary (store + strategy + retention + why); and any PROPOSE item the orchestrator must confirm with the user. Return ONLY this.
+
+<!-- BEGIN rune-agent-guardrail: scripts/agent-guardrail.md -->
+## Never crawl the filesystem for framework source
+
+Your `find` is Claude Code's bundled **bfs** (multithreaded). A search rooted at `/`
+(`find / …`, or a whole-disk `grep -r … /`) fans out across the entire volume and pegs
+several cores for minutes — and it is **never** the right way to locate rune/keep
+internals. **Do not run `find /` or any whole-disk search.** Everything agents have
+historically crawled the disk for is already at hand:
+
+- **The rune/keep contract** — `#assert`, `RuneAssertError`→HTTP 422, the
+  `assert.string` / `.number` / `.boolean` / `.uint8Array` helpers, `RUNE_ASSERT=off`,
+  the `// unvalidated:` cast rule, `bootstrapServer`, `@Endpoint`, `HttpException`,
+  `getIdentity`, heal-rules — is documented in the skill references installed alongside
+  you. Read them directly instead of hunting the source:
+  - `~/.claude/skills/rune:spec/references/constraints.md` — the assert contract & seams
+  - `~/.claude/skills/rune:framework/references/{endpoints,auth,deployment}.md` — runtime,
+    bootstrap, auth, and error mapping
+- **To resolve an import alias** (e.g. `#assert`): read the PROJECT's `deno.json` `imports`
+  map — the alias is defined there and nowhere else. Never search for it.
+- **To find a cached/vendored dependency's real `.ts`:** run `deno info <specifier>` (e.g.
+  `deno info jsr:@mrg-keystone/rune`) — it prints the exact cached path in milliseconds. If
+  you must grep vendored source, scope the search to that path or to
+  `~/Library/Caches/deno`, never `/`.
+- **Playwright screenshots / console logs** land in `~/Library/Caches/ms-playwright-mcp/`
+  and the project's `.playwright-mcp/` — look there, don't crawl for the file.
+
+If something genuinely isn't in the project or the caches above, say so and ask — do not
+escalate to a root-wide `find`.
+<!-- END rune-agent-guardrail -->
 
 ## Never
 
