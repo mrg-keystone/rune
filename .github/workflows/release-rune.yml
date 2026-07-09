@@ -167,6 +167,13 @@ jobs:
     permissions:
       contents: write
     with:
+      # develop's rolling channel is tagged `beta`, NEVER `develop`: the release
+      # tag becomes a real git tag, and refs/tags/develop shadows
+      # refs/heads/develop — every bare-name read of `develop` (including the
+      # ship hotfix promote's "main already contains develop" check) resolves to
+      # the stale tag and silently no-ops. Empty on main / v* pushes → the
+      # reusable's own ref resolution (rolling `latest` / pinned snapshot).
+      tag: ${{ github.ref == 'refs/heads/develop' && 'beta' || '' }}
       artifact-pattern: release-*
       # rune's asset surface is a contract with install.sh + `rune update`: the
       # skills + agents ship as skill/ and agent/ dirs INSIDE each tarball (all
