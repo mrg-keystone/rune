@@ -326,8 +326,11 @@ export class KvSessionStore implements SessionStore {
   private async open(): Promise<Kv | null> {
     const openKv = openKvGate();
     if (!openKv) {
+      // This store only reports that KV won't open; the in-memory FALLBACK is performed by the
+      // caller (createKvSessionStore returns null → bootstrap-server's `?? createMemorySessionStore`),
+      // which announces it — so this message no longer claims a fallback it doesn't itself do.
       warn(
-        "[keep] session KV requested but Deno KV is unavailable — run with --unstable-kv to persist sessions. Falling back to in-memory sessions.",
+        "[keep] session KV requested but Deno KV is unavailable — run with --unstable-kv to persist sessions (this KV store will not persist: reads return null, writes drop).",
       );
       return null;
     }
@@ -337,7 +340,7 @@ export class KvSessionStore implements SessionStore {
       warn(
         `[keep] could not open Deno KV for sessions (${
           err instanceof Error ? err.message : String(err)
-        }). Falling back to in-memory sessions.`,
+        }) — this KV store will not persist (reads return null, writes drop).`,
       );
       return null;
     }

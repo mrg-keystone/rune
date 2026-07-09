@@ -435,8 +435,16 @@ export class BootstrapServer {
           : undefined;
         const lower = sessionEnv.toLowerCase();
         const path = lower === "1" || lower === "true" ? undefined : sessionEnv;
-        sessionStore = (await createKvSessionStore(path, ttl)) ??
-          createMemorySessionStore(ttl);
+        // The fallback lives HERE, not in the store: createKvSessionStore returns null when KV won't
+        // open, and THIS `??` is what actually substitutes the in-memory store — so announce it here
+        // (where it happens) rather than let the KV store's warning imply it fell back itself.
+        const kvStore = await createKvSessionStore(path, ttl);
+        if (!kvStore) {
+          warnOnce(
+            `[${appName}] session store: Deno KV unavailable → using in-memory sessions (process-local; lost on restart and not shared across instances; run with --unstable-kv, or deploy where Deno KV is native, to persist).`,
+          );
+        }
+        sessionStore = kvStore ?? createMemorySessionStore(ttl);
       }
     }
     // Resolve the `sprig_session` cookie → a fresh bearer (silent refresh from the stored credential).
