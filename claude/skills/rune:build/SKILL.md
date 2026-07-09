@@ -145,6 +145,14 @@ result trustworthy.
 - **Evidence, not vibes.** A test is real only if it was RED first; IMPLEMENT proves
   green per method; VALIDATE confirms against the pinned baseline with run output
   (tails, ≤10 lines — full runner dumps bloat every downstream prompt).
+- **Prompts carry their own docs.** A subagent sees NONE of your skill references — if
+  a prompt names a rule, helper, or idiom (`no-dto-cast`, the `#assert` API, a fault
+  slug convention), embed its definition or the absolute path to its reference file
+  (e.g. `~/.claude/skills/rune:spec/references/constraints.md`) in the prompt. A named-
+  but-undefined term sends the agent hunting — the 2026-07-09 incident (subagents
+  escalating to full-disk `find /` scans that pinned the machine) started exactly
+  there. Package locations are toolchain questions: `deno info <specifier>`, never a
+  filesystem search.
 - **Session hygiene.** Run each module build in a FRESH session; the workflow returns
   a compact summary (counts + stuck ids + artifact paths), which is all the session
   needs. Don't paste fleet outputs into the session, and don't stack module builds
