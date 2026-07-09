@@ -52,6 +52,20 @@ minimal nudges to the existing spec; never the reverse. The whole pass stays **b
 the waist** (the cross-repo contract, sprig's `contract.md`): storage reshaping never
 changes the query DTOs or the command surface the frontend binds to.
 
+## Conduct (applies to you, the orchestrator, and every agent you spawn)
+
+- **Never search the filesystem for references or artifacts.** Every skill reference lives at
+  `~/.claude/skills/<skill>/references/<file>` — read exact paths. No `find /`, `find ~`, or
+  whole-disk/home scans, ever (a measured orchestrator ran `find /` for a file whose path it knew).
+- **Brief completely — an agent that has to search was under-briefed.** Every path you pass is
+  ABSOLUTE and copied verbatim from a prior stage's return, never retyped. An agent reporting
+  `blocked: missing path` means the brief was wrong: fix the brief and re-delegate; never answer
+  "search for it."
+- **After spawning agents, END YOUR TURN** — task notifications re-invoke you; never `sleep`-poll
+  (measured: 32% of a build's wall-clock was orchestrator sleeps).
+- **Pass the script paths resolved**: the skill's own `scripts/scan_spec.ts` / `validate_data.ts` /
+  `render_review.ts` live at `~/.claude/skills/rune:data/scripts/` — hand agents those exact paths.
+
 ## When this skill applies
 
 Deciding how a module's data is stored — which store an entity belongs in, how to make

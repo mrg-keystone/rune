@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "#assert";
+import { assert, assertEquals, assertStringIncludes } from "#assert";
 import {
   createKvSessionStore,
   createMemorySessionStore,
@@ -11,6 +11,42 @@ import {
 import { createTestSigner } from "@foundation/domain/business/token/session.testkit.ts";
 
 const signer = await createTestSigner();
+
+// Honest-fallback message (feedback/bug-auth-silent-legacy-fallback.md, fix #4): when Deno KV is
+// unavailable, the KV store must NOT claim "Falling back to in-memory sessions" — it doesn't perform
+// the fallback (it returns null); the caller's `?? createMemorySessionStore` does. Run in a
+// subprocess WITHOUT --unstable-kv (so KV is genuinely unavailable) and with a FRESH `warnedOnce`.
+Deno.test("KV unavailable → store warns without claiming a fallback, and returns null", async () => {
+  const modUrl = new URL("./mod.ts", import.meta.url).href;
+  const child = `
+    import { createKvSessionStore } from ${JSON.stringify(modUrl)};
+    const warns = [];
+    const ow = console.warn; console.warn = (...a) => warns.push(a.map(String).join(" "));
+    const store = await createKvSessionStore(undefined);
+    console.warn = ow;
+    console.log(JSON.stringify({ store: store === null ? "null" : "store", warns }));
+  `;
+  const tmp = await Deno.makeTempFile({ suffix: ".ts" });
+  await Deno.writeTextFile(tmp, child);
+  try {
+    const cmd = new Deno.Command(Deno.execPath(), {
+      // deliberately NO --unstable-kv → Deno.openKv is absent → the KV-unavailable branch
+      args: ["run", "-A", "--config", new URL("../../../../../deno.json", import.meta.url).pathname, tmp],
+      stdout: "piped",
+      stderr: "piped",
+    });
+    const { stdout } = await cmd.output();
+    const out = new TextDecoder().decode(stdout).trim().split("\n").at(-1)!;
+    const { store, warns } = JSON.parse(out) as { store: string; warns: string[] };
+    assertEquals(store, "null", "createKvSessionStore must return null when KV is unavailable");
+    const kvWarn = warns.find((l) => /Deno KV is unavailable/.test(l));
+    assert(kvWarn, `expected a KV-unavailable warning, got: ${JSON.stringify(warns)}`);
+    assertEquals(/falling back to in-memory/i.test(kvWarn!), false, "KV store must not claim a fallback it doesn't perform");
+    assertStringIncludes(kvWarn!, "will not persist");
+  } finally {
+    await Deno.remove(tmp);
+  }
+});
 
 /** An opaque-credential intake whose bearer expires at `exp` (Unix seconds). */
 async function opaque(exp: number): Promise<NewSession> {

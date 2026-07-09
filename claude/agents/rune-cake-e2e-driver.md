@@ -11,8 +11,8 @@ description: >-
   edit specs or bodies, it is not the interactive browser walk (the rune:cake
   playbook runs that), and it is not the runner option-surface reference
   (rune:framework).
-tools: Bash, Read, Grep, mcp__sequential-thinking__sequentialthinking
-model: inherit
+tools: Bash, Read, Grep
+model: sonnet
 ---
 
 # Responsibility
@@ -27,14 +27,14 @@ The orchestrator has started a real localhost server and wants the whole compose
 
 The orchestrator passes:
 
-- The base URL of a RUNNING server (started with `deno run -A bootstrap/mod.ts`). `POST /docs/_run` is localhost-only and refuses in-process dispatch — the server must be a real listening loopback process.
+- The base URL of a RUNNING server (started with `deno run -A bootstrap/mod.ts`). `POST /docs/_run` is localhost-only and refuses in-process dispatch — the server must be a real listening loopback process. The server is PARENT-OWNED: if the URL doesn't respond, return `blocked: server unreachable at <url>` — never `lsof`/port-scan for it or start one yourself.
 - Optional: the module(s) in scope, any known `seeds` (JSON-typed, by field name), and the absolute paths to this skill's `references/cake.md` (headless slice) + `references/heal-rules.md` and the project's `spec/misc/heal-rules.json`.
 
-Assume nothing else; you cannot see the skill body or the main conversation.
+Assume nothing else; you cannot see the skill body or the main conversation. All passed paths arrive resolved — a missing one is `blocked`, not a search.
 
 ## Procedure
 
-Reason through each failure with the sequential-thinking MCP before acting. Evidence, not vibes — quote the response `body`, the banner reason, and the dryRun report.
+Reason inline through each failure before acting. Evidence, not vibes — quote the response `body`, the banner reason, and the dryRun report.
 
 1. **Pre-flight (cheap, sends nothing).** `POST /docs/_run {"dryRun": true}` → read `{ order, cycles, unresolvedInputs }`. A non-empty `cycles` is a dependency cycle → stop and report it (a spec/bind fix → rune:spec / rune:build). For each `unresolvedInputs` field you can satisfy, add a `seed`; if you can't, note a missing producer or an endpoint *echoing* rather than minting the field.
 2. **Run.** `POST /docs/_run { seeds, flow?, orderBy?, skip?, stream? }` → read `{ ok, passed[], failed[], optionalFailed[], order, cycles, iterations }`. Each `failed[]` row carries `module`, `status`, the response `body`, and `ms`.
@@ -57,6 +57,47 @@ Reason through each failure with the sequential-thinking MCP before acting. Evid
 ## Output contract
 
 Return: the final `{ ok, passed[], failed[], optionalFailed[], iterations }`; for each remaining failure, the quoted evidence (response body + banner) + the diagnosed cause + which sibling skill owns the fix (rune:spec / rune:build / rune:framework / rune:docs); any seed/retry you applied; and any environmental failure to surface. If green, say so and name what (if anything) you pinned. Return ONLY this.
+
+<!-- BEGIN rune-agent-guardrail: scripts/agent-guardrail.md -->
+## Never crawl the filesystem for framework source
+
+Your inline `find` is Claude Code's bundled **bfs** (multithreaded). A search rooted at
+`/` (`find / …`, or a whole-disk `grep -r … /`) fans out across the entire volume and
+pegs several cores for minutes (2026-07-09: three such scans pinned a machine at load
+30+ for 14 minutes) — and it is **never** the right way to locate rune/keep internals.
+**Do not run inline `find` at all** — use `fd <pattern> <scoped-dir>` / `rg` (or the
+Glob/Grep tools); if only real find semantics work, `command find <scoped-dir> …`
+bypasses the bfs shim. Guarded machines deny inline `find`/`bfs` and any scan rooted at
+`/` or `$HOME` via a PreToolUse hook. And `| head -N` is NOT a cost bound: a pattern
+that can never match scans the entire disk before head sees a single line. Everything
+agents have historically crawled the disk for is already at hand:
+
+- **The rune/keep contract** — `#assert`, `RuneAssertError`→HTTP 422, the
+  `assert.string` / `.number` / `.boolean` / `.uint8Array` helpers, `RUNE_ASSERT=off`,
+  the `// unvalidated:` cast rule, `bootstrapServer`, `@Endpoint`, `HttpException`,
+  `getIdentity`, heal-rules — is documented in the skill references installed alongside
+  you. Read them directly instead of hunting the source:
+  - `~/.claude/skills/rune:spec/references/constraints.md` — the assert contract & seams
+  - `~/.claude/skills/rune:framework/references/{endpoints,auth,deployment}.md` — runtime,
+    bootstrap, auth, and error mapping
+- **To resolve an import alias** (e.g. `#assert`): read the PROJECT's `deno.json` `imports`
+  map — the alias is defined there and nowhere else. Never search for it.
+- **The `#assert` call surface, in full** — `assert(SomeDto, value, "noun.verb context")`
+  validates and returns the value (throws `RuneAssertError` on contract failure), plus
+  `assert.string` / `assert.number` / `assert.boolean` / `assert.uint8Array` for primitive
+  seams. That is the entire public API — never read the package source to "learn" it.
+- **To find a cached/vendored dependency's real `.ts`:** run `deno info <specifier>` (e.g.
+  `deno info jsr:@mrg-keystone/rune`) — it prints the exact cached path in milliseconds. If
+  you must grep vendored source, scope the search to that path or to
+  `~/Library/Caches/deno`, never `/`. Searching the filesystem for a package BY NAME can
+  never work: Deno 2 stores JSR modules under sha256-hashed filenames, so no path contains
+  the package name.
+- **Playwright screenshots / console logs** land in `~/Library/Caches/ms-playwright-mcp/`
+  and the project's `.playwright-mcp/` — look there, don't crawl for the file.
+
+If something genuinely isn't in the project or the caches above, say so and ask — do not
+escalate to a root-wide `find`.
+<!-- END rune-agent-guardrail -->
 
 ## Never
 

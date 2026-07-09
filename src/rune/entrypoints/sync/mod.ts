@@ -439,9 +439,16 @@ const REQUIRED_IMPORTS: Record<string, string> = {
   "#std/assert": "jsr:@std/assert",
   "#std/path": "jsr:@std/path",
   // Generated [ENT] controllers + e2e tests import the keep backend framework.
-  "@mrg-keystone/rune": "jsr:@mrg-keystone/rune@^3",
-  // Generated coordinators validate their seams via keep's assert runtime.
-  "#assert": "jsr:@mrg-keystone/rune@^3/assert",
+  // Track keep's published major on JSR (retarget on every keep major bump, as
+  // @^2→@^3 did for the 3.0.0 release). MUST stay equal to the #assert pin's
+  // major below: they resolve to ONE keep copy, so ONE class-validator /
+  // class-transformer copy — the single-copy invariant assert relies on. A
+  // sprig-overlaid project (rune init) inherits its main pin from sprig, so
+  // sprig's @mrg-keystone/rune major must match this one too.
+  "@mrg-keystone/rune": "jsr:@mrg-keystone/rune@^4",
+  // Generated coordinators validate their seams via keep's assert runtime,
+  // published as the @mrg-keystone/rune/assert subpath (same major as above).
+  "#assert": "jsr:@mrg-keystone/rune@^4/assert",
   // DTO [TYP:example=…] fields emit @ApiProperty({ example }) — the swagger
   // decorator keep's runner/cake read example values from. Same range keep
   // itself maps #danet/swagger to.

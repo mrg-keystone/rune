@@ -30,6 +30,21 @@ mocks**. The main session drives the **interactive** browser walk and pins the
 contract itself; it delegates the **unattended/headless** drive-and-heal loop to a
 specialist, and routes every real fix to the owning sibling skill.
 
+## Conduct (applies to you, the orchestrator, and every agent you spawn)
+
+- **Never search the filesystem for references or artifacts.** Every skill reference lives at
+  `~/.claude/skills/<skill>/references/<file>` — read exact paths. No `find /`, `find ~`, or
+  whole-disk/home scans, ever (a measured orchestrator ran `find /` for a file whose path it knew).
+- **Brief completely — an agent that has to search was under-briefed.** Every path you pass is
+  ABSOLUTE and copied verbatim from a prior stage's return, never retyped. An agent reporting
+  `blocked: missing path` means the brief was wrong: fix the brief and re-delegate; never answer
+  "search for it."
+- **After spawning agents, END YOUR TURN** — task notifications re-invoke you; never `sleep`-poll
+  (measured: 32% of a build's wall-clock was orchestrator sleeps).
+- **The server is yours or the user's, never an agent's to find**: pass the running base URL + port
+  as facts; an agent that finds the server unreachable reports blocked — it never `lsof`-scans or
+  restarts it.
+
 ## When this skill applies
 
 "Does the composed app work right now, with real data?" or "the cake / heal / run-all

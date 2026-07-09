@@ -100,9 +100,11 @@ leak:
 - `GET <INFRA_URL>/authz/status` → `{ revokeAll }`, **polled ~every 60s** as the
   global break-glass flag (see "Revoke-all").
 
-**Config:** keep needs `INFRA_URL` (e.g. `https://infra.mrg-keystone.deno.net`)
-to reach JWKS + status. With no `INFRA_URL`, session-bearer verification is off
-and only in-process callers authorize.
+**Config:** keep reaches JWKS + status at `INFRA_URL`, which **defaults to the
+keystone infra (`https://infra.mrg-keystone.deno.net`) when unset** — so
+session-bearer verification works out of the box. Set `INFRA_URL` only to target a
+different infra; set it **empty (`INFRA_URL=`)** to opt out, in which case
+verification is off and only in-process callers authorize.
 
 ## Presenting the credential
 
@@ -192,9 +194,9 @@ island makes over the network.
 
 ## Environment summary
 
-| Var | Missing/blank → |
+| Var | Unset → / blank (`INFRA_URL=`) → |
 | --- | --------------- |
-| `INFRA_URL` | warns once; session-bearer verification + revoke-all polling are off, so only in-process callers authorize |
+| `INFRA_URL` | unset → defaults to the keystone infra (verification + revoke-all polling on); explicit empty → warns once and both are off, so only in-process callers authorize |
 
 keep needs **no signing secret, no Firebase project id, and no localhost-trust
 flag** — it neither signs tokens, verifies Firebase ID tokens directly, nor
