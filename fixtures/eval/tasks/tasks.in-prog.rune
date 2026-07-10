@@ -1,5 +1,9 @@
 [MOD] tasks
 
+[ENT] http.createTask(TaskCreateDto): TaskDto
+[ENT] http.completeTask(TaskCompleteDto): TaskDto
+[ENT] http.listTasks(TaskListDto): TasksDto
+
 [REQ] task.create(TaskCreateDto): TaskDto
     id::generate(): id
     [NEW] task
