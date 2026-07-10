@@ -303,10 +303,12 @@ Deno.test("planManifest — [TYP:ext] seeds the generated e2e with a typed place
   assertStringIncludes(e2e.content, 'overrides: { seeds: { memberId: "memberId-stub" } }');
 });
 
-Deno.test("planManifest — bind derivation breaks a producer cycle with a $input fallback", () => {
-  // enable consumes `selected` (select mints it); select consumes `enabled` (enable mints it).
-  // Earliest-producer-wins keeps enable→select; the edge that would close the cycle (select→enable)
-  // is dropped and `enabled` falls back to a $input bind instead of a circular dependsOn.
+Deno.test("planManifest — process direction follows declaration order; later-minted fields fall back to $input", () => {
+  // enable consumes `selected` (minted only by the LATER select); select consumes `enabled`
+  // (minted by the EARLIER enable). Producer edges only point backward in declaration order —
+  // a dependsOn on a later ent would contradict the emitted `order` (measured: an inverted
+  // create/complete pair). So select→enable is wired forward, and enable's `selected` falls
+  // back to a $input bind (Module-inputs card; seeds/captures/schema example supply it).
   const rune = `[MOD] meta
 
 [ENT] http.enable(EnableDto): EnabledDto
@@ -331,14 +333,14 @@ Deno.test("planManifest — bind derivation breaks a producer cycle with a $inpu
     f.path === "src/meta/entrypoints/http/mod.ts"
   );
   if (!mod) throw new Error("no entrypoint mod.ts generated");
-  // The first consumer keeps its producer edge.
+  // The forward edge is wired: select (later) depends on enable (earlier).
   assertStringIncludes(
     mod.content,
-    'dependsOn: ["select"], bind: {"selected":"select.selected"}',
+    'dependsOn: ["enable"], bind: {"enabled":"enable.enabled"}',
   );
-  // The cycle-closing edge is gone; select's field is supplied externally instead.
-  assertStringIncludes(mod.content, 'bind: {"enabled":"$enabled"}');
-  assertEquals(mod.content.includes('dependsOn: ["enable"]'), false);
+  // The backward edge is never derived; enable's field is an external input instead.
+  assertStringIncludes(mod.content, 'bind: {"selected":"$selected"}');
+  assertEquals(mod.content.includes('dependsOn: ["select"]'), false);
 });
 
 Deno.test("planManifest — ({}) input omits @Endpoint input and makes a no-param handler", () => {
