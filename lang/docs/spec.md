@@ -10,7 +10,10 @@ Defines the notation used in `rune` files.
 - Last step of REQ **must** return the REQ's output DTO
 - Represents the happy-path outcome (e2e test)
 - Faults live under steps, not on the REQ line
-- One requirement per feature entry point
+- One requirement per externally-triggerable feature
+- A `[REQ]` has **no HTTP surface of its own** — it is exposed only through an
+  `[ENT]` that dispatches to it (see Entrypoint). A `[REQ]`-only module is a pure
+  library module.
 
 ```
 [REQ] recording.set(GetRecordingDto): RecordingSetResponseDto
@@ -490,6 +493,13 @@ decorator, and the generated coordinator asserts them at every seam.
 - Maps to `src/<module>/entrypoints/<surface>/mod.ts` + `e2e.test.ts`
 - The body of an `[ENT]` references the `[REQ]` it dispatches to
 - The surface name (`http`, `cli`, `queue`, etc.) becomes the entrypoint folder name
+- **`[ENT]` is the ONLY source of an HTTP surface.** Codegen emits an `@Endpoint`
+  controller solely from `[ENT]` declarations — there is no auto-exposure of
+  `[REQ]`s. A module with `[REQ]`s but no `[ENT]` generates **no controller, no
+  route, no OpenAPI doc, and no rows in the cake walk**: `/docs/<module>` 404s and
+  a headless run-all over it is vacuously empty. If the module is meant to be
+  served, walked, or documented, declare an `[ENT]` per exposed `[REQ]`.
+  (Entrypoint controllers are generated artifacts — never hand-write one.)
 
 ### HTTP verb & explicit route (`@ METHOD /template`)
 
@@ -528,9 +538,18 @@ names the **flow** an endpoint belongs to, expressing a branch:
 > **Outputs declare what an endpoint *mints*, not what it *echoes*.** A field that
 > appears in both an endpoint's input and output DTO is not treated as produced by
 > it — only genuinely-minted outputs feed another endpoint's input. (Echo-fields
-> would otherwise derive bogus producers and circular `dependsOn`.) When two
-> endpoints would each produce a field the other consumes, the cycle is broken and
-> the later one's field falls back to a `$input` bind.
+> would otherwise derive bogus producers and circular `dependsOn`.)
+>
+> **Process direction follows declaration order — declare `[ENT]`s in the order the
+> process runs.** A producer edge only points backward to an earlier-declared
+> endpoint; a `dependsOn` on a later endpoint would contradict the derived `order`.
+> A field minted only by LATER endpoints is treated as an external input at that
+> point in the process: it binds as `$field` (shown on the Module-inputs card;
+> resolved from seeds, a captured same-named output on a later runner pass, or the
+> schema `example=` at send time). Note a load-through output (a field an endpoint
+> returns from storage rather than creates — e.g. a mutator echoing the record it
+> loaded) still *counts* as minted statically; declaring endpoints in process order
+> is what keeps such fields from deriving a backwards chain.
 
 ```
 [ENT] http.start(StartDto): TicketDto
