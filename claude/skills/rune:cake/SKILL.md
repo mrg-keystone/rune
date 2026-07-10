@@ -44,6 +44,20 @@ specialist, and routes every real fix to the owning sibling skill.
 - **The server is yours or the user's, never an agent's to find**: pass the running base URL + port
   as facts; an agent that finds the server unreachable reports blocked — it never `lsof`-scans or
   restarts it.
+- **Entrypoint controllers are generated, never hand-written.** Only an `[ENT]` in the spec
+  generates an `@Endpoint` controller — a `[REQ]`-only module has NO HTTP surface: `/docs/<module>`
+  404s and any walk over it is vacuous. Never hand-create `src/<m>/entrypoints/*` or a hand-rolled
+  bootstrap to force a walk (measured: a hand-wired controller + bootstrap turned a lint-clean
+  build into 4 `--strict` violations) — declare the `[ENT]` in the spec (→ `rune:spec`) and
+  re-sync (→ `rune:build`). **A zero-endpoint walk is RED (vacuous), not green**, whatever `ok`
+  says.
+- **Run artifacts never touch the project tree.** The server log, `/docs/_run` output JSON, and
+  pid files go to `/tmp` / a scratch dir / a designated out-dir — `rune lint --strict` fails on
+  root strays like `server.log` or a result JSON at the project root.
+- **Canonical and certified facts are trusted, not re-verified.** No pre-flight `ls` of
+  `~/.claude/skills/**` reference dirs (the paths are canonical), and no re-`rune check` of a
+  spec the task hands you as check-clean (measured: ~96K cache-read of pure pre-flight
+  re-verification in one walk).
 
 ## When this skill applies
 
@@ -96,13 +110,31 @@ fix or visibly seed past, never a reason to mock.
 
 For unattended / CI / "drive it headless" runs, or an automated get-it-green loop:
 
-1. **(main session) Start a real localhost listener first** — `deno run -A
-   bootstrap/mod.ts`. `POST /docs/_run` (and `/docs/_heal`) are **localhost-only and
-   refuse in-process dispatch**, so the driver needs a real loopback process.
-2. **Delegate** to `rune-cake-e2e-driver` (Task tool). Pass: the running base URL, the
-   modules in scope, any known `seeds`, and the absolute paths to
-   `claude/skills/rune:cake/references/cake.md` + `references/heal-rules.md` (or the
-   installed `~/.claude/skills/rune:cake/references/…`).
+1. **Decide the dispatch path by trust posture.** `POST /docs/_run` (and `/docs/_heal`)
+   are **deny-by-default**: they accept the in-process caller OR an infra-signed bearer
+   with a `dev`/`*` grant — there is **NO localhost trust**, so a bare
+   `curl http://localhost:<port>/docs/_run` is refused no matter where it runs
+   (`controlPlaneAllowed` in keep's bootstrap-server: internal header or verified
+   bearer, nothing else). With `INFRA_URL` + a dev-grant bearer → run over real HTTP
+   against a live server (certifies the deployed auth surface). Without one (typical
+   sandbox/CI) → the sanctioned path is **in-process dispatch** via the composed app's
+   `backend.fetch` (`bootstrapServer` → `{ backend }`) — and **do NOT start a listening
+   server for it**: importing the bootstrap already boots the composed app, so a
+   listener is a redundant second boot serving zero walk requests (measured: an
+   orchestrator started, polled, and tore down a server its in-process walk never
+   touched). Start a listener only for the bearer/HTTP path, the interactive browser
+   walk, or when something else genuinely needs the port.
+2. **Delegate** to `rune-cake-e2e-driver` (Task tool). Pass: the dispatch path (base
+   URL + bearer, or — for in-process — the project root, `<project>/bootstrap/mod.ts`,
+   `<project>/deno.json`, and the fact "no INFRA_URL here — unauthenticated localhost
+   POSTs are refused by design"), the modules in scope, each module's SPEC path
+   (post-sync: `src/<m>/<m>.rune` — generated-file headers still print the old
+   `spec/runes/` path, which no longer exists; measured: a driver `cat`'d the stale
+   path and went probing), the controller path (`src/<m>/entrypoints/<surface>/mod.ts`)
+   and the out-dir for saved artifacts, any known `seeds`, and the absolute paths to
+   `claude/skills/rune:cake/references/cake.md` + `references/heal-rules.md` +
+   `~/.claude/skills/rune:framework/references/endpoints.md` (the runtime recipe the
+   in-process script follows).
 3. It returns the final verdict + each remaining failure with its diagnosed cause and
    the owning sibling. **Summarize** that and route the fixes (below).
 
@@ -113,10 +145,18 @@ to the owner — this is the coordination map:
 
 | Diagnosed cause | Owner |
 | --- | --- |
+| walk WIRING — a backwards/wrong `order`/`dependsOn`/`bind` in the controller decorator | **the driver, in-loop** (its Edit covers exactly this surface; it re-runs and reports the change) — the underlying spec-level cause still routes to **`rune:spec`** |
 | stale entrypoint controller; unimplemented/wrong body; heal-rule enrichment | **`rune:build`** |
-| missing `[TYP:example=]`; wrong order/deps/bind; an echo that should mint; a contract fix | **`rune:spec`** |
+| missing `[TYP:example=]`; an echo that should mint; a contract fix | **`rune:spec`** |
+| **vacuous walk** — `/docs/<m>` 404 / dryRun `order` empty / 0 rows exercised (no `[ENT]` in the spec) | **`rune:spec`** (declare the `[ENT]`), then **`rune:build`** (re-sync) — never hand-wire |
 | the runner option surface; `bootstrapServer`/auth/trust posture | **`rune:framework`** |
 | a per-endpoint Swagger example/description | **`rune:docs`** |
+
+The orchestrator NEVER applies a fix itself — not even a two-line decorator edit
+(measured: an orchestrator that became the hands paid 7 turns — the edits, a failed
+agent resume, a poll, and an induced re-lint — for a fix the driver now owns). And a
+returned driver is COMPLETE: never resume it mid-walk with a message and wait; if a
+fix outside its ownership was applied by its owner, spawn a FRESH driver run.
 
 This skill **owns the heal-rules schema** (documents it) but never authors rules —
 `rune sync` scaffolds them from fault slugs and **`rune:build`** enriches them.

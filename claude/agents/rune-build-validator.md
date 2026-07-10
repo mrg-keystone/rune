@@ -41,8 +41,11 @@ The orchestrator passes:
   with `file`/`targetFile` as absolute paths.
 - **MODULE MAP PATH** — absolute path to the analyst's `module-map.md` artifact. Read ONLY the
   sections for your batch's target files (Grep the headings) — never ingest the whole map.
-- **BASELINE PATH** — absolute path to the scaffold's `baseline.md` artifact (the pinned set
-  regressions are judged against). Read it yourself; the orchestrator does not inline it.
+- **BASELINE PATH** — absolute path to the scaffold's `baseline.md` artifact, PLUS the brief's
+  one-line baseline summary (e.g. "all red by design — any pass is progress"). The one-liner IS
+  your baseline for judging; open the file itself ONLY when the suite run shows a failure the
+  one-liner can't classify (a regression candidate needing the pinned detail) — measured: two
+  judges each read the full 6KB file to learn the one line their brief already carried.
 - **RESOLVED PATHS** (from the scaffold stage, inlined) — `deno_json`, `runtime_src` (framework
   internals live there — never run `deno info` yourself), `artifacts_dir`.
 
@@ -95,6 +98,14 @@ spurious TS2307.
 - `fail` + `bounce_to: "write-tests"` = wrong/gamed test, with the specific defect.
 - `fail` + `bounce_to: "implement"` = correct test, red or body-gamed, with what's wrong.
 - A regression is reported ONCE at batch level, naming the broken test — not per verdict.
+- **A red e2e/chain test whose failure contradicts the dataflow routes to the WIRING, not the
+  body.** If the endpoint chain runs in an order the DTO producer→consumer graph forbids (a
+  minter depending on its mutator, a `$seed` for a field an earlier endpoint produces), the
+  defect is the controller's `@Endpoint` `order`/`dependsOn`/`bind` — report
+  `bounce_to: "implement"` with reason "controller wiring: <the exact decorator fix>", never
+  "the store/body should seed the record" (measured: a validator blamed the store and
+  explicitly exonerated the controller — the controller was the fix point; generated wiring
+  is codegen-owned to CREATE but dev-owned to correct).
 
 No "looks fixed" — every claim carries run output. Evidence discipline: paste output TAILS (the
 verdict lines, ≤10 lines per run), never full runner dumps.
@@ -129,7 +140,10 @@ Return your final message as this exact JSON, nothing else:
 `verdict`: `pass` | `fail` per row. `bounce_to`: `"write-tests"` | `"implement"` | `null`.
 `regression`: the name of any baseline test a body broke, else `null`.
 
-Return ONLY this.
+Return ONLY this. No prose "correctness review" narrative before or after the JSON — the
+`reason`/`evidence` fields ARE where findings go (measured: two validators each prepended a
+~2K-char prose narration restating their own `verdicts[]`, making them the build's two largest
+fleet returns; the orchestrator re-pays that text on every later turn).
 
 <!-- BEGIN rune-agent-guardrail: scripts/agent-guardrail.md -->
 ## Never crawl the filesystem for framework source

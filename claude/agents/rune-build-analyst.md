@@ -47,8 +47,33 @@ You READ source and WRITE only the build artifacts below. Produce two artifacts 
 - per `[REQ]` coordinator: the ordered steps; which are pure (the `<verb>Core`) vs I/O (an adapter
   call); the input/output DTO contract; the asserted seams.
 - per business feature method: its signature (typed from the spec) and the step it implements.
-- per data adapter method: the service boundary it calls and its declared **fault slugs**.
-- per DTO: its fields and their `[TYP]` constraints.
+- per data adapter method: the service boundary it calls, its declared **fault slugs**, AND the
+  **generated core client's call surface** — read `src/core/data/<service>/mod.ts` once and state
+  exactly how the adapter reaches the boundary: quote the client method(s) to call, or state
+  plainly that the client is an unwired scaffold stub (config/connection seam only, no methods)
+  reached through its structural seam. Never leave this as "inspect the client's API surface" —
+  that phrase sends an impl agent hunting (measured: one impl burned 30 discovery calls deriving
+  the seam of a method-less DbService stub; its sibling with a spelled-out recipe made 0).
+- per DTO: its generated FILE PATH (`dto/<x>.ts`), a one-line field summary
+  (`TaskDto { id: string; title: string; done: boolean }`), and a ready-to-paste import block
+  for the file's consumers (`#std/assert`, `#assert`, the `@/src/...` DTO imports). Do NOT
+  quote full class source — with the paths in every row, agents open the real file once and
+  skip inlined source anyway (measured: ~70 inlined lines went unread once `dtoFiles` paths
+  were briefed); the paths are the load-bearing part.
+- per module: the **persistence/seed seam** — how load/query obtain their data (in-memory store
+  owned by which class, or which core client), and any externally-seeded ids the spec's
+  examples imply (measured: an author greps `stor|persist|memory|seed` across the map 5×
+  hunting exactly this).
+- per `[ENT]` (when the module has an HTTP surface): **CROSS-CHECK the generated controller's
+  chain — never transcribe it on faith.** Verify each `@Endpoint`'s `order`/`dependsOn`/`bind`
+  against the DTO producer→consumer dataflow: when endpoint A's output mints a field endpoint
+  B's input consumes (e.g. create mints the `id` complete consumes), B must depend on A and
+  bind `A.field` — never the reverse, and never a `$seed` for a field an earlier endpoint
+  genuinely produces. If the generated wiring contradicts the dataflow, emit a
+  **`SUSPECTED CHAIN MIS-INFERENCE`** callout (in the map AND your return) naming the exact
+  decorator correction — the orchestrator must see it BEFORE the e2e author and cake build on
+  it (measured: a transcribed-on-faith inverted chain cascaded through the e2e author, a
+  validator mis-diagnosis, and two cake iterations before anyone questioned it).
 
 **WRITE it to `<root>/spec/misc/build/<module>/module-map.md`**, sectioned so a fleet agent can
 Grep for exactly its slice without reading the rest: one `## <relative targetFile path>` heading
@@ -72,9 +97,12 @@ under a boundary step needs a `Deno.test("<bare-slug>", …)` titled with the EX
 `timeout` fault → `Deno.test("timeout", …)`). The generated stubs already lay these down with TODO
 bodies; confirm the FULL set and flag any missing slug.
 
-Emit the inventory as **one row per test**: `{ id, file, kind, under_test, assertion, targetFile }`
-— `targetFile` is the source file whose body the test exercises (what the orchestrator batches
-authors, implementors, and validators by). Also write a copy to
+Emit the inventory as **one row per test**:
+`{ id, file, kind, under_test, assertion, targetFile, dtoFiles }` — `targetFile` is the source
+file whose body the test exercises (what the orchestrator batches authors, implementors, and
+validators by); `dtoFiles` is the absolute path(s) of the `dto/*.ts` the test asserts against,
+so DTO paths ride into every brief mechanically when rows are copied verbatim (measured: briefs
+built from rows without DTO paths sent authors on ~10 re-discovery reads). Also write a copy to
 `<root>/spec/misc/build/<module>/test-inventory.json` for resumes and humans.
 
 ## Resources
@@ -87,8 +115,12 @@ business method, adapter, DTO, and generated test stub.
 Return a COMPACT result — the map itself stays on disk:
 
 - `module_map_path` — `<root>/spec/misc/build/<module>/module-map.md` (sectioned per targetFile).
-- `test_inventory` — the array of rows `{ id, file, kind, under_test, assertion, targetFile }`
-  (the orchestrator fans the fleets out over these).
+- `test_inventory` — the array of rows `{ id, file, kind, under_test, assertion, targetFile,
+  dtoFiles }` (the orchestrator fans the fleets out over these). **Every path in the returned
+  rows is VERBATIM ABSOLUTE — never abbreviated** (`…/task/mod.ts` in a return forces the
+  orchestrator to re-open the inventory artifact or improvise thin briefs; measured: an
+  abbreviated return produced an under-briefed author that re-read 14 files). The return IS the
+  paste-ready work queue.
 - `test_count` / `target_file_count` — sanity numbers.
 - `missing_slugs` — any declared fault slug with no stubbed `Deno.test` (or `none`).
 - `notes` — anything ambiguous in the spec the fleets should know (or `none`).

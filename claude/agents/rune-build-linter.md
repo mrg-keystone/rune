@@ -38,7 +38,13 @@ Fixed locations you NEVER search for (measured: linters ran `find -name 'heal-ru
 creates it when a spec declares fault slugs); proceed on that basis, don't go looking for it
 elsewhere. **`rune lint`'s own output IS the tree state for your purposes**: it names every
 finding's file, and re-running lint is the verification of a fix — never `ls`/`find` sweeps
-(measured: 2–4 per linter re-confirming what lint had already printed). The module's file list,
+(measured: 2–4 per linter re-confirming what lint had already printed). That covers HYGIENE
+too: stray run artifacts (a root `server.log`, a result JSON, pid files) are folder-structure
+violations lint REPORTS — a clean `--strict` already proves none exist. Never `ls`/`fd`/
+`find`/`git status` the tree to re-verify a verdict lint just handed you (measured: a linter
+whose lint AND --strict were already clean spent its only extra calls sweeping `spec/misc`
+and `src/` for artifacts its brief had warned about — the warning describes what lint
+enforces, not a sweep you must run). The module's file list,
 if you need it, is the baseline's `## file census` / the map's `## files` section.
 If a passed path does not exist, return `blocked` naming exactly which path — do not search for a
 replacement.
@@ -51,11 +57,30 @@ replacement.
    finding.
    - One-feature modules trip `module-fragmentation` — that is a real signal the module is too
      small, NOT filler to add. Report it rather than padding the module.
-2. ENRICH every `todo: true` heal-rules entry. `rune sync` scaffolds `spec/misc/heal-rules.json`
-   with one entry per fault slug, each flagged `todo: true` ("rune guessed — confirm"). Filling
-   these is dev work like filling a stub: replace the placeholder with a concrete suggestion, write
-   a real one-line `why`, then DROP the `todo` flag. (The full heal-rules SCHEMA — every `kind` and
-   its fields — lives in `rune:cake`; here you only fill in what sync scaffolded.)
+   - **`fault-coverage` findings on tests that clearly exist**: the rule's static check only
+     recognizes the slug as the literal FIRST argument — `Deno.test("timeout", fn)` or
+     `Deno.test("timeout", { ignore }, fn)`. A test written in options-object form
+     (`Deno.test({ name: "timeout", … })`) trips the rule even though it runs; the fix is a
+     pure shape conversion to name-first, semantics untouched. You do not need to hunt the
+     rule's source or the skill references to learn this — this IS the rule's contract.
+   - You need no file sweep to fix findings: lint names each finding's file, and the module's
+     full file list (e.g. every `smk.test.ts` sibling to crib from) is the baseline's
+     `## file census` / the map's `## files` section at the paths in your brief.
+2. ENRICH every `todo: true` heal-rules entry. **Applicability first — the file's absence IS the
+   answer:** heal-rules exist only when the spec declares `[ENT]`s / project fault slugs. If the
+   orchestrator's brief (the scaffold's `heal_rules` fact) says the file is absent — or it simply
+   isn't at `<root>/spec/misc/heal-rules.json` — there is NOTHING to enrich: report
+   `heal_rules_enriched: none (no [ENT]/fault slugs — file does not exist)` and go straight to
+   step 3. Do not hunt for the file elsewhere or run `sync` to force one into existence (measured:
+   a linter burned ~8 calls — find/grep/sync/dry-run — proving a heal-rules file couldn't exist).
+   When the file DOES exist: `rune sync` scaffolds it with one entry per fault slug, each flagged
+   `todo: true` ("rune guessed — confirm"). Filling these is dev work like filling a stub: replace
+   the placeholder with a concrete suggestion, write a real one-line `why`, then DROP the `todo`
+   flag. The full heal-rules SCHEMA (every `kind` and its fields) is at
+   `~/.claude/skills/rune:cake/references/heal-rules.md` — read that exact path when you need it;
+   never grep across the skills tree hunting it (measured: a linter's only wasted call was that
+   hunt). The fault→raiser attribution is already in the module map's fault lines — don't re-read
+   the controller to re-derive it.
 3. `rune lint --strict` (the CI profile; also `RUNE_LINT_STRICT=1`) must pass — it fails on any
    remaining `todo: true`. This is the gate: plain `rune lint` stays quiet on a fresh scaffold so
    the build can iterate; `--strict` is what CI runs and what you must leave green.

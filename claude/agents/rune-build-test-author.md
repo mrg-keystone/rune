@@ -33,7 +33,10 @@ The orchestrator passes:
   whichever path the orchestrator passed.
 - **TEST FILE** — absolute path of the file to write, e.g.
   `<project>/src/<module>/.../{test.ts | int.test.ts | smk.test.ts}`.
-- **ROWS** — the inventory rows for this file, each `{ id, kind, behavior, assertion }`.
+- **ROWS** — the inventory rows for this file, each `{ id, kind, behavior, assertion, dtoFiles }`.
+  `dtoFiles` are the absolute `dto/*.ts` paths your assertions are typed against — Read those,
+  never re-discover them (measured: authors briefed without DTO paths re-found the same
+  `dto/task.ts` four times across one fleet).
 - **UNDER TEST** — absolute path of the `mod.ts` / coordinator the tests exercise.
 - **MODULE MAP PATH** — absolute path to the analyst's `module-map.md` artifact. Grep for the
   `## <your targetFile>` section and read ONLY that slice (plus `## dto` if you need constraints);
@@ -79,8 +82,19 @@ spurious TS2307.
 3. FAULT-COVERAGE tests are load-bearing: a declared fault slug needs a `Deno.test("<bare-slug>", …)`
    titled with the EXACT slug (the `fault-coverage` lint rule matches on the bare title). Assert the
    fault path actually fires (the boundary error surfaces, or the coordinator maps it).
+   **CALL SHAPE MATTERS — the slug must be the literal FIRST ARGUMENT**: `Deno.test("timeout", fn)`
+   or `Deno.test("timeout", { ignore }, fn)`. The options-object form
+   (`Deno.test({ name: "timeout", ignore, fn })`) is NOT recognized by the rule's static check and
+   fails lint even though the test runs (measured: every build of one module re-paid a linter round
+   converting options-object fault tests to name-first form). For an env-gated smoke fault test,
+   write `Deno.test("timeout", { ignore: !DB_URL }, async () => { … })` from the start.
 4. SMOKE tests (`smk.test.ts`) hit the REAL service boundary for connectivity — never mock it. They
    are run individually, not in the watch loop; write them to be meaningful against a live service.
+   For an ENTRYPOINT E2E file (`entrypoints/<surface>/e2e.test.ts`): the generated stub already
+   contains the canonical harness — `bootstrapServer` + `exerciseEndpoints`, `RUNE_E2E`-gated —
+   trust it as the API reference and edit in place; never read framework references or probe the
+   skills tree to re-derive that call surface (measured: an e2e author's only discovery was
+   hunting an API its own stub already demonstrated).
 5. RED — run this test FILE once (`deno test <file>` covers all its rows) and keep the failing
    tails. Every row's failure must be the `not implemented` throw or a genuine assertion mismatch —
    proof the test exercises real behavior the body doesn't yet provide. If one passes, it is gamed

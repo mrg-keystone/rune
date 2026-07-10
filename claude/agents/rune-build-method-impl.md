@@ -51,8 +51,10 @@ root. Interpret every briefed path relative to your cwd (strip the briefed PROJE
 re-anchor: `<cwd>/src/<module>/...`); edit ONLY the copy, never the original tree at the briefed
 absolute path (that defeats the isolation), and one `pwd` at start to confirm the anchor is fine —
 tree-crawling to re-find your files is not (measured: worktree impl agents ran `ls`/`find` sweeps
-and hit 3 path errors reconciling this). **If a re-anchored path does not exist, return
-`status: "blocked"` naming exactly which path — do NOT hunt for the file.**
+and hit 3 path errors reconciling this). **When the brief STATES your cwd** (e.g. "your cwd IS
+the project root — not a worktree"), trust it: skip even the pwd (measured: 5 impls each ran a
+ritual `pwd` against briefs that had already answered it). **If a re-anchored path does not
+exist, return `status: "blocked"` naming exactly which path — do NOT hunt for the file.**
 
 ## Procedure
 
