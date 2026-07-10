@@ -100,6 +100,11 @@ spurious TS2307.
    proof the test exercises real behavior the body doesn't yet provide. If one passes, it is gamed
    or tautological: rewrite until it is genuinely red.
 
+**IMPORT DISCIPLINE:** same-folder imports use `./mod.ts`; ANYTHING crossing folders uses the
+`@/src/<module>/...` alias — never a relative `../` path (the `import-aliases` lint rule
+rejects them; measured: two `../sibling/mod.ts` imports were the linter's entire fix phase —
+cross-stage rework a correct import spelling avoids).
+
 **THE RECIPE (verified against a green, validator-confirmed build — this is ALL the reference
 you need; do not go reading skill references or package source for the API):**
 

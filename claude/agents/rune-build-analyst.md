@@ -47,6 +47,13 @@ You READ source and WRITE only the build artifacts below. Produce two artifacts 
 - per `[REQ]` coordinator: the ordered steps; which are pure (the `<verb>Core`) vs I/O (an adapter
   call); the input/output DTO contract; the asserted seams.
 - per business feature method: its signature (typed from the spec) and the step it implements.
+- per business noun (entity): its **CONSTRUCTION CONTRACT**, read from the generated stubs —
+  constructor arity (`new Task()` zero-arg vs parameterized), how identity/fields are set
+  (auto-minted id? public settable fields?), and any store/registration side effect the
+  coordinator stubs imply. Test authors instantiate the entity from your map alone (measured:
+  a map that listed Task's methods but not its construction sent an author through TS2554/
+  TS2339 errors, three test-file rewrites, and a coordinator-stub read to reverse-engineer
+  what one map line could have said).
 - per data adapter method: the service boundary it calls, its declared **fault slugs**, AND the
   **generated core client's call surface** — read `src/core/data/<service>/mod.ts` once and state
   exactly how the adapter reaches the boundary: quote the client method(s) to call, or state

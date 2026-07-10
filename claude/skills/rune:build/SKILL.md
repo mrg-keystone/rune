@@ -256,12 +256,19 @@ result trustworthy.
      cause; an "intent unclear" report → re-run `rune-build-analyst` or ask the user.
      Re-validate ONLY the affected batches. An agent death = retry once, not a verdict.
      Cap retries at 2 rounds; surface a stuck unit instead of thrashing.
-4. **Lint + heal** → `rune-build-linter` (pass the project + module + SPEC path +
-   RUNE_BIN + the scaffold's `heal_rules` fact — when it says the file is absent, say
-   so in the brief: a no-`[ENT]`/no-fault-slug module has NOTHING to enrich, and the
-   linter must not hunt for or force one — plus the module-map and baseline PATHS: their
-   file census is how the linter finds sibling files for a fix without `find` sweeps).
-   It returns `rune lint --strict` clean + the enriched heal-rules.
+4. **Lint + heal** — CONDITIONAL. First run the read-only gate yourself:
+   `rune lint --strict` from the project root. This is a GATE CHECK, not lint work —
+   permitted inline precisely because it changes nothing and its output is binary.
+   - **"All clear" AND the scaffold's `heal_rules` fact says no heal surface** (file
+     absent, no `[ENT]`/project fault slugs) → the stage is DONE; spawn no linter
+     (measured: a linter spawned onto a clean pure module made 5 model calls and two
+     lint runs to change exactly nothing).
+   - **Findings, or heal-rules entries to enrich** → spawn `rune-build-linter` (pass
+     the project + module + SPEC path + RUNE_BIN + the `heal_rules` fact + the
+     module-map and baseline PATHS: their file census is how the linter finds sibling
+     files for a fix without `find` sweeps). Findings are NEVER fixed inline — the
+     gate check is yours, the fixing is the linter's. It returns `rune lint --strict`
+     clean + the enriched heal-rules.
 5. **Exit gate** — the module is built when ALL hold: unit+int green under `deno test
    <project>/src/<module>`; smoke tests pass individually (real connectivity); `rune
    lint --strict` clean; the `rune sync`/`exerciseEndpoints` run-all verdict **green** —
@@ -274,7 +281,10 @@ result trustworthy.
 
 You orchestrate and gate; you never scaffold, write a test, fill a body, run the lint
 fix, or run `rune sync`/`deno test` inline — every unit of work goes to its named
-specialist, and each stage gates the next on evidence. This includes after a mid-build
+specialist, and each stage gates the next on evidence. (One read-only exception, by
+design: the `rune lint --strict` GATE CHECK in the lint stage is yours — binary
+output, zero mutations; any finding it surfaces still goes to the linter, never
+fixed inline.) This includes after a mid-build
 fix: re-verification goes back through the validator/linter, not your own shell
 (measured: an orchestrator-run `deno test` exited 1 for environmental reasons and
 polluted its judgment — the specialist knew the baseline; it didn't). The same
