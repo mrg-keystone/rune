@@ -7,7 +7,12 @@ export { SwaggerDescription } from "@foundation/domain/business/swagger-descript
 export { setupWithSwagger } from "@foundation/domain/coordinators/setup-with-swagger/mod.ts";
 export { DanetDocumentBuilder } from "@foundation/domain/business/document-builder/mod.ts";
 export { bootstrapServer } from "@foundation/domain/coordinators/bootstrap-server/mod.ts";
-export type { SessionProfile } from "@foundation/domain/coordinators/bootstrap-server/mod.ts";
+export type {
+  BootstrapOptions,
+  ServerDisposer,
+  ServerLifecycle,
+  SessionProfile,
+} from "@foundation/domain/coordinators/bootstrap-server/mod.ts";
 export {
   InjectClass,
   InjectFactory,
@@ -102,6 +107,12 @@ export {
   Public,
   PUBLIC_METADATA_KEY,
 } from "@foundation/domain/business/public-route/mod.ts";
+export {
+  InProcessOnly,
+  Internal,
+  INTERNAL_METADATA_KEY,
+  isInternalContext,
+} from "@foundation/domain/business/internal-route/mod.ts";
 export {
   Grant,
   Grants,

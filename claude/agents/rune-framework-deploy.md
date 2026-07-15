@@ -25,7 +25,7 @@ The orchestrator routes a deploy/hosting matter here: standalone `Deno.serve`/`a
 
 ## Input contract
 
-The orchestrator passes: the goal (e.g. "host this backend under the sprig UI", "deploy to Deno Deploy", "mount under /api"), the project root, the relevant file(s) to wire (e.g. `serve.ts`, `bootstrap/`), and the absolute path to this skill's `references/deployment.md`. Assume nothing else.
+The orchestrator passes: the goal (e.g. "host this backend under the sprig UI", "deploy to Deno Deploy", "mount under /api"), the project root, the relevant file(s) to wire (e.g. `serve.ts`, `server/bootstrap/`), and the absolute path to this skill's `references/deployment.md`. Assume nothing else.
 
 ## Procedure
 

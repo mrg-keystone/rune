@@ -1,10 +1,11 @@
 #!/usr/bin/env sh
 # Install the rune CLI (rune + rune-lsp + rune-syntax) from GitHub Releases,
 # plus the rune Claude Code skills (rune:scope, rune:spec, rune:data, rune:build,
-# rune:cake, rune:framework, rune:docs) into user scope (~/.claude/skills/) and any
-# bundled agents into ~/.claude/agents/. Both ship from the repo's claude/ dir
-# (claude/skills/ + claude/agents/). Between them the skills cover the whole arc —
-# product scoping, spec authoring, data design, and the generated runtime.
+# rune:cake, rune:framework, rune:docs, rune:diamond) into user scope
+# (~/.claude/skills/) and any bundled agents into ~/.claude/agents/. Both ship from
+# the repo's claude/ dir (claude/skills/ + claude/agents/). Between them the skills
+# cover the whole arc — product scoping, spec authoring, data design, the generated
+# runtime, and the whole-flow conductor (rune:diamond).
 #
 # Installs CLEANLY: it first UNINSTALLS any existing rune (every known location),
 # then installs one fresh copy — so you never accumulate stale/duplicate binaries.
@@ -202,8 +203,8 @@ fi
 
 # The skills ship as a skill/ dir inside the release tarball, version-matched to
 # the binaries — that dir CONTAINS every rune:* skill folder (rune:scope, rune:spec,
-# rune:data, rune:build, rune:cake, rune:framework, rune:docs), so install_skills
-# replaces each in turn.
+# rune:data, rune:build, rune:cake, rune:framework, rune:docs, rune:diamond), so
+# install_skills replaces each in turn.
 # Fallback for releases that predate the dir: fetch claude/skills/MANIFEST.txt from
 # the repo at $RUNE_REF and curl each listed repo-relative path into a staging tree
 # mirroring claude/skills/, then install every folder under it.

@@ -35,14 +35,17 @@ The orchestrator passes:
 
 - **PROJECT ROOT** — absolute path.
 - **SPEC** — absolute path to the module's finalized spec (the contract). Post-sync it lives at
-  `<project>/src/<module>/<module>.rune` (`rune sync` relocates it out of `spec/runes/`); use
+  `<project>/server/src/<module>/<module>.rune` (`rune sync` relocates it out of `spec/runes/`); use
   whichever path the orchestrator passed.
 - **BATCH** — the test rows to judge, each `{ id, file, kind, behavior, assertion, targetFile }`
   with `file`/`targetFile` as absolute paths.
 - **MODULE MAP PATH** — absolute path to the analyst's `module-map.md` artifact. Read ONLY the
   sections for your batch's target files (Grep the headings) — never ingest the whole map.
-- **BASELINE PATH** — absolute path to the scaffold's `baseline.md` artifact (the pinned set
-  regressions are judged against). Read it yourself; the orchestrator does not inline it.
+- **BASELINE PATH** — absolute path to the scaffold's `baseline.md` artifact, PLUS the brief's
+  one-line baseline summary (e.g. "all red by design — any pass is progress"). The one-liner IS
+  your baseline for judging; open the file itself ONLY when the suite run shows a failure the
+  one-liner can't classify (a regression candidate needing the pinned detail) — measured: two
+  judges each read the full 6KB file to learn the one line their brief already carried.
 - **RESOLVED PATHS** (from the scaffold stage, inlined) — `deno_json`, `runtime_src` (framework
   internals live there — never run `deno info` yourself), `artifacts_dir`.
 
@@ -72,13 +75,20 @@ spurious TS2307.
   fires — a `Deno.test("timeout", …)` that asserts nothing is a shell, not coverage.
 - Is it gamed? Reject if it asserts the stub `throw`, tautologizes (`assert(true)`), or was written
   to match a body that doesn't do what the step says. A body that passes a wrong test is still wrong.
+- A `hardening` row must ACTUALLY exercise its `hardening_category`, not a happy path wearing the
+  label: `cross-entity` instantiates ≥2 instances and proves no cross-contamination;
+  `crash-restart` drives the durable state twice and proves no double-effect; `representation` uses
+  a value whose two representations disagree; `lifecycle-offpath` submits the non-happy state and
+  proves it is fully handled (not stranded); `wire-seam` feeds adversarial input and proves the seam
+  fails loudly, not silently changing meaning. A hardening row that only re-proves the happy path is
+  gamed — bounce it `write-tests`.
 - Anchor on the spec/DTO contract, not on how the code happens to look.
 
 **PROVE GREEN (run — once per test file, then ONE suite run for the whole batch)**
 
 - Run each batched TEST FILE once (`deno test <file>` covers all its `Deno.test`s): every batch
   test must PASS. Keep the output tails.
-- Then run the FULL module suite ONCE (`deno test <project>/src/<module>`) and compare against the
+- Then run the FULL module suite ONCE (`deno test <project>/server/src/<module>`) and compare against the
   pinned baseline. A body that fixed one test by breaking another is a regression — name the test
   that broke. Do NOT re-run the suite per test; one run judges the whole batch.
 - **A pre-existing failure is NOT a regression.** If the full-module run fails to COMPILE for a reason
@@ -95,6 +105,14 @@ spurious TS2307.
 - `fail` + `bounce_to: "write-tests"` = wrong/gamed test, with the specific defect.
 - `fail` + `bounce_to: "implement"` = correct test, red or body-gamed, with what's wrong.
 - A regression is reported ONCE at batch level, naming the broken test — not per verdict.
+- **A red e2e/chain test whose failure contradicts the dataflow routes to the WIRING, not the
+  body.** If the endpoint chain runs in an order the DTO producer→consumer graph forbids (a
+  minter depending on its mutator, a `$seed` for a field an earlier endpoint produces), the
+  defect is the controller's `@Endpoint` `order`/`dependsOn`/`bind` — report
+  `bounce_to: "implement"` with reason "controller wiring: <the exact decorator fix>", never
+  "the store/body should seed the record" (measured: a validator blamed the store and
+  explicitly exonerated the controller — the controller was the fix point; generated wiring
+  is codegen-owned to CREATE but dev-owned to correct).
 
 No "looks fixed" — every claim carries run output. Evidence discipline: paste output TAILS (the
 verdict lines, ≤10 lines per run), never full runner dumps.
@@ -113,7 +131,7 @@ Return your final message as this exact JSON, nothing else:
   "verdicts": [
     {
       "id": "int-create-happy",
-      "test": "src/tasks/domain/coordinators/task-create/int.test.ts::create — happy path",
+      "test": "server/src/tasks/domain/coordinators/task-create/int.test.ts::create — happy path",
       "correct": true,
       "green": true,
       "verdict": "pass",
@@ -129,7 +147,10 @@ Return your final message as this exact JSON, nothing else:
 `verdict`: `pass` | `fail` per row. `bounce_to`: `"write-tests"` | `"implement"` | `null`.
 `regression`: the name of any baseline test a body broke, else `null`.
 
-Return ONLY this.
+Return ONLY this. No prose "correctness review" narrative before or after the JSON — the
+`reason`/`evidence` fields ARE where findings go (measured: two validators each prepended a
+~2K-char prose narration restating their own `verdicts[]`, making them the build's two largest
+fleet returns; the orchestrator re-pays that text on every later turn).
 
 <!-- BEGIN rune-agent-guardrail: scripts/agent-guardrail.md -->
 ## Never crawl the filesystem for framework source

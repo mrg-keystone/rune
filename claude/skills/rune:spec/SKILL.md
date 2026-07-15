@@ -58,6 +58,13 @@ user **before** delegating authoring:
 - **One `[REQ]` = one externally-triggerable endpoint** (an HTTP route, cron job, queue/
   webhook). Internal/domain logic is **steps inside** a REQ, never its own REQ. Author
   from the wiring / endpoint inventory, not from prose.
+- **Exposure is explicit — a `[REQ]` alone has no HTTP surface.** Only an `[ENT]`
+  generates an `@Endpoint` controller; there is no auto-exposure of `[REQ]`s. If the
+  module will be served, hit over HTTP, cake-walked, or documented, the inventory MUST
+  carry the `[ENT]` lines (typically one per exposed `[REQ]`). A `[REQ]`-only spec is a
+  pure library module — a legitimate choice, but make it consciously: without an `[ENT]`
+  the cake walk over it is vacuous (`/docs/<m>` 404s) and downstream builds report
+  `run-all: skipped (no [ENT] surface)`.
 - **The waist rule (the cross-repo contract):** every endpoint is a **query** (a
   current-state read DTO: `<type>.all`, `<type>.get`) or a **command** (an intent verb +
   input DTO) — **never an "edit-this-record" endpoint** (no `PUT`/`PATCH`-a-record CRUD).

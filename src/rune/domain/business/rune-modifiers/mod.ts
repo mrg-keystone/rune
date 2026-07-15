@@ -111,6 +111,20 @@ export const TYP_MODIFIERS: ReadonlyMap<string, TypModifierSpec> = new Map([
     () => "@IsPositive()",
     () => "@IsPositive({ each: true })",
   ),
+  // json — the field carries a JSON-encoded string (an object/array over the
+  // wire without a typed [DTO]). @IsJSON validates that the string PARSES at
+  // the boundary, so invalid JSON 422s here instead of degrading silently
+  // downstream (a truncated body flipping a scatter into a collapse, a
+  // single-quoted payload becoming a scalar). The string stays the wire
+  // representation; the parseability check is the contract.
+  entry(
+    "json",
+    "string",
+    false,
+    "IsJSON",
+    () => "@IsJSON()",
+    () => "@IsJSON({ each: true })",
+  ),
   // example=<value> — a real sample value for the field, emitted as
   // @ApiProperty({ example }) so keep's runner/cake fill required, unbound
   // inputs from it instead of 422ing in any headless walk. No base
@@ -125,7 +139,7 @@ export const TYP_MODIFIERS: ReadonlyMap<string, TypModifierSpec> = new Map([
 ]);
 
 const ALLOWED =
-  "(allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>, from=<path|path*|query|header>)";
+  "(allowed: ext, core, uuid, email, url, nonempty, json, int, min=<n>, max=<n>, positive, example=<value>, from=<path|path*|query|header>)";
 
 const NUMERIC = /^-?\d+(\.\d+)?$/;
 

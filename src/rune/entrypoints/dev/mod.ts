@@ -1,4 +1,4 @@
-import { join, relative, resolve } from "#std/path";
+import { dirname, join, relative, resolve } from "#std/path";
 import { isProjectSpec } from "@rune/domain/business/rune-bindings/mod.ts";
 import { planManifest } from "@rune/domain/business/rune-manifest/mod.ts";
 import { runSync } from "@rune/entrypoints/sync/mod.ts";
@@ -146,7 +146,8 @@ async function checkSpec(root: string, rel: string): Promise<string[]> {
 export async function runDev(args: string[]): Promise<number> {
   const target = resolve(args[0] ?? ".");
   // A .rune path means "dev the project that owns this spec" — same root rule as
-  // sync — but the loop always operates project-wide from that root.
+  // sync (which resolves to the `server/` codegen root) — but the loop always
+  // operates backend-wide from that root.
   let root = target.endsWith(".rune") ? resolveRoot(target) : target;
   try {
     // Canonical (symlink-free) root so collector paths and FS event paths agree
@@ -156,11 +157,23 @@ export async function runDev(args: string[]): Promise<number> {
     console.error(`${RED}rune dev: no such directory: ${root}${RESET}`);
     return 2;
   }
+  // In the composed monorepo the keep backend lives in a `server/` package beside
+  // the sprig `ui/`. `rune dev` run from the git root (no .rune arg) points at the
+  // git root; descend into `server/` when THAT holds the backend, so `rune dev`
+  // Just Works from the root as well as from inside `server/`.
+  if (
+    !(await specExists(join(root, "bootstrap", "mod.ts"))) &&
+    (await specExists(join(root, "server", "bootstrap", "mod.ts")))
+  ) {
+    root = join(root, "server");
+  }
   try {
     await Deno.stat(join(root, "bootstrap", "mod.ts"));
   } catch {
     console.error(
-      `${RED}rune dev: ${root} has no bootstrap/mod.ts — run \`rune sync\` first.${RESET}`,
+      `${RED}rune dev: no keep backend at ${
+        join(root, "bootstrap", "mod.ts")
+      } (nor server/bootstrap/mod.ts) — run \`rune sync\` first.${RESET}`,
     );
     return 2;
   }
@@ -282,8 +295,11 @@ export async function runDev(args: string[]): Promise<number> {
   for (
     const cand of [
       join(root, "src"),
-      join(root, "spec"), // the `rune init` default spec-folder layout (singular)
+      join(root, "spec"), // the legacy under-root spec-folder layout (singular)
       join(root, "specs"), // the older plural staging layout
+      // the shared authoring spec/ sits at the git root, a SIBLING of the
+      // `server/` codegen root — watch it so a staging-spec edit re-syncs.
+      join(dirname(root), "spec"),
       join(root, "bootstrap"),
       join(root, "deno.json"),
     ]

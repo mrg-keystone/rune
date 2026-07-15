@@ -20,10 +20,29 @@ async function inTempCwd(fn: (dir: string) => Promise<void>): Promise<void> {
  *  tasks, an empty keep backend, and the src/ UI entry. Lets us test the overlay
  *  without shelling out to (or installing) the sprig CLI. */
 async function fakeSprigScaffold(proj: string): Promise<void> {
-  await Deno.mkdir(join(proj, "bootstrap"), { recursive: true });
-  await Deno.mkdir(join(proj, "src", "pages", "home"), { recursive: true });
+  // The composed monorepo split: a ui/ UI package + a server/ keep-backend package,
+  // a shared spec/ at the root, and the git-root serve.ts + workspace deno.json.
+  await Deno.mkdir(join(proj, "server", "bootstrap"), { recursive: true });
+  await Deno.mkdir(join(proj, "ui", "src", "pages", "home"), { recursive: true });
+  // git-root workspace deno.json
   await Deno.writeTextFile(
     join(proj, "deno.json"),
+    JSON.stringify(
+      {
+        workspace: ["./ui", "./server"],
+        tasks: {
+          dev: "sprig dev",
+          build: "sprig build",
+          start: "deno serve -A serve.ts",
+        },
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  // ui/ member: the sprig UI package
+  await Deno.writeTextFile(
+    join(proj, "ui", "deno.json"),
     JSON.stringify(
       {
         name: "@app/myapp",
@@ -36,29 +55,45 @@ async function fakeSprigScaffold(proj: string): Promise<void> {
           "$": "./src/mod.ts",
           "@sprig/core": "jsr:@sprig/core@^0.20.2",
           "@sprig/keep": "jsr:@sprig/core@^0.20.2/keep",
-          "@mrg-keystone/rune": "jsr:@mrg-keystone/rune@^4.1.0",
           "reflect-metadata": "npm:reflect-metadata@0.1.13",
-        },
-        tasks: {
-          dev: "sprig dev .",
-          build: "sprig build .",
-          start: "deno serve -A --unstable-kv serve.ts",
         },
       },
       null,
       2,
     ) + "\n",
   );
+  // server/ member: the keep backend package (its own pins; rune overlays @/ etc.)
+  await Deno.writeTextFile(
+    join(proj, "server", "deno.json"),
+    JSON.stringify(
+      {
+        name: "@app/myapp-server",
+        compilerOptions: {
+          experimentalDecorators: true,
+          emitDecoratorMetadata: true,
+        },
+        imports: {
+          "@sprig/core": "jsr:@sprig/core@^0.20.2",
+          "@mrg-keystone/rune": "jsr:@mrg-keystone/rune@^4.1.0",
+          "reflect-metadata": "npm:reflect-metadata@0.1.13",
+        },
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  // git-root serve.ts — imports the keep backend from ./server/bootstrap/mod.ts
   await Deno.writeTextFile(
     join(proj, "serve.ts"),
-    `import { serveSprig } from "@sprig/keep";\nimport { api } from "./bootstrap/mod.ts";\nimport { sprigApp } from "$";\nexport default serveSprig({ keep: api, app: sprigApp, base: "/ui" });\n`,
+    `import { serveSprig } from "@sprig/keep";\nimport { api } from "./server/bootstrap/mod.ts";\nexport default serveSprig({ keep: api });\n`,
   );
+  // server/bootstrap/mod.ts — sprig's empty keep backend (overlay replaces it)
   await Deno.writeTextFile(
-    join(proj, "bootstrap", "mod.ts"),
+    join(proj, "server", "bootstrap", "mod.ts"),
     `import { bootstrapServer } from "@mrg-keystone/rune";\nexport const api = await bootstrapServer("myapp", [], {});\n`,
   );
   await Deno.writeTextFile(
-    join(proj, "src", "mod.ts"),
+    join(proj, "ui", "src", "mod.ts"),
     `export const sprigApp = {} as unknown;\n`,
   );
 }
@@ -72,18 +107,20 @@ Deno.test("overlayRuneBackend — lays the rune keep backend + spec/ over a spri
     await overlayRuneBackend(proj, "myapp", ioErrors);
     assertEquals(ioErrors, [], "overlay should not report I/O errors");
 
-    // bootstrap/ is now the registry-driven backend (renderMain), plus registry + config.
+    // server/bootstrap/ is now the registry-driven backend (renderMain), plus registry + config.
     for (
       const p of [
-        "bootstrap/mod.ts",
-        "bootstrap/config.ts",
-        "bootstrap/modules.ts",
+        "server/bootstrap/mod.ts",
+        "server/bootstrap/config.ts",
+        "server/bootstrap/modules.ts",
         "spec/runes/core.rune",
       ]
     ) {
       assert((await Deno.stat(join(proj, p))).isFile, `missing ${p}`);
     }
-    const boot = await Deno.readTextFile(join(proj, "bootstrap", "mod.ts"));
+    const boot = await Deno.readTextFile(
+      join(proj, "server", "bootstrap", "mod.ts"),
+    );
     assertStringIncludes(
       boot,
       'import { bootstrapServer } from "@mrg-keystone/rune";',
@@ -99,6 +136,14 @@ Deno.test("overlayRuneBackend — lays the rune keep backend + spec/ over a spri
       (await Deno.stat(join(proj, "spec", "misc"))).isDirectory,
       "spec/misc/ should exist",
     );
+    // The canonical layout is recorded as an artifact (a decision, not an accident),
+    // with a Deviations section for intentional divergence.
+    const layout = await Deno.readTextFile(
+      join(proj, "spec", "misc", "layout.md"),
+    );
+    assertStringIncludes(layout, "# Composed-repo layout");
+    assertStringIncludes(layout, "serveSprig");
+    assertStringIncludes(layout, "## Deviations");
     assert(
       (await Deno.stat(join(proj, "spec", "ui"))).isDirectory,
       "spec/ui/ should exist",
@@ -106,13 +151,13 @@ Deno.test("overlayRuneBackend — lays the rune keep backend + spec/ over a spri
 
     // sprig's UI entry is untouched.
     assert(
-      (await Deno.stat(join(proj, "src", "mod.ts"))).isFile,
-      "sprig's src/mod.ts must survive the overlay",
+      (await Deno.stat(join(proj, "ui", "src", "mod.ts"))).isFile,
+      "sprig's ui/src/mod.ts must survive the overlay",
     );
 
-    // deno.json now carries BOTH sprig's pins and rune's engine import map, merged
-    // additively — sprig's @mrg-keystone/rune pin is preserved (not clobbered).
-    const denoJson = await Deno.readTextFile(join(proj, "deno.json"));
+    // server/deno.json now carries BOTH sprig's pins and rune's engine import map,
+    // merged additively — sprig's @mrg-keystone/rune pin is preserved (not clobbered).
+    const denoJson = await Deno.readTextFile(join(proj, "server", "deno.json"));
     assertStringIncludes(denoJson, "@sprig/core", "sprig's pins must survive");
     assertStringIncludes(
       denoJson,

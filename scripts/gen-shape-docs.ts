@@ -113,6 +113,25 @@ const md = `# Canonical Project Shape
 - **Forbidden directory names** (anywhere): ${forbiddenDirs.map(f => `\`${f}\``).join(", ")}
 - **Loose file names** (flagged anywhere): ${looseNames.map(f => `\`${f}\``).join(", ")}
 
+## Where this sits in a composed repo
+
+A rune-generated keep backend is the \`server/\` package of a composed monorepo:
+
+\`\`\`
+<git-root>/
+  deno.json     # Deno workspace ["./ui","./server"]
+  serve.ts      # serveSprig({ keep: api }) — imports ./server/bootstrap/mod.ts
+  ui/           # the sprig UI package (ui/src/, ui/static/)
+  server/       # <- THE CODEGEN ROOT: the tree below is rooted HERE
+  spec/         # shared authoring (spec/runes/, spec/misc/, spec/ui/) at the git root
+\`\`\`
+
+The structure below is **relative to the \`server/\` codegen root** — i.e. \`src/<module>/\`
+below is \`<git-root>/server/src/<module>/\` on disk, and \`bootstrap/\` is
+\`<git-root>/server/bootstrap/\`. \`rune sync\`/\`rune dev\`/\`rune lint\` all resolve this
+\`server/\` root from the spec path (or descend into it from the git root), so the
+codegen-root-relative rules below hold unchanged.
+
 ## Structure
 
 \`\`\`
