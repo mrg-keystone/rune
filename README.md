@@ -26,7 +26,7 @@ from "write it" to "watch it run green."
   `@mrg-keystone/rune` is a stable identifier, not a separate product.
 
 Everything else is shared across both layers and lives in exactly one place:
-`claude/` (Claude Code assets — the seven rune skills under `claude/skills/` — `rune:scope`/`spec`/`data`/`build`/`cake`/`framework`/`docs` — plus `claude/agents/`), `examples/` (spec→code
+`claude/` (Claude Code assets — the eight rune skills under `claude/skills/` — `rune:scope`/`spec`/`data`/`build`/`cake`/`framework`/`docs`/`diamond` — plus `claude/agents/`), `examples/` (spec→code
 demos and runnable backends), `e2e/` (the spec→runtime acceptance suite), `docs/`,
 `todos/`.
 
@@ -127,9 +127,10 @@ to reconcile (a new abstract method to implement, or a stray one to delete).
 
 - **Constraints in the spec**: `[TYP:uuid] id: string`,
   `[TYP:min=0,max=100] qty: number` — comma-separated `[TYP]` modifiers
-  (`uuid`, `email`, `url`, `nonempty`, `int`, `min=N`, `max=N`, `positive`;
-  they compose with `ext`/`core`) become class-validator decorators on the
-  generated DTO fields.
+  (`uuid`, `email`, `url`, `nonempty`, `json`, `int`, `min=N`, `max=N`,
+  `positive`; they compose with `ext`/`core`) become class-validator decorators
+  on the generated DTO fields. `json` marks a string that carries a JSON blob and
+  checks it parses (`@IsJSON()`) so invalid JSON 422s at the seam, not downstream.
 - **Asserts at every seam**: generated coordinators validate input, adapter
   reads/writes, and the result via `assert` from `#assert` (rune's runtime).
   A failed contract throws `RuneAssertError`, which the runtime maps to HTTP 422
@@ -155,9 +156,9 @@ deno task studio
 
 | Command | Does |
 |---|---|
-| `rune init <project-name>` | scaffold a fresh project (`deno.json`, `spec/runes/core.rune`, empty `src/`, `bootstrap/`) — author specs in `spec/runes/`, `rune sync spec/runes/<m>.rune` generates into `src/<m>/` |
+| `rune init <project-name>` | scaffold a fresh **composed monorepo** — a Deno-workspace git root (`deno.json` with `workspace: ["./ui","./server"]`, a generated `serve.ts`) composing a `ui/` package (sprig UI) and a `server/` package (`server/deno.json`, `server/bootstrap/`, shared `spec/runes/core.rune` at the git root) — author specs in `spec/runes/`, `rune sync spec/runes/<m>.rune` generates into `server/src/<m>/` |
 | `rune [dir]` | lint a project against the architecture |
-| `rune sync <file.rune>` | generate/update a module from its spec (+ runtime bootstrap in `bootstrap/`) |
+| `rune sync <file.rune>` | generate/update a module from its spec (+ runtime bootstrap in `server/bootstrap/`) |
 | `rune manifest <file.rune>` | one-shot generate (no prune) |
 | `rune validate <keywords.json>` | validate the artifact |
 | `rune lsp` / `rune fmt <file>` | language server / format (Rust helpers) |

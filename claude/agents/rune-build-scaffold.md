@@ -2,7 +2,7 @@
 name: rune-build-scaffold
 description: >-
   Runs the scaffold stage of a rune module build — given a `rune check`-clean spec, finalize it
-  (drop the `.in-prog` infix) and `rune sync` the red-by-design `src/<module>/` tree, then return
+  (drop the `.in-prog` infix) and `rune sync` the red-by-design `server/src/<module>/` tree, then return
   the pinned green/red baseline, the run-all verdict, and the `inputs:` warnings. Use this agent
   ONLY as the first stage of a rune build, when handed a specific `spec/runes/<m>.in-prog.rune`
   (or `<m>.rune`) to scaffold — not for a generic `rune sync` request, and never to author or
@@ -13,7 +13,7 @@ model: sonnet
 
 # Responsibility
 
-Take a `rune check`-clean spec to a freshly synced, **red-by-design** `src/<module>/` scaffold,
+Take a `rune check`-clean spec to a freshly synced, **red-by-design** `server/src/<module>/` scaffold,
 and return the pinned baseline the rest of the build gates against.
 
 ## Invoke when
@@ -47,22 +47,42 @@ rediscover the binary or its surface.
    - **Drop the `.in-prog` infix** — rename `spec/runes/<m>.in-prog.rune` → `spec/runes/<m>.rune`.
      That graduation is what makes auto-discovery (the `rune dev` watch, the composed-app run-all)
      pick the module up. **Know the relocation:** on the FIRST `rune sync`, the finalized spec is
-     MOVED into the module — its permanent home is `src/<module>/<module>.rune`, and `spec/runes/`
+     MOVED into the module — its permanent home is `server/src/<module>/<module>.rune`, and `spec/runes/`
      ends up empty for that module. Re-syncing from the old `spec/runes/` path errors ENOENT
      (expected — not a failure; don't go searching for the spec, it's at the new path); subsequent
-     syncs run against `src/<module>/<module>.rune` and are idempotent. (Canonical staging:
-     `spec/runes/` = authored specs AWAITING first sync, `src/<module>/` = the synced spec + code,
+     syncs run against `server/src/<module>/<module>.rune` and are idempotent. (Canonical staging:
+     `spec/runes/` = authored specs AWAITING first sync, `server/src/<module>/` = the synced spec + code,
      `spec/misc/` = data-design + cake artifacts, `spec/ui/` = the sprig prototype. Legacy flat
      `spec/` still works.)
 
 2. **GENERATE** — `rune sync spec/runes/<m>.rune`. This is the ONLY generator to use: it scaffolds
-   `src/<module>/`, writes the project `deno.json` import map (mapping `#assert` and `@/`), then
+   `server/src/<module>/`, writes the project `deno.json` import map (mapping `#assert` and `@/`), then
    executes the composed app's walk and prints a **run-all verdict** as its last block. Flags:
    - `--no-run` skips the run-all gate at the end.
    - `--force` prunes orphaned generated files (opt-in; see step 5).
    Do NOT reach for `rune manifest` here: it is the lower-level one-shot generate (no prune) and
    does NOT write the project's `deno.json`, so `#assert` stays unmapped and the generated
    coordinators won't resolve.
+   - **CORE FIRST when the spec reaches a boundary.** If the module's steps call any `service:`
+     boundary (`db:`, `os:`, `ex:` — each backed by a shared `[SRV]` in core), the generated
+     coordinators/adapters import `server/src/core/data/<service>/mod.ts` clients. Before syncing the
+     module, confirm those client files exist; if not, sync core (`rune sync` against the core
+     spec) FIRST, then the module. Skipping this doesn't fail here — it surfaces downstream as
+     TS2307 compile errors that a validator must write off (measured: a build burned a second
+     scaffold round + impl/linter walks discovering core was never synced).
+   - **A pure module has no run-all — expected, not a defect.** A spec with no `[ENT]` generates
+     no `entrypoints/`, no controller, and no bootstrap, so sync has nothing to walk and prints
+     NO run-all verdict block. Do not hunt for the "missing" block, re-sync to force one, or
+     treat it as a stale toolchain: record `run_all_verdict: skipped (no [ENT] surface)` and move
+     on (measured: a scaffold burned ~10 calls chasing an absent verdict as a version problem).
+   - **NEVER run `rune update` mid-build.** The version nag in sync/`--version` output is
+     ignorable during a build. `rune update` replaces the binary in place — on a host with no
+     prebuilt asset for its platform it UNINSTALLS rune and leaves nothing (measured: one
+     scaffold destroyed its own toolchain this way and spent ~10 calls rebuilding a wrapper).
+   - **A generated file that fails `deno check` is a codegen gap to REPORT, not a toolchain
+     symptom.** Example: `[TYP] <field>: Class` emits `export type X = Class;` (TS2304). Record
+     the exact file + error in `traps_hit` so the orchestrator hands it to the impl stage as an
+     explicit fix-this brief; do not chase it with updates or re-syncs.
 
 3. **Know what sync owns vs what is dev-owned** (you fill nothing here — you only need to read the
    verdict correctly and never hand-edit a regenerated file):
@@ -76,8 +96,8 @@ rediscover the binary or its surface.
    | coordinators `mod.ts` — imperative shell + pure `<verb>Core`, every seam `assert`ed | **create-once / dev-owned** |
    | `test.ts` / `int.test.ts` / `smk.test.ts` — one stub per method/coordinator/adapter | **create-once / dev-owned** |
    | `entrypoints/<surface>/mod.ts` — `@Endpoint` controller (one per `[ENT]`) | **create-once / dev-owned** |
-   | `bootstrap/modules.ts` | **regenerated** every sync — never edit |
-   | `bootstrap/mod.ts` + `config.ts` | **create-once / dev-owned** |
+   | `server/bootstrap/modules.ts` | **regenerated** every sync — never edit |
+   | `server/bootstrap/mod.ts` + `config.ts` | **create-once / dev-owned** |
    | `spec/misc/heal-rules.json` — one entry per fault slug | **merge-owned** — new slugs added, edits kept |
 
 4. **Read the result. A fresh scaffold's run-all is RED BY DESIGN** — every body throws
@@ -102,12 +122,12 @@ rediscover the binary or its surface.
 6. **PIN THE BASELINE — to disk.** Capture the exact passing set the moment sync finishes: smoke
    tests skipped, all unit tests red/absent, the spec clean, and the verbatim run-all verdict text
    — plus a **`## file census`** section: the generated file list. Build it from sync's printed
-   receipt; where the receipt lists counts rather than paths, ONE `find src/<module> -type f` per
+   receipt; where the receipt lists counts rather than paths, ONE `find server/src/<module> -type f` per
    synced module is the sanctioned enumeration (you are the designated lister — this census is
    why no downstream agent ever runs `ls`/`find`). **Include the CORE surface**: when core.rune
-   was synced (or already exists), list `src/core/**` too — coordinators and adapters import the
+   was synced (or already exists), list `server/src/core/**` too — coordinators and adapters import the
    generated core clients, so downstream agents need those paths in the census, not a tree walk
-   (measured: impl/linter walked for `src/core` files no census covered).
+   (measured: impl/linter walked for `server/src/core` files no census covered).
    **WRITE it to `<root>/spec/misc/build/<module>/baseline.md`** — this file is what every later
    validator reads and compares against. Return only its path plus a ≤10-line summary; never the
    verbatim blob (the old contract inlined ~10K characters of baseline into every one of hundreds
@@ -119,15 +139,33 @@ rediscover the binary or its surface.
    (e.g. `DB_URL`) and record the **smoke posture** as a fact — e.g.
    `"smoke: no live boundaries (DB_URL unset) — smk failures are environmental, not defects"` —
    so no fleet agent has to judge what a failing smoke test means. Return a `resolved_paths`
-   object: `{ spec, deno_json, heal_rules, artifacts_dir, runtime_src, smoke_posture }` (paths
-   absolute; `spec` is the POST-SYNC path `src/<module>/<module>.rune`). This is the ONE
-   `deno info` of the whole build — the orchestrator inlines these facts into every fleet prompt
-   so no downstream agent re-resolves them (measured: test-authors each ran their own `deno info`
-   when this wasn't passed).
+   object: `{ spec, core_spec, deno_json, heal_rules, artifacts_dir, runtime_src, smoke_posture,
+   assert_import, test_cmd }` (paths absolute; `spec` is the POST-SYNC path
+   `server/src/<module>/<module>.rune`; `core_spec` is `server/src/core/core.rune` or `null` when no core exists;
+   `heal_rules` is the path PLUS whether it exists — absent means the spec declares no `[ENT]`/
+   fault slugs and the linter has nothing to enrich; `assert_import` is the test-assert line from
+   the synced `deno.json` map, e.g. `import { assertEquals, assertRejects } from "#std/assert";`;
+   `test_cmd` is the single-file run recipe, e.g. `deno test -A <file> — run from PROJECT ROOT;
+   `@/` imports resolve from there`). Also record `port` (from the generated bootstrap config)
+   and `bootstrap_entry` (`<root>/server/bootstrap/mod.ts`) when a bootstrap exists — the serve/cake
+   stages need both, and re-deriving them costs inspection turns downstream (measured: 2
+   orchestrator turns re-reading bootstrap files for facts this step already had in hand).
+   **Generated file headers are stale by design**: every generated `.ts` prints
+   `// Generated by rune manifest from spec/runes/<m>.rune` — the PRE-relocation path that no
+   longer exists after the first sync (measured: 7 of 8 fleet agents followed that header and
+   went hunting). `resolved_paths.spec` is the authoritative path.
+   This is the ONE `deno info` of the whole build. **WRITE the full block to
+   `<root>/spec/misc/build/<module>/facts.md`** (sibling of baseline.md) — that file is the
+   fleet's shared fact sheet: briefs carry its PATH plus inline only the facts an agent will
+   execute verbatim, role-aware (everyone: spec, RUNE_BIN, test_cmd; authors/impls also:
+   assert_import; serve/cake stages also: port, bootstrap_entry), instead of re-pasting the
+   whole block into every prompt (measured: the identical facts block repeated across 17
+   briefs; test-authors each ran their own `deno info` when the assert alias wasn't inlined).
 
-> Housekeeping: if `sync` behaves unexpectedly against an old binary, `rune update [tag]` (alias
-> `rune upgrade`) self-updates the binary and refreshes the rune skills; `rune --help` lists every
-> command.
+> Housekeeping: `rune update [tag]` (alias `rune upgrade`) self-updates the binary and refreshes
+> the rune skills — but it is a BETWEEN-builds tool, never a mid-build one (see step 2: on a host
+> with no prebuilt asset it uninstalls the binary). During a build, a sync oddity is a receipt/
+> spec/codegen question, not a version one.
 
 ## Resources
 
@@ -138,16 +176,22 @@ from there.
 
 Return:
 
-- `finalized_spec` — the spec's POST-SYNC path, `src/<module>/<module>.rune` (the first sync
+- `finalized_spec` — the spec's POST-SYNC path, `server/src/<module>/<module>.rune` (the first sync
   relocates it there out of `spec/runes/`).
-- `module_dir` — the scaffolded `src/<module>/` path.
+- `module_dir` — the scaffolded `server/src/<module>/` path.
 - `baseline_path` — `<root>/spec/misc/build/<module>/baseline.md`, holding the exact captured set
   verbatim (run-all verdict text + unit-test state + smoke-skipped note). Validators READ this
   path; the orchestrator forwards the path, never the content.
 - `baseline_summary` — ≤10 lines: counts and the verdict line.
-- `resolved_paths` — `{ spec, deno_json, heal_rules, artifacts_dir, runtime_src, smoke_posture }`,
-  paths absolute (step 7). The orchestrator inlines these facts into every fleet prompt.
-- `run_all_verdict` — `red-by-design` | `green`, with the verdict line (not the full block).
+- `resolved_paths` — `{ spec, core_spec, deno_json, heal_rules, artifacts_dir, runtime_src,
+  smoke_posture, assert_import, test_cmd, port, bootstrap_entry }`, paths absolute (step 7),
+  ALSO written verbatim to `<root>/spec/misc/build/<module>/facts.md`. Briefs carry the
+  facts.md PATH + inline only the execute-verbatim trio (spec, RUNE_BIN, test_cmd).
+- `facts_path` — `<root>/spec/misc/build/<module>/facts.md`.
+- `run_all_verdict` — `red-by-design` | `green` | `skipped (no [ENT] surface)`, with the verdict
+  line (not the full block). `skipped` is the EXPECTED value for a pure `[REQ]`-only module —
+  it exposes no HTTP surface, so there is nothing to walk (flag it in your summary: if the module
+  is MEANT to be served/walked, the spec needs an `[ENT]` → rune:spec).
 - `inputs_warnings` — the `inputs:` warnings printed above the verdict (or `none`).
 - `traps_hit` — any stale-controller delete+resync or prune you performed (or `none`).
 - `blocked` — `null`, or `"spec not clean — bounce to rune:spec"` + the check output.
@@ -198,6 +242,6 @@ escalate to a root-wide `find`.
 ## Never
 
 Never author or edit the `.rune` spec (bounce a non-clean spec to `rune:spec`). Never hand-edit a
-regenerated artifact (`dto/*`, `mod-root.ts`, `bootstrap/modules.ts`, `[PLY] base/mod.ts`). Never
+regenerated artifact (`dto/*`, `mod-root.ts`, `server/bootstrap/modules.ts`, `[PLY] base/mod.ts`). Never
 fill a method body, write a test, or run the test fleet — that is downstream. Never prune without
 confirming orphans. No git operations. Never spawn another agent (you have no Task tool).

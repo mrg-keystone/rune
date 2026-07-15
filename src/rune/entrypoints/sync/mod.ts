@@ -139,7 +139,7 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
       "Usage: rune sync <rune-file> [--root <dir>] [--artifact <keywords.json>] [--dry-run] [--force] [--regen <path>] [--no-run]",
     );
     console.error(
-      "  The project root is resolved from <rune-file>'s path (the dir above spec/runes/, spec/, or src/<module>/); --root overrides it. Shared [SRV]s are read from <root>/src/core/core.rune.",
+      "  The keep codegen root is resolved from <rune-file>'s path: a shared <git>/spec/runes/ (or spec/) staging spec resolves to the sibling <git>/server/ codegen root; a moved src/<module>/ spec to the server/ above it. Codegen lands in <root>/src/<module>/ (i.e. <git>/server/src/<module>/). --root overrides it (e.g. --root <git>/server). Shared [SRV]s are read from <root>/src/core/core.rune, falling back to the shared <git>/spec/runes/core.rune.",
     );
     return 2;
   }
@@ -775,7 +775,11 @@ export async function ensureBootstrap(
     [
       "mod.ts",
       () => {
-        const appName = basename(root).toLowerCase()
+        // In the composed monorepo the codegen root is `<git>/server`, so
+        // basename(root) is the literal "server" — name the app after the git
+        // root (its parent) instead, and fall back to "app".
+        const nameDir = basename(root) === "server" ? dirname(root) : root;
+        const appName = basename(nameDir).toLowerCase()
           .replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "app";
         return renderMain(appName);
       },
@@ -1286,18 +1290,19 @@ async function collectFiles(root: string): Promise<Set<string>> {
   const SKIP = new Set([".git", "node_modules", "dist", ".playwright-mcp"]);
   const files = new Set<string>();
   async function walk(dir: string, prefix: string): Promise<void> {
-    let entries: AsyncIterable<Deno.DirEntry>;
+    // Deno.readDir returns its iterable synchronously and only throws on
+    // ITERATION, so the try must wrap the loop — a not-yet-created codegen root
+    // (a first `rune sync` into a fresh `server/`) is simply "no files", not an error.
     try {
-      entries = Deno.readDir(dir);
+      for await (const entry of Deno.readDir(dir)) {
+        if (SKIP.has(entry.name) || entry.name.startsWith(".")) continue;
+        const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+        const abs = join(dir, entry.name);
+        if (entry.isDirectory) await walk(abs, rel);
+        else if (entry.isFile) files.add(rel);
+      }
     } catch {
-      return;
-    }
-    for await (const entry of entries) {
-      if (SKIP.has(entry.name) || entry.name.startsWith(".")) continue;
-      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
-      const abs = join(dir, entry.name);
-      if (entry.isDirectory) await walk(abs, rel);
-      else if (entry.isFile) files.add(rel);
+      return; // missing / unreadable dir → contributes no files
     }
   }
   await walk(root, "");

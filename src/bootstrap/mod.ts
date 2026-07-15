@@ -216,7 +216,27 @@ if (!startStat.isDirectory) {
 
 // Lint the PROJECT: walk up to the nearest deno.json and run from that root, so
 // `rune lint` works from anywhere inside a project.
-const targetDir = findProjectRoot(startDir);
+let targetDir = findProjectRoot(startDir);
+// In the composed monorepo the keep backend is a `server/` package beside the sprig
+// `ui/`. Run from the git root, findProjectRoot lands on the workspace root (which has
+// no `src/` of its own) — descend into `server/` when THAT holds the codegen tree, so
+// `rune lint` works from the git root as well as from inside `server/`.
+{
+  const hasOwnSrc = (() => {
+    try {
+      return Deno.statSync(join(targetDir, "src")).isDirectory;
+    } catch {
+      return false;
+    }
+  })();
+  if (!hasOwnSrc) {
+    try {
+      if (Deno.statSync(join(targetDir, "server", "bootstrap", "mod.ts")).isFile) {
+        targetDir = join(targetDir, "server");
+      }
+    } catch { /* no server/ backend — lint targetDir as-is */ }
+  }
+}
 if (targetDir !== startDir && !json) {
   console.log(`Linting from project root: ${targetDir}`);
 }

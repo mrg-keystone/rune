@@ -525,3 +525,85 @@ Deno.test("boot awaits the revocation poll: revokeAll is fresh before the first 
 
 // POST /docs/_run is covered comprehensively in run-endpoint.int.test.ts
 // (localhost report, 403 off-host + no-conn, seeds, forced cycle, dryRun).
+
+Deno.test("lifecycle: onStart fires once on listen() with backend + bound port; disposer + onStop run on stop()", async () => {
+  const port = portCounter++;
+  let starts = 0;
+  let stops = 0;
+  let disposed = 0;
+  let startedPort = -1;
+  let hadBackend = false;
+  const server = await bootstrapServer("test-app", AppModule, {
+    port,
+    onStart: (ctx) => {
+      starts++;
+      startedPort = ctx.port;
+      hadBackend = typeof ctx.backend?.fetch === "function";
+      return () => {
+        disposed++;
+      };
+    },
+    onStop: () => {
+      stops++;
+    },
+  });
+
+  const { port: bound } = await server.listen();
+  assertEquals(starts, 1, "onStart fires exactly once on listen()");
+  assertEquals(startedPort, bound, "onStart receives the actually-bound port");
+  assertEquals(hadBackend, true, "onStart receives the in-process backend client");
+
+  await server.stop();
+  assertEquals(disposed, 1, "the onStart disposer runs on stop()");
+  assertEquals(stops, 1, "onStop runs on stop()");
+});
+
+Deno.test("lifecycle: the handler path (deno serve) fires onStart once on the first request", async () => {
+  const port = portCounter++;
+  let starts = 0;
+  const ports: number[] = [];
+  const server = await bootstrapServer("test-app", AppModule, {
+    port,
+    onStart: (ctx) => {
+      starts++;
+      ports.push(ctx.port);
+    },
+  });
+
+  // No listen() — drive the standalone handler as `deno serve` would.
+  await server.handler(new Request("http://app/health"));
+  await server.handler(new Request("http://app/health"));
+  // The start hook is fire-and-forget; let its microtask settle.
+  await new Promise((r) => setTimeout(r, 0));
+
+  assertEquals(starts, 1, "onStart fires once across repeated handler calls");
+  assertEquals(ports, [0], "port is 0 under the handler path (no socket bound by keep)");
+});
+
+Deno.test("lifecycle: a first request then listen() starts only one loop (once-guard)", async () => {
+  const port = portCounter++;
+  let starts = 0;
+  const server = await bootstrapServer("test-app", AppModule, {
+    port,
+    onStart: () => {
+      starts++;
+    },
+  });
+
+  // A request lands on the handler first (deno serve path), THEN listen() runs — the guard must
+  // still fire onStart exactly once across both entry points.
+  await server.handler(new Request("http://app/health"));
+  await new Promise((r) => setTimeout(r, 0));
+  await server.listen();
+  assertEquals(starts, 1, "onStart fires once across handler + listen entry points");
+  await server.stop();
+});
+
+Deno.test("lifecycle: no callbacks means the handler is the un-wrapped adapter handler", async () => {
+  const port = portCounter++;
+  const server = await bootstrapServer("test-app", AppModule, { port });
+  // Without onStart, handler must behave exactly as before (no wrapping, still serves).
+  const res = await server.handler(new Request("http://app/health"));
+  assertEquals(res.status, 200);
+  await server.stop();
+});

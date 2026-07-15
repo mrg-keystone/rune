@@ -27,9 +27,9 @@ The orchestrator passes:
 
 - **PROJECT ROOT** — absolute path.
 - **SPEC** — absolute path to the module's finalized spec. Post-sync it lives at
-  `<project>/src/<module>/<module>.rune` (`rune sync` relocates it out of `spec/runes/`); use
+  `<project>/server/src/<module>/<module>.rune` (`rune sync` relocates it out of `spec/runes/`); use
   whichever path the orchestrator passed.
-- **TARGET** — absolute path, `<project>/src/<module>/.../mod.ts`, the method/coordinator to fill.
+- **TARGET** — absolute path, `<project>/server/src/<module>/.../mod.ts`, the method/coordinator to fill.
 - **TESTS (red)** — absolute path(s) of the failing test file(s) for this method.
 - **MODULE MAP PATH** — absolute path to the analyst's `module-map.md` artifact. Grep for the
   `## <your targetFile>` section and read ONLY that slice (the signature, the step it implements,
@@ -41,18 +41,20 @@ The orchestrator passes:
 
 Everything above arrives resolved — you never search for any of it. Import aliases live in
 `<PROJECT ROOT>/deno.json` (a known path — read it if needed, never `find` it). The module's
-complete file list (including the generated `src/core/**` clients your body may import) is the
+complete file list (including the generated `server/src/core/**` clients your body may import) is the
 `## files` section of the module map / the baseline's `## file census` — need to know what
 exists? Grep that; never `ls`/`find` the tree. And the spec DSL you need is already digested in
 your map slice — never go reading `rune:spec`/`rune:scope` reference files (measured: an impl
 agent read `example-core.rune` + `spec.md` for syntax its slice already stated). **Worktree note:
 you usually run in a WORKTREE COPY of the project** — your cwd at start IS that copy's project
 root. Interpret every briefed path relative to your cwd (strip the briefed PROJECT ROOT prefix and
-re-anchor: `<cwd>/src/<module>/...`); edit ONLY the copy, never the original tree at the briefed
+re-anchor: `<cwd>/server/src/<module>/...`); edit ONLY the copy, never the original tree at the briefed
 absolute path (that defeats the isolation), and one `pwd` at start to confirm the anchor is fine —
 tree-crawling to re-find your files is not (measured: worktree impl agents ran `ls`/`find` sweeps
-and hit 3 path errors reconciling this). **If a re-anchored path does not exist, return
-`status: "blocked"` naming exactly which path — do NOT hunt for the file.**
+and hit 3 path errors reconciling this). **When the brief STATES your cwd** (e.g. "your cwd IS
+the project root — not a worktree"), trust it: skip even the pwd (measured: 5 impls each ran a
+ritual `pwd` against briefs that had already answered it). **If a re-anchored path does not
+exist, return `status: "blocked"` naming exactly which path — do NOT hunt for the file.**
 
 ## Procedure
 
@@ -130,7 +132,7 @@ Return your final message as this JSON:
 
 ```json
 {
-  "target": "src/tasks/domain/coordinators/task-create/mod.ts",
+  "target": "server/src/tasks/domain/coordinators/task-create/mod.ts",
   "method": "createCore",
   "diff": "…",
   "green_output": "ok | 3 passed (tail only)",

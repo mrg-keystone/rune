@@ -1900,9 +1900,16 @@ function entFlow(ent: EntNode): string | null {
 }
 
 // Compute each [ENT]'s process metadata from the DTO field graph: an ent depends
-// on the earliest-declared ent whose OUTPUT DTO produces a field this ent's INPUT
-// DTO consumes; `bind` wires that field across. `order` is declaration order.
-// Two refinements on top of earliest-producer-wins:
+// on the earliest-declared EARLIER ent whose OUTPUT DTO produces a field this ent's
+// INPUT DTO consumes; `bind` wires that field across. `order` is declaration order.
+// PROCESS DIRECTION IS DECLARATION ORDER: producer edges only point backward to
+// earlier-declared ents — a `dependsOn` on a later ent would contradict the emitted
+// `order` (measured: an inverted create/complete pair walked red and limped green on
+// runner retries because the mutator's load-through output was credited as producing
+// the minter's input). A field minted only by LATER ents falls back to a `$field`
+// bind: it is a genuine external input at that point in the process (surfaced on the
+// Module-inputs card; resolved seeds → captures → schema example at send time).
+// Two refinements on top of earliest-earlier-producer-wins:
 // - producers spread across DIFFERENT flows are branch alternatives — the consumer depends on
 //   all of them and binds them as alternatives (first to have run wins at request time);
 // - a field nobody produces whose [TYP] is marked `ext` becomes a `$field` external-input
@@ -1953,24 +1960,28 @@ function computeEntProcess(
     const dependsOnKeys = new Set<string>();
     const bind: Record<string, string | string[]> = {};
     for (const field of inFields) {
-      // ents is in declaration order; a producer already (transitively) downstream of this ent is
-      // dropped — wiring it would create a cycle — so the earliest *acyclic* producer wins.
-      const producers = ents.filter((p) =>
-        p !== ent && minted(p).has(field) &&
+      // ents is in declaration order; only EARLIER ents qualify as producers (process
+      // direction follows declaration order — see the function comment). The reaches
+      // guard stays as a belt for transitive shapes, though forward-only edges cannot
+      // close a cycle by construction.
+      const producers = ents.filter((p, pi) =>
+        pi < i && minted(p).has(field) &&
         !dependsOnReaches(entKey(p), entKey(ent))
       );
       if (producers.length === 0) {
-        // No acyclic producer. If some producer exists but every one would cycle, fall back to a
-        // `$field` external-input bind (the field is supplied by seeds / the Module-inputs card)
-        // rather than emitting a circular dependsOn; otherwise honor an explicit `ext` type.
-        // The plural convention (keep's composition contract): `$name` also resolves at run
-        // time from the first element of a captured `name + "s"` collection output, so a
-        // plural producer makes the field wireable — the list→item gap auto-closes.
-        const cyclicOnly = ents.some((p) => p !== ent && minted(p).has(field));
+        // No earlier producer. If the field is minted only by a LATER ent (or an earlier one the
+        // reaches-belt dropped), it is an external input at this point of the process — fall back
+        // to a `$field` bind (surfaced on the Module-inputs card; supplied by seeds, a captured
+        // same-named output on a later runner pass, or the schema example at send time) rather
+        // than emitting a backward dependsOn that contradicts the emitted order; otherwise honor
+        // an explicit `ext` type. The plural convention (keep's composition contract): `$name`
+        // also resolves at run time from the first element of a captured `name + "s"` collection
+        // output, so a plural producer makes the field wireable — the list→item gap auto-closes.
+        const mintedElsewhere = ents.some((p) => p !== ent && minted(p).has(field));
         const pluralProducer = ents.some((p) =>
           p !== ent && minted(p).has(`${field}s`)
         );
-        if (externalTypes.has(field) || cyclicOnly || pluralProducer) {
+        if (externalTypes.has(field) || mintedElsewhere || pluralProducer) {
           bind[field] = `$${field}`;
         }
         continue;

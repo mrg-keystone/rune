@@ -1,6 +1,7 @@
 import "#reflect-metadata";
 import type { Type } from "@types";
 import { isPublicContext } from "@foundation/domain/business/public-route/mod.ts";
+import { isInternalContext } from "@foundation/domain/business/internal-route/mod.ts";
 import {
   requiredDomains,
   requiredGrants,
@@ -31,6 +32,8 @@ const WS_CONTROLLER_KEY = "websocket-endpoint";
  * A route's authorization posture, as the guard would enforce it:
  * - `public` — `@Public`, no credential required.
  * - `grant` / `loggedin` / `grant+loggedin` — an explicit `@Grant`/`@LoggedIn` constraint.
+ * - `internal` — `@Internal`: deliberately reached only by the in-process client (enforcement is
+ *   still deny-by-default, identical to `open`; the marker records that the bareness is intended).
  * - `open` — NEITHER: deny-by-default leaves it reachable only by the `*` universal grant (or by
  *   nobody, under `honorSkeleton:false`). The accidental-exposure shape.
  */
@@ -39,6 +42,7 @@ export type RoutePosture =
   | "grant"
   | "loggedin"
   | "grant+loggedin"
+  | "internal"
   | "open";
 
 export interface RouteAuditEntry {
@@ -61,6 +65,9 @@ export interface RouteAuditEntry {
 function classify(controller: Type, fn: object): RoutePosture {
   const ctx = { getHandler: () => fn, getClass: () => controller };
   if (isPublicContext(ctx)) return "public";
+  // `@Internal` is a conscious "in-process only" declaration — same fail-closed enforcement as
+  // `open`, but excluded from the audit warning below because the bareness is deliberate.
+  if (isInternalContext(ctx)) return "internal";
   const hasGrant = requiredGrants(ctx).length > 0;
   const hasDomain = requiredDomains(ctx).length > 0;
   if (hasGrant && hasDomain) return "grant+loggedin";
@@ -151,7 +158,8 @@ export function warnOpenRoutes(
   opts.warn(
     `[${opts.appName}] route-audit: ${open.length} controller route(s) declare neither @Public nor ` +
       `@Grant/@LoggedIn — deny-by-default leaves them ${reach}. Add @Grant(...)/@LoggedIn(...) to ` +
-      `gate them explicitly, or @Public() to open them, so a bare route is a conscious choice:\n` +
+      `gate them explicitly, @Public() to open them, or @Internal() if the route is meant to be ` +
+      `reached only by the in-process client — so a bare route is a conscious choice:\n` +
       `${lines}\n    (set KEEP_ROUTE_AUDIT=off to silence this audit.)`,
   );
   return open;

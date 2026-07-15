@@ -6,10 +6,10 @@
 a shared module and import it everywhere:
 
 ```ts
-// backend.ts
+// server/bootstrap/mod.ts
 import { bootstrapServer } from "@mrg-keystone/rune";
-import { AppModule } from "./app.module.ts";
-export const api = await bootstrapServer("my-api", AppModule);
+import { modules } from "./modules.ts";
+export const api = await bootstrapServer("my-api", modules);
 ```
 
 No `import "reflect-metadata"` needed — the package loads the polyfill
@@ -19,7 +19,7 @@ itself.
 
 ```ts
 // server.ts
-import { api } from "./backend.ts";
+import { api } from "./server/bootstrap/mod.ts";
 Deno.serve((req, info) => api.handler(req, info)); // or: await api.listen();
 ```
 
@@ -32,15 +32,17 @@ logs stay attributable.)
 ### Hosted under a sprig UI
 
 The frontend is **sprig**, and the composition lives in the sprig package
-`@sprig/keep`. `serveSprig({ keep, app, base })` returns a single `{ fetch }`
-default export — run it with `deno serve serve.ts` (**not** `Deno.serve()`):
+`@mrg-keystone/sprig/keep`. `serveSprig({ keep })` returns a single `{ fetch }`
+default export — run it with `deno serve serve.ts` (**not** `Deno.serve()`). In
+the canonical `ui/` + `server/` layout the SSR app is the `ui/` workspace member
+(serveSprig derives it from the git-root serve.ts location), so the generated
+composition root is one line:
 
 ```ts
-// serve.ts
-import { serveSprig } from "@sprig/keep";
-import app from "./app/src/main.ts";   // the sprig SSR app
-import { api } from "./backend.ts";
-export default serveSprig({ keep: api, app });
+// serve.ts  (git root)
+import { serveSprig } from "@mrg-keystone/sprig/keep";
+import { api } from "./server/bootstrap/mod.ts";
+export default serveSprig({ keep: api });
 ```
 
 `serveSprig` routes `/api/*` and `/docs*` to the keep's `handler` (forwarding
@@ -56,10 +58,11 @@ your own API").
 CJS `handlebars` dep), so importing the backend into a bundled SSR frontend
 works in both dev and production builds.
 
-`rune init` scaffolds this whole app: a `serve.ts` composition root, an `app/`
-sprig UI tree (`app/src/main.ts` + a starter page), the `bootstrap/` keep
-backend, and a `deno.json` wired with `@sprig/core` + `@mrg-keystone/rune` and a
-`deno serve serve.ts` start task.
+`rune init` scaffolds this whole app: a git-root `serve.ts` composition root, a
+`ui/` sprig UI package (`ui/src/mod.ts` + a starter page), the `server/` keep
+backend (`server/bootstrap/mod.ts`), and a git-root workspace `deno.json`
+(`["./ui","./server"]`) wired with `@mrg-keystone/sprig` + `@mrg-keystone/rune`
+and a `deno serve -A serve.ts` start task.
 
 ### Mounting under any host
 

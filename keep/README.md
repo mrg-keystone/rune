@@ -73,6 +73,29 @@ logging.
 - `options.port` — port number (default: 3000)
 - `options.swagger` — `true` (default), `false`, or `{ filters: string[] }` to
   exclude modules
+- `options.onStart` — called **once** when the server goes live, with
+  `{ backend, port }`. The first-class home for a background loop (an orchestrator
+  heartbeat, a queue drainer) that `deno serve` can't host itself — it never runs
+  `import.meta.main`. It fires from `listen()`, or lazily on the first request under
+  the handler path (`deno serve` / `Deno.serve(app.handler)`), whichever comes
+  first, and is **guarded to run at most once per server**, so a `--watch` reload
+  or a double `listen()` can't start two intervals. Return a disposer
+  (`() => clearInterval(id)`) and `stop()` runs it for you — no more hand-guarding
+  a top-level `setInterval` with a `globalThis` symbol.
+- `options.onStop` — called once during `stop()`, after the `onStart` disposer,
+  with the same `{ backend, port }` — symmetric teardown.
+
+```ts
+const server = await bootstrapServer("my-api", AppModule, {
+  onStart: ({ backend }) => {
+    const id = setInterval(
+      () => backend.fetch("/http/orchestrator-tick", { method: "POST" }),
+      1000,
+    );
+    return () => clearInterval(id); // stop() disposes it
+  },
+});
+```
 
 Returns `{ listen(), stop(), backend, handler }`:
 
@@ -113,6 +136,15 @@ app authorizes out of the box; point a fork at its own infra by exporting
 `INFRA_URL`, or opt out entirely with an explicit empty value (`INFRA_URL=`), in
 which case no network request can authorize and only in-process callers do. See
 [Access tokens & authorization](#access-tokens--authorization).
+
+> **⚠️ Upgrading from 3.x → 4.x — the `INFRA_URL` default flipped.** On 3.x, infra
+> bearer verification was **off** unless you set `INFRA_URL`. On 4.x it is **on by
+> default** (unset now falls back to the keystone infra), so an app that authorized
+> fine on 3.x may start rejecting bearers, or a local-dev flow that relied on the
+> lax posture may behave differently. If you want the old "no infra, everything
+> local" behavior — the local-dev `@Public` posture — set an **explicit empty**
+> value: `INFRA_URL=`. Unsetting it is no longer the opt-out; it is now the opt-in.
+> Boot logs a one-time warning on the empty-opt-out path so the choice is visible.
 
 ### Access tokens & authorization
 
@@ -266,6 +298,30 @@ value). `*` is the skeleton key — a caller holding `*` holds all grants.
 The resolved caller is attached to the request; read it in a handler with
 `getIdentity(ctx)` → `{ creator, source, claims, grants }` (`grants` = this
 app's grants).
+
+#### `@Internal()` — an in-process-only route (silences the boot audit)
+
+Boot runs a **route audit** that names every controller route declaring neither
+`@Public` nor `@Grant`/`@LoggedIn` — deny-by-default leaves such a route reachable
+only by the `*` skeleton grant, which is safe but indistinguishable from a route
+someone _forgot_ to gate. For a route that is genuinely meant to be reached **only
+by the in-process client** (`api.backend.fetch`) — an orchestrator tick endpoint, a
+self-dispatched job — mark it `@Internal()` (alias: `@InProcessOnly()`):
+
+```ts
+@Controller("http")
+class OrchestratorController {
+  @Internal() // called only by the in-process tick loop — bare, but deliberately so
+  @Post("orchestrator-tick")
+  tick() {}
+}
+```
+
+`@Internal()` changes **nothing about enforcement** — the route stays fail-closed
+to external callers exactly as a bare one does. It only records that the bareness is
+_intentional_, so the audit stops flagging it. Use it precisely when the right
+posture is "no external caller, reached in-process" — not to skip gating a route
+outsiders actually call. `KEEP_ROUTE_AUDIT=off` silences the whole audit.
 
 #### The session bearer and offline verification
 

@@ -14,7 +14,9 @@ description: >-
   422 mapping, the `@Endpoint`/`@EndpointController` option semantics
   (`order`/`dependsOn`/`bind`), the `exerciseEndpoints` headless runner +
   `POST /docs/_run`, the `/docs/_map` system map, and deployment (standalone,
-  hosting under a sprig UI via `serveSprig`/`sprigUi`, `withBasePath`, Deno
+  hosting under a sprig UI in the canonical `ui/` + `server/` layout — the
+  git-root `serve.ts` runs `serveSprig({ keep: api })` importing
+  `./server/bootstrap/mod.ts` — via `serveSprig`/`sprigUi`, `withBasePath`, Deno
   Deploy, logging). Trigger phrases:
   "why is auth failing / 401 / 403", "forward remoteAddr / conn info",
   "host the backend under a sprig UI", "deploy a sprig+keep app",

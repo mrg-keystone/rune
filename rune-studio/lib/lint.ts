@@ -311,6 +311,7 @@ const CHECKERS = {
       email: { base: "string", takesValue: false },
       url: { base: "string", takesValue: false },
       nonempty: { base: "string", takesValue: false },
+      json: { base: "string", takesValue: false },
       int: { base: "number", takesValue: false },
       min: { base: "number", takesValue: true },
       max: { base: "number", takesValue: true },
@@ -318,7 +319,7 @@ const CHECKERS = {
       example: { base: null, takesValue: false, takesText: true },
     };
     const ALLOWED =
-      "ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>";
+      "ext, core, uuid, email, url, nonempty, json, int, min=<n>, max=<n>, positive, example=<value>";
     const out = [];
     const push = (i, message) =>
       out.push({
