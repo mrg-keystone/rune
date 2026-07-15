@@ -165,9 +165,12 @@ const CORE_SPEC_PATHS = [
   "specs/core.in-prog.rune",
 ];
 
-/** Is this (root-relative) path the project's shared-service spec? */
+/** Is this (root-relative) path the project's shared-service spec? Normalizes a
+ * leading `../` first so the shared `<git>/spec/runes/core.rune` — a sibling of
+ * the `server/` codegen root — is recognized as core (else its `[SRV]` set would
+ * be rejected as a module-declared service). */
 export function isCoreSpec(path: string): boolean {
-  return CORE_SPEC_PATHS.includes(path);
+  return CORE_SPEC_PATHS.includes(stripLeadingParent(path));
 }
 
 // The draft suffix: a spec named `<name>.in-prog.rune` is a work in progress.
@@ -183,6 +186,14 @@ const IN_PROG_SUFFIX = ".in-prog.rune";
 export function isInProgSpec(path: string): boolean {
   return path.endsWith(IN_PROG_SUFFIX);
 }
+
+// Drop a leading `../` run from a codegen-root-relative spec path. The shared
+// authoring `spec/` sits at the GIT ROOT, a SIBLING of the `server/` codegen
+// root, so a staging spec's path relative to that root is `../spec/runes/<m>.rune`.
+// Recognition (isProjectSpec/moduleFromSpecPath) keys off the `spec/runes/` etc.
+// prefixes, so normalize the parent hops away first — the only source of a leading
+// `../` is exactly this sibling-staging case (a path UNDER the root never has one).
+const stripLeadingParent = (path: string): string => path.replace(/^(?:\.\.\/)+/, "");
 
 /** Strip the `.in-prog` draft tag, leaving the canonical `<name>.rune` path. */
 export function canonicalSpecPath(path: string): string {
@@ -202,7 +213,8 @@ export function canonicalSpecPath(path: string): string {
 // through here (and a stray `.rune` nested deeper than one level is skipped).
 // Documentation, vendored, in-progress drafts (`.in-prog.rune`), and arbitrary
 // rune files are skipped by rune rules.
-export function isProjectSpec(path: string): boolean {
+export function isProjectSpec(rawPath: string): boolean {
+  const path = stripLeadingParent(rawPath); // sibling `../spec/runes/…` staging → `spec/runes/…`
   if (isInProgSpec(path)) return false; // drafts: excluded from auto-discovery
   for (const dir of SPEC_DIRS) {
     if (path.startsWith(dir) && !path.slice(dir.length).includes("/")) return true;
@@ -227,8 +239,8 @@ export function isProjectSpec(path: string): boolean {
 //   specs/recording.rune               → "recording"
 //   src/orders/spec.rune               → "orders"
 //   src/orders/orders.rune             → "orders"
-export function moduleFromSpecPath(path: string): string | null {
-  const canonical = canonicalSpecPath(path);
+export function moduleFromSpecPath(rawPath: string): string | null {
+  const canonical = stripLeadingParent(canonicalSpecPath(rawPath));
   if (!isProjectSpec(canonical)) return null;
   for (const dir of SPEC_DIRS) {
     if (canonical.startsWith(dir)) {

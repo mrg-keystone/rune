@@ -26,14 +26,14 @@ The orchestrator passes:
 
 - **PROJECT ROOT** — absolute path to the generated project.
 - **MODULE** — the `<module>` under build.
-- **SPEC** — absolute path to the module's finalized spec (post-sync: `<root>/src/<module>/<module>.rune`;
+- **SPEC** — absolute path to the module's finalized spec (post-sync: `<root>/server/src/<module>/<module>.rune`;
   `rune sync` relocates it out of `spec/runes/`).
 - **RUNE_BIN** — the exact rune invocation to use (e.g. `/Users/<user>/.deno/bin/rune`, or
   `deno run -A src/bootstrap/mod.ts` in a repo with no installed binary). Use it verbatim — never
   `which rune` or `rune --help` to rediscover the binary or its commands.
 
 Fixed locations you NEVER search for (measured: linters ran `find -name 'heal-rules*'` and
-`find -name '*.rune'` hunts): the module source is `<root>/src/<module>/`; heal-rules is
+`find -name '*.rune'` hunts): the module source is `<root>/server/src/<module>/`; heal-rules is
 `<root>/spec/misc/heal-rules.json` — and if that file is absent it does NOT exist yet (sync
 creates it when a spec declares fault slugs); proceed on that basis, don't go looking for it
 elsewhere. **`rune lint`'s own output IS the tree state for your purposes**: it names every
@@ -43,7 +43,7 @@ too: stray run artifacts (a root `server.log`, a result JSON, pid files) are fol
 violations lint REPORTS — a clean `--strict` already proves none exist. Never `ls`/`fd`/
 `find`/`git status` the tree to re-verify a verdict lint just handed you (measured: a linter
 whose lint AND --strict were already clean spent its only extra calls sweeping `spec/misc`
-and `src/` for artifacts its brief had warned about — the warning describes what lint
+and `server/src/` for artifacts its brief had warned about — the warning describes what lint
 enforces, not a sweep you must run). The module's file list,
 if you need it, is the baseline's `## file census` / the map's `## files` section.
 If a passed path does not exist, return `blocked` naming exactly which path — do not search for a
@@ -87,7 +87,7 @@ replacement.
 
 ## Resources
 
-Only the project path. Read/edit `src/<module>/` files and `spec/misc/heal-rules.json`; run
+Only the project path. Read/edit `server/src/<module>/` files and `spec/misc/heal-rules.json`; run
 `rune lint` from the project.
 
 ## Output contract

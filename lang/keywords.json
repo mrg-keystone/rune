@@ -773,6 +773,19 @@
       "description": "Constrains a string [TYP] to be non-empty (class-validator @IsNotEmpty)."
     },
     {
+      "id": "json",
+      "token": ":json",
+      "label": "JSON",
+      "appliesTo": [
+        "typ"
+      ],
+      "kind": "constraint",
+      "decorator": "IsJSON",
+      "param": "none",
+      "syntax": "[TYP:json]",
+      "description": "Marks a string [TYP] that carries a JSON-encoded object/array over the wire (no typed [DTO]); validates it PARSES at the boundary (class-validator @IsJSON) so invalid JSON 422s at the seam instead of degrading silently downstream."
+    },
+    {
       "id": "int",
       "token": ":int",
       "label": "Integer",

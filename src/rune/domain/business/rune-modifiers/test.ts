@@ -67,7 +67,18 @@ Deno.test("parseTypModifiers — unknown modifier error is byte-exact", () => {
   const r = parseTypModifiers("bogus");
   assertEquals(r.mods, []);
   assertEquals(r.errors, [
-    '[TYP] unknown modifier "bogus" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>, from=<path|path*|query|header>)',
+    '[TYP] unknown modifier "bogus" (allowed: ext, core, uuid, email, url, nonempty, json, int, min=<n>, max=<n>, positive, example=<value>, from=<path|path*|query|header>)',
+  ]);
+});
+
+Deno.test("parseTypModifiers — json takes no value, base-checked to string at parse", () => {
+  const r = parseTypModifiers("json");
+  assertEquals(r.errors, []);
+  assertEquals(r.mods, ["json"]);
+  assertEquals(r.values.get("json"), null);
+  // A value is rejected — json is a bare modifier.
+  assertEquals(parseTypModifiers("json=x").errors, [
+    '[TYP] modifier "json" does not take a value',
   ]);
 });
 

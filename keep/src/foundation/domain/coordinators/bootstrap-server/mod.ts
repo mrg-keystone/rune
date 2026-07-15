@@ -75,9 +75,37 @@ import {
   writeScenario,
 } from "@foundation/domain/business/fixtures-store/mod.ts";
 
-interface BootstrapOptions {
+/**
+ * Handed to {@link BootstrapOptions.onStart}/{@link BootstrapOptions.onStop}. `backend` is the
+ * in-process client — call your own endpoints from a tick loop with no token plumbing (it stamps
+ * the trust marker). `port` is the actually-bound port under `listen()`, or `0` under the handler
+ * path (`deno serve` / `Deno.serve(app.handler)`), where keep never binds a socket of its own.
+ */
+export interface ServerLifecycle {
+  backend: BackendClient;
+  port: number;
+}
+
+/** A teardown callback. Returned from `onStart`, run by `stop()` before `onStop`. */
+export type ServerDisposer = () => void | Promise<void>;
+
+export interface BootstrapOptions {
   port?: number;
   swagger?: boolean | { filters: string[] };
+  /**
+   * Called ONCE when the server goes live — the first-class home for a background loop (an
+   * orchestrator heartbeat, a queue drainer) that `deno serve` cannot host itself because it never
+   * runs `import.meta.main`. Fires from `listen()`, or lazily on the first request under the
+   * handler path (`deno serve`), whichever happens first. It is guarded to run at most once per
+   * server, so a `--watch` reload or a double `listen()` can't start two intervals (the
+   * double-interval footgun apps otherwise hand-guard with a `globalThis` symbol). Return a
+   * disposer (e.g. `() => clearInterval(id)`) and `stop()` runs it for you.
+   */
+  onStart?: (
+    ctx: ServerLifecycle,
+  ) => void | ServerDisposer | Promise<void | ServerDisposer>;
+  /** Called ONCE during `stop()`, after the `onStart` disposer — symmetric teardown. */
+  onStop?: (ctx: ServerLifecycle) => void | Promise<void>;
 }
 
 // infra is the minting + signing authority; keep is a verifier + exchange broker. One env var points
@@ -135,6 +163,25 @@ async function controlPlaneAllowed(
   if (!r) return false;
   const g = grantsForApp(r.claims, appName);
   return g.includes("dev") || g.includes("*");
+}
+
+/**
+ * The message body for a denied control-plane door. Names the ONE sanctioned path — the
+ * in-process client — because the door is discovered by failing and the old "available on
+ * localhost only" wording was actively misleading: there is no localhost bypass (see
+ * {@link controlPlaneAllowed}). An external caller either dispatches through
+ * `api.backend.fetch` (the in-process client, which stamps the trust marker) or presents an
+ * infra bearer whose app-grants include `dev`/`*`.
+ */
+function controlPlaneForbiddenMessage(route: string): string {
+  return `Forbidden: ${route} is a control-plane door — call it with the in-process client ` +
+    `(api.backend.fetch), which needs no token. There is NO localhost bypass; an external ` +
+    `caller must present an infra bearer whose app-grants include "dev" or "*".`;
+}
+
+/** JSON 403 for a denied control-plane door (see {@link controlPlaneForbiddenMessage}). */
+function controlPlaneForbidden(c: Context, route: string): Response {
+  return c.json({ error: controlPlaneForbiddenMessage(route) }, 403);
 }
 
 // Dev-mode boot identity (`rune dev`): minted once per process so the emulator pages' reload
@@ -261,6 +308,13 @@ export class BootstrapServer {
   private readonly appName: string;
   private readonly infra?: InfraExchange;
 
+  /** Lifecycle callbacks (see {@link BootstrapOptions.onStart}/`onStop`) and their once-guard. */
+  private readonly onStart?: BootstrapOptions["onStart"];
+  private readonly onStop?: BootstrapOptions["onStop"];
+  private lifecycleStarted = false;
+  private lifecyclePort = 0;
+  private lifecycleDisposer?: ServerDisposer;
+
   private constructor(
     module: Type,
     adapter: DanetHttpAdapter,
@@ -270,6 +324,7 @@ export class BootstrapServer {
     revocationPoller?: number,
     sessions?: SessionStore,
     infra?: InfraExchange,
+    lifecycle?: Pick<BootstrapOptions, "onStart" | "onStop">,
   ) {
     this.module = module;
     this.adapter = adapter;
@@ -279,6 +334,21 @@ export class BootstrapServer {
     this.revocationPoller = revocationPoller;
     this.sessions = sessions;
     this.infra = infra;
+    this.onStart = lifecycle?.onStart;
+    this.onStop = lifecycle?.onStop;
+  }
+
+  /**
+   * Fire the `onStart` hook exactly once, capturing any disposer it returns. The guard flips
+   * synchronously BEFORE the (possibly async) hook runs, so concurrent first requests under the
+   * handler path — or a `listen()` racing the first request — start only one background loop.
+   */
+  private async ensureLifecycleStarted(port: number): Promise<void> {
+    if (this.lifecycleStarted || !this.onStart) return;
+    this.lifecycleStarted = true;
+    this.lifecyclePort = port;
+    const disposer = await this.onStart({ backend: this.backend, port });
+    if (typeof disposer === "function") this.lifecycleDisposer = disposer;
   }
 
   /**
@@ -336,7 +406,7 @@ export class BootstrapServer {
     const rootModule = Array.isArray(module)
       ? appModule(appName, module)
       : module;
-    const { port = 3000, swagger = true } = options ?? {};
+    const { port = 3000, swagger = true, onStart, onStop } = options ?? {};
 
     // Configure the process-wide logger from env before anything can emit.
     // ASSUMPTION: one BootstrapServer per process. The logger, tracer, trace
@@ -705,13 +775,7 @@ export class BootstrapServer {
         "/docs/_traces",
         (async (c: Context) => {
           if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
-            return c.json(
-              {
-                error:
-                  "Forbidden: /docs/_traces is available on localhost only.",
-              },
-              403,
-            );
+            return controlPlaneForbidden(c, "/docs/_traces");
           }
           // `?user=` scopes to one user server-side (a fast indexed scan under KV); `?limit=`
           // caps the page (default 200, hard ceiling 1000).
@@ -738,13 +802,7 @@ export class BootstrapServer {
         "/docs/_traces",
         (async (c: Context) => {
           if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
-            return c.json(
-              {
-                error:
-                  "Forbidden: /docs/_traces is available on localhost only.",
-              },
-              403,
-            );
+            return controlPlaneForbidden(c, "/docs/_traces");
           }
           let body: Record<string, unknown> = {};
           try {
@@ -766,12 +824,7 @@ export class BootstrapServer {
         "/docs/_run",
         (async (c: Context) => {
           if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
-            return c.json(
-              {
-                error: "Forbidden: /docs/_run is available on localhost only.",
-              },
-              403,
-            );
+            return controlPlaneForbidden(c, "/docs/_run");
           }
           if (!runTarget) {
             return c.json({ error: "Server still booting — try again." }, 503);
@@ -927,7 +980,7 @@ export class BootstrapServer {
         (async (c: Context) => {
           if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
             return new Response(
-              "Forbidden: /docs/_heal is available on localhost only.",
+              controlPlaneForbiddenMessage("/docs/_heal"),
               { status: 403 },
             );
           }
@@ -975,13 +1028,7 @@ export class BootstrapServer {
         "/docs/_fixtures",
         (async (c: Context) => {
           if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
-            return c.json(
-              {
-                error:
-                  "Forbidden: /docs/_fixtures is available on localhost only.",
-              },
-              403,
-            );
+            return controlPlaneForbidden(c, "/docs/_fixtures");
           }
           return c.json(await readFixtures());
         }) as RouteHandler,
@@ -991,13 +1038,7 @@ export class BootstrapServer {
         "/docs/_fixtures",
         (async (c: Context) => {
           if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
-            return c.json(
-              {
-                error:
-                  "Forbidden: /docs/_fixtures is available on localhost only.",
-              },
-              403,
-            );
+            return controlPlaneForbidden(c, "/docs/_fixtures");
           }
           let patch: FixturesPatch = {};
           try {
@@ -1028,13 +1069,7 @@ export class BootstrapServer {
         "/docs/_heal-rules",
         (async (c: Context) => {
           if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
-            return c.json(
-              {
-                error:
-                  "Forbidden: /docs/_heal-rules is available on localhost only.",
-              },
-              403,
-            );
+            return controlPlaneForbidden(c, "/docs/_heal-rules");
           }
           return c.json(await readHealRules());
         }) as RouteHandler,
@@ -1047,13 +1082,7 @@ export class BootstrapServer {
         "/docs/_scenarios",
         (async (c: Context) => {
           if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
-            return c.json(
-              {
-                error:
-                  "Forbidden: /docs/_scenarios is available on localhost only.",
-              },
-              403,
-            );
+            return controlPlaneForbidden(c, "/docs/_scenarios");
           }
           return c.json({ scenarios: await readScenarios() });
         }) as RouteHandler,
@@ -1063,13 +1092,7 @@ export class BootstrapServer {
         "/docs/_scenarios",
         (async (c: Context) => {
           if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
-            return c.json(
-              {
-                error:
-                  "Forbidden: /docs/_scenarios is available on localhost only.",
-              },
-              403,
-            );
+            return controlPlaneForbidden(c, "/docs/_scenarios");
           }
           let parsed: unknown = null;
           try {
@@ -1193,6 +1216,7 @@ export class BootstrapServer {
       revocationPoller,
       sessionStore,
       infraClient,
+      { onStart, onStop },
     );
   }
 
@@ -1204,19 +1228,40 @@ export class BootstrapServer {
    * or the framework-agnostic `withBasePath`).
    */
   get handler(): FetchHandler {
-    return this.adapter.handler;
+    const inner = this.adapter.handler;
+    if (!this.onStart) return inner;
+    // Under the handler path (`deno serve` / `Deno.serve(app.handler)`) `listen()` is never
+    // called, so fire the start hook on the first request. Idempotent + fire-and-forget: the
+    // once-guard flips synchronously, so the request is never delayed and the loop starts once.
+    return (req, info) => {
+      void this.ensureLifecycleStarted(0);
+      return inner(req, info);
+    };
   }
 
   /** Start serving. Resolves with the actually-bound port (which may differ
    * from the requested one if it was busy — see DanetHttpAdapter.listen). */
-  listen(): Promise<{ port: number }> {
-    return this.adapter.listen(this.module);
+  async listen(): Promise<{ port: number }> {
+    const result = await this.adapter.listen(this.module);
+    await this.ensureLifecycleStarted(result.port);
+    return result;
   }
 
-  stop() {
+  async stop() {
     if (this.revocationPoller !== undefined) {
       clearInterval(this.revocationPoller);
       this.revocationPoller = undefined;
+    }
+    // Symmetric teardown: run the onStart disposer, then onStop, before the socket closes. Reset
+    // the once-guard so a stopped server can be started again cleanly.
+    if (this.lifecycleStarted) {
+      const disposer = this.lifecycleDisposer;
+      this.lifecycleDisposer = undefined;
+      this.lifecycleStarted = false;
+      if (disposer) await disposer();
+      if (this.onStop) {
+        await this.onStop({ backend: this.backend, port: this.lifecyclePort });
+      }
     }
     return this.adapter.stop();
   }

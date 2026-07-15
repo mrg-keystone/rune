@@ -12,7 +12,7 @@ description: >-
   you have a `rune check`-clean spec and want it BUILT — "build this module",
   "implement the rune / fill in the bodies", "write the tests for X", "make it
   green", "generate and implement", "finalize and sync this spec", pointing at a
-  `spec/runes/<m>.rune` (or a freshly synced `src/<module>/` full of `not implemented`
+  `spec/runes/<m>.rune` (or a freshly synced `server/src/<module>/` full of `not implemented`
   throws) and asking to make it work. NOT writing or editing the spec itself
   (that's `rune:spec` — this skill STARTS from a clean spec); NOT real-data
   end-to-end via the cake (`/docs/<m>` walks, heal panel → `rune:cake`); NOT
@@ -32,7 +32,7 @@ specialist, hand it only its slice, and gate each stage on evidence.
 
 ## When this skill applies
 
-You have a `rune check`-clean spec (or a freshly synced `src/<module>/` full of `not
+You have a `rune check`-clean spec (or a freshly synced `server/src/<module>/` full of `not
 implemented` throws) and want it BUILT. NOT authoring/editing the spec (→ `rune:spec`,
 the seam upstream); NOT real-data e2e via the cake (→ `rune:cake`, the handoff
 downstream); NOT runtime internals — `bootstrapServer`/auth/`@Endpoint` semantics
@@ -45,9 +45,10 @@ downstream); NOT runtime internals — `bootstrapServer`/auth/`@Endpoint` semant
   `spec/misc/build/<m>/baseline.md` and returns its path + run-all verdict +
   `inputs:` warnings.
 - **`rune-build-analyst`** — the module map (intent per coordinator/method/adapter/
-  DTO) AND the test inventory, in one pass; WRITES the map to
-  `spec/misc/build/<m>/module-map.md` (sectioned per targetFile) and returns only
-  the inventory rows.
+  DTO) AND the test inventory — including the REQUIRED hardening rows (≥1 per
+  applicable category: cross-entity, crash-restart, representation, lifecycle-offpath,
+  wire-seam) — in one pass; WRITES the map to `spec/misc/build/<m>/module-map.md`
+  (sectioned per targetFile) and returns only the inventory rows.
 - **`rune-build-test-author`** — one per test FILE: writes that file's RED tests
   (TDD), reading only its module-map slice.
 - **`rune-build-method-impl`** — one per method/file: fills the minimal GREEN body
@@ -170,8 +171,8 @@ result trustworthy.
   the module because agents died.
 - **Run two watchers for the whole build (main session):** `rune dev <project>` (the
   live app + `/docs/<module>` cake: check→sync→restart on save) and `deno test --watch
-  <project>/src/<module>` (YOUR green loop). **`rune dev` does NOT run `deno test`** —
-  it only spawns the app (`deno run -A bootstrap/mod.ts`); evidence:
+  <project>/server/src/<module>` (YOUR green loop). **`rune dev` does NOT run `deno test`** —
+  it only spawns the app (`deno run -A server/bootstrap/mod.ts`); evidence:
   `src/rune/entrypoints/dev/mod.ts` (`spawnChild()`/`runCycle()` never call `deno
   test`). So the unit-test loop is yours to drive. Smoke (`smk`) tests hit real
   boundaries — run them individually, never in `--watch`.
@@ -202,9 +203,9 @@ result trustworthy.
 
 1. **Scaffold** → `rune-build-scaffold` (pass the clean spec path + project root + RUNE_BIN). It
    returns the finalized spec path — NOTE: the first `rune sync` RELOCATES the spec to
-   `src/<m>/<m>.rune`; that is its permanent home from then on (generated file headers still
+   `server/src/<m>/<m>.rune`; that is its permanent home from then on (generated file headers still
    print the old `spec/runes/…` path — stale by design; only the returned path is real) — the
-   scaffolded `src/<module>/`, the **baseline path** (`spec/misc/build/<m>/baseline.md`), the
+   scaffolded `server/src/<module>/`, the **baseline path** (`spec/misc/build/<m>/baseline.md`), the
    **resolved_paths** facts (`spec`, `core_spec`, `deno_json`, `heal_rules` + exists?,
    `artifacts_dir`, `runtime_src`, `smoke_posture`, `assert_import`, `test_cmd`, `port`,
    `bootstrap_entry` — the one `deno info` of the whole build, ALSO written to
@@ -222,7 +223,14 @@ result trustworthy.
 2. **Map + enumerate** → `rune-build-analyst` (pass the finalized spec + the generated
    tree). It writes `spec/misc/build/<m>/module-map.md` and returns the test inventory
    (one row per test, each with `targetFile`). The rows are your work queue; the map
-   stays on disk.
+   stays on disk. The inventory now REQUIRES hardening rows — ≥1 per module in each of
+   the five categories that applies (`cross-entity`, `crash-restart`, `representation`,
+   `lifecycle-offpath`, `wire-seam`): the classes of bug the per-method happy-path +
+   fault rows structurally cannot see (measured: a green, `--strict`-clean suite shipped
+   21 such bugs, every one a test that was never enumerated). Check the analyst's
+   `hardening_coverage` / `hardening_gaps` in its return — a category that "doesn't
+   apply" must be a stated reason in `notes`, not a silent omission. This is the cheap,
+   root-cause fix; it is why `rune:build` needs no separate post-cake hardening rung.
 3. **Loop WRITE→IMPLEMENT→VALIDATE until every test is green and confirmed** (chunked
    waves of 4–6 agents throughout):
    - **Write tests** → a `rune-build-test-author` per test FILE — as the default. Size
@@ -270,7 +278,7 @@ result trustworthy.
      gate check is yours, the fixing is the linter's. It returns `rune lint --strict`
      clean + the enriched heal-rules.
 5. **Exit gate** — the module is built when ALL hold: unit+int green under `deno test
-   <project>/src/<module>`; smoke tests pass individually (real connectivity); `rune
+   <project>/server/src/<module>`; smoke tests pass individually (real connectivity); `rune
    lint --strict` clean; the `rune sync`/`exerciseEndpoints` run-all verdict **green** —
    or `skipped (no [ENT] surface)` for a pure `[REQ]`-only module, which is NOT a walk
    verdict: if the module is meant to be served or cake-walked, that's a spec gap

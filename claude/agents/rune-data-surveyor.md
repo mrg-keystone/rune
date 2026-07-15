@@ -23,13 +23,13 @@ The first stage of a rune data-design pass — the orchestrator wants the spec +
 
 ## Input contract
 
-The orchestrator passes: the project root, the spec dir(s) (`spec/runes/` and any `src/<module>/*.rune`), the prototype dir (`spec/ui/`), and the absolute path to this skill's `scripts/scan_spec.ts`. Assume nothing else.
+The orchestrator passes: the project root, the spec dir(s) (`spec/runes/` and any `server/src/<module>/*.rune`), the prototype dir (`spec/ui/`), and the absolute path to this skill's `scripts/scan_spec.ts`. Assume nothing else.
 
 All paths (specs, UI prototype, the skill's scripts) arrive resolved and absolute — a missing one is `blocked: <path> missing`, never a search.
 
 ## Procedure
 
-1. **Scan the spec (script).** `deno run -A <scan_spec.ts> spec/runes/` → a JSON inventory of entities (`[NON]`/`[DTO]`), every persistence read/write (`db:x.save` = write, `db:x.load` = read; the verb pair per noun), the `[REQ]` flows, and **every `load→…→save` mutationCandidate**. This is the checklist of entities to place and edits to make immutable — never eyeball it, run the script. Note: after `rune sync` a module's spec moves to `src/<module>/<m>.rune`, so scan BOTH `spec/runes/` and `src/` (the script recurses a dir) to catch every entity, not just the still-authored `spec/runes/` ones.
+1. **Scan the spec (script).** `deno run -A <scan_spec.ts> spec/runes/` → a JSON inventory of entities (`[NON]`/`[DTO]`), every persistence read/write (`db:x.save` = write, `db:x.load` = read; the verb pair per noun), the `[REQ]` flows, and **every `load→…→save` mutationCandidate**. This is the checklist of entities to place and edits to make immutable — never eyeball it, run the script. Note: after `rune sync` a module's spec moves to `server/src/<module>/<m>.rune`, so scan BOTH `spec/runes/` and `server/src/` (the script recurses a dir) to catch every entity, not just the still-authored `spec/runes/` ones.
 2. **Walk the prototype for read patterns.** The spec shows writes; the UI is the read-pattern oracle. Walk every screen/region under `spec/ui/**` and classify each read:
    | In the prototype | shape | leans (networked) |
    | --- | --- | --- |
@@ -40,7 +40,7 @@ All paths (specs, UI prototype, the skill's scripts) arrive resolved and absolut
    | search across a collection | query | Firestore |
    | upload / image / video / download / attachment | blob | S3 (+ ref) |
    Note frequency + latency demand (`hotness`: high/med/low) — hot+point-get is the strongest KV signal, hot+query the strongest Firestore signal. Tie each pattern to a citable region name (for `source`). In a local-only app these all collapse to one local store — a single JSON file (`fs_json`) for the smallest projects or one SQLite file once queries/indexes/growth matter — but still record the patterns (they document the needed indexes and tell the designer which way to lean).
-3. Cross-check `src/` adapters if present (stay consistent with shapes already chosen).
+3. Cross-check `server/src/` adapters if present (stay consistent with shapes already chosen).
 
 ## Resources
 

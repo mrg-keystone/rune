@@ -1718,6 +1718,37 @@ Deno.test("planManifest — [TYP:example=…] emits @ApiProperty({ example }) on
   assertStringIncludes(dto.content, 'import { ApiProperty } from "#api-doc";');
 });
 
+Deno.test("planManifest — [TYP:json] emits @IsString() @IsJSON() so invalid JSON 422s at the boundary", () => {
+  const rune = `[MOD] shop
+
+[ENT] http.order(OrderDto): TicketDto
+
+[REQ] order.place(OrderDto): TicketDto
+    [NEW] ticket
+    ticket.toDto(): TicketDto
+
+[DTO] OrderDto: payloadJson
+    the raw order payload
+[DTO] TicketDto: ticketId
+    the opened ticket
+
+[TYP:json] payloadJson: string
+    a JSON-encoded blob carried as a string
+[TYP] ticketId: string
+    x`;
+  const plan = planManifest("specs/shop.rune", rune, new Set());
+  const dto = plan.toCreate.find((f) => f.path === "src/shop/dto/order.ts");
+  if (!dto) throw new Error("no order.ts DTO generated");
+
+  // The string base still validates as a string, PLUS @IsJSON() proves the
+  // string parses — invalid JSON fails the seam here instead of degrading
+  // silently downstream. Both ride the class-validator import.
+  assertStringIncludes(dto.content, "@IsString()");
+  assertStringIncludes(dto.content, "@IsJSON()");
+  assertStringIncludes(dto.content, "IsJSON");
+  assertStringIncludes(dto.content, "payloadJson: string");
+});
+
 Deno.test("planManifest — [TYP] vs same-stem [DTO] file collision: distinct files", () => {
   // [TYP] receipt and [DTO] ReceiptDto both kebab to dto/receipt.ts. The [DTO]
   // keeps the clean name; the [TYP] takes a `-type` suffix, so neither silently

@@ -803,11 +803,11 @@ fn validate_typ_modifiers(raw: &str, name: &str, declared_type: &str) -> Vec<Str
         // Required base type per modifier; None = ext/core/example/from (no base requirement).
         let base: Option<&str> = match id {
             "ext" | "core" | "example" | "from" => None,
-            "uuid" | "email" | "url" | "nonempty" => Some("string"),
+            "uuid" | "email" | "url" | "nonempty" | "json" => Some("string"),
             "int" | "min" | "max" | "positive" => Some("number"),
             _ => {
                 errors.push(format!(
-                    "[TYP] unknown modifier \"{}\" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>, from=<path|path*|query|header>)",
+                    "[TYP] unknown modifier \"{}\" (allowed: ext, core, uuid, email, url, nonempty, json, int, min=<n>, max=<n>, positive, example=<value>, from=<path|path*|query|header>)",
                     id
                 ));
                 continue;
@@ -1735,6 +1735,7 @@ mod tests {
         assert!(validate_typ_modifiers("ext,uuid", "externalId", "string").is_empty());
         assert!(validate_typ_modifiers("min=0,max=100", "qty", "number").is_empty());
         assert!(validate_typ_modifiers("nonempty", "name", "string").is_empty());
+        assert!(validate_typ_modifiers("json", "payloadJson", "string").is_empty());
         assert!(validate_typ_modifiers("core", "id", "string").is_empty());
         assert!(validate_typ_modifiers("int", "count", "number").is_empty());
         assert!(validate_typ_modifiers("positive", "amount", "number").is_empty());
@@ -1769,7 +1770,7 @@ mod tests {
     fn typ_modifier_unknown() {
         assert_eq!(
             validate_typ_modifiers("bogus", "id", "string"),
-            vec!["[TYP] unknown modifier \"bogus\" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>, from=<path|path*|query|header>)".to_string()]
+            vec!["[TYP] unknown modifier \"bogus\" (allowed: ext, core, uuid, email, url, nonempty, json, int, min=<n>, max=<n>, positive, example=<value>, from=<path|path*|query|header>)".to_string()]
         );
     }
 
@@ -1794,6 +1795,10 @@ mod tests {
         assert_eq!(
             validate_typ_modifiers("int", "name", "string"),
             vec!["[TYP] modifier \"int\" requires a number type, but \"name\" is string".to_string()]
+        );
+        assert_eq!(
+            validate_typ_modifiers("json", "qty", "number"),
+            vec!["[TYP] modifier \"json\" requires a string type, but \"qty\" is number".to_string()]
         );
     }
 
@@ -1838,7 +1843,7 @@ mod tests {
         assert!(validate_typ_modifiers("min=1.25", "qty", "number").is_empty());
         assert_eq!(
             validate_typ_modifiers("min = 5", "qty", "number"),
-            vec!["[TYP] unknown modifier \"min \" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>, from=<path|path*|query|header>)".to_string()]
+            vec!["[TYP] unknown modifier \"min \" (allowed: ext, core, uuid, email, url, nonempty, json, int, min=<n>, max=<n>, positive, example=<value>, from=<path|path*|query|header>)".to_string()]
         );
     }
 

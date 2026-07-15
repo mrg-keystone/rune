@@ -187,8 +187,8 @@ the `[SRV]` block; `SIDECAR` is the sidecar transport; `DB_URL` is its env var; 
 | Each name must be unique | ERROR |
 | All defined types must be used | WARNING |
 | Bracket modifiers are comma-separated: `[TYP:ext,uuid]` | - |
-| Unknown modifier (allowed: `ext`, `core`, `uuid`, `email`, `url`, `nonempty`, `int`, `min=<n>`, `max=<n>`, `positive`, `example=<value>`, `from=<path\|path*\|query\|header>`) | ERROR |
-| `uuid` / `email` / `url` / `nonempty` require a `string` type | ERROR |
+| Unknown modifier (allowed: `ext`, `core`, `uuid`, `email`, `url`, `nonempty`, `json`, `int`, `min=<n>`, `max=<n>`, `positive`, `example=<value>`, `from=<path\|path*\|query\|header>`) | ERROR |
+| `uuid` / `email` / `url` / `nonempty` / `json` require a `string` type | ERROR |
 | `int` / `min=N` / `max=N` / `positive` require a `number` type | ERROR |
 | `min` / `max` require a numeric value (e.g. `min=0`) | ERROR |
 | `from` value outside `path` / `path*` / `query` / `header` | ERROR |

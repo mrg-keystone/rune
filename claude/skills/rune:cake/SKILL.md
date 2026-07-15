@@ -77,7 +77,7 @@ expectations/scenarios, replaying headless, or fixing a red walk.
 A subagent can't share the browser or talk to the user, so the interactive walk stays here:
 
 ```text
-deno run -A bootstrap/mod.ts            # serve the composed app
+deno run -A server/bootstrap/mod.ts     # serve the composed app
 open http://localhost:<port>/docs/<module>
    ├─ Emulate process    # send the next step, read the response, capture its output
    └─ Run all in order   # walk the active flow top-to-bottom, stop at the first failure
@@ -125,8 +125,8 @@ For unattended / CI / "drive it headless" runs, or an automated get-it-green loo
    touched). Start a listener only for the bearer/HTTP path, the interactive browser
    walk, or when something else genuinely needs the port.
 2. **Delegate** to `rune-cake-e2e-driver` (Task tool). Pass: the dispatch path (base
-   URL + bearer, or — for in-process — the project root, `<project>/bootstrap/mod.ts`,
-   `<project>/deno.json`, and the fact "no INFRA_URL here — unauthenticated localhost
+   URL + bearer, or — for in-process — the project root, `<project>/server/bootstrap/mod.ts`,
+   `<project>/server/deno.json`, and the fact "no INFRA_URL here — unauthenticated localhost
    POSTs are refused by design"), the modules in scope, each module's SPEC path
    (post-sync: `src/<m>/<m>.rune` — generated-file headers still print the old
    `spec/runes/` path, which no longer exists; measured: a driver `cat`'d the stale

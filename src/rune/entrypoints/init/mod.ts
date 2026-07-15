@@ -33,22 +33,65 @@ const CORE_TEMPLATE = `[MOD] core
 //       @docs <url>
 `;
 
+// The canonical composed-repo layout, written to spec/misc/layout.md so the shape
+// of the repo is a RECORDED decision, not an accident re-invented by each build.
+// The ui/ + server/ two-package split is now the ONE canonical shape — the flat
+// "serve.ts beside bootstrap/ + src/ at one root" layout was removed. `rune init`
+// pins THIS shape; anything you do differently belongs under "## Deviations" below
+// so the next tool — and the next teammate — can see it was on purpose.
+const LAYOUT_TEMPLATE = `# Composed-repo layout
+
+This app was scaffolded by \`rune init\`, which pins ONE canonical shape: a
+composed \`ui/\` (sprig frontend) + \`server/\` (keep backend) monorepo with a shared
+\`spec/\` at the git root. Each half is a Deno workspace member with its own import
+map; the git-root \`serve.ts\` folds them into one origin via
+\`serveSprig({ keep: api })\`.
+
+| Path | Owner | What it is |
+| --- | --- | --- |
+| \`deno.json\` | sprig | Deno workspace (\`["./ui","./server"]\`); tasks \`dev = sprig dev\`, \`build = sprig build\`, \`start = deno serve -A serve.ts\` |
+| \`serve.ts\` | sprig | GENERATED \`serveSprig\` composition root — imports \`api\` from \`./server/bootstrap/mod.ts\`; UI at \`/ui\`, backend at \`/api\` + \`/docs\` |
+| \`ui/\` | sprig | the sprig UI package — \`ui/src/\` (mod.ts, pages/, shell), \`ui/static/\` (client build output) |
+| \`server/\` | rune | the keep backend package — \`server/bootstrap/\` (\`bootstrapServer\`; \`modules.ts\` is the generated registry sync rewrites); \`rune sync\` lands generated modules as \`server/src/<m>/\` |
+| \`spec/runes/\` | you | authored \`.rune\` specs — \`core.rune\` (shared services) + one per module; \`rune sync\` generates from them into \`server/src/<m>/\` |
+| \`spec/misc/\` | rune | data design (\`data.json\`), cake artifacts (\`cake.json\`), and this layout note |
+| \`spec/ui/\` | sprig | UI prototype + design system |
+
+## Why this shape
+
+- **One contract at the waist.** The backend exposes queries + commands; the UI
+  consumes them through the in-process client and the generated OpenAPI/typed
+  client — never an editable shared record.
+- **Each half has one owner.** sprig owns \`ui/\` and its pins; rune owns \`server/\`
+  (the spec-driven keep backend). Neither hand-copies the other's config, so
+  nothing drifts against a stale pin. The shared \`spec/\` at the root is the one
+  place both read.
+
+## Deviations
+
+None yet. If this repo diverges from the canonical layout above — a nested app
+dir, a moved \`server/\`, a spec/ not at the root — record it here (what changed and
+why) so the shape stays a decision, not an accident.
+`;
+
 // --- sprig UI: delegated to the sprig CLI --------------------------------------
 //
-// `rune init` no longer hand-rolls the sprig UI (serve.ts + app/ + a createRenderer
-// bootstrap). sprig is CLI-compilation now — `sprig dev`/`sprig build` compile the
-// templates and emit the client bundle into static/ — and the sprig CLI owns that
-// scaffold: it writes serve.ts (serveSprig), src/ (the UI), bootstrap/mod.ts (an
-// empty keep backend), and a deno.json pinned to ITS OWN @sprig/core + tracked
-// @mrg-keystone/rune, with `dev = sprig dev` / `build = sprig build` tasks. So the
-// UI half has ONE owner (sprig) and never drifts against a stale hand-copied pin.
+// `rune init` no longer hand-rolls the sprig UI. sprig is CLI-compilation now —
+// `sprig dev`/`sprig build` compile the templates and emit the client bundle into
+// ui/static/ — and the sprig CLI owns that scaffold: it writes the git-root serve.ts
+// (serveSprig, importing `api` from ./server/bootstrap/mod.ts), the ui/ UI package
+// (ui/src/, ui/deno.json), server/bootstrap/mod.ts (an empty keep backend) with its
+// server/deno.json, and a git-root Deno workspace deno.json over [./ui, ./server]
+// with `dev = sprig dev` / `build = sprig build` tasks. So the UI half has ONE owner
+// (sprig) and never drifts against a stale hand-copied pin.
 //
-// rune init runs `sprig init <dir>` for the UI, then OVERLAYS its spec-driven keep
-// backend: it replaces sprig's empty bootstrap/mod.ts with the registry-driven one
-// (`renderMain`, whose `api` export the sprig-written serve.ts already imports, and
-// whose `import.meta.main` listen keeps `rune dev` a backend-only loop), adds the
-// module registry + config + the spec/ layout, and merges rune's engine import map
-// into sprig's deno.json (additive — sprig already pins @mrg-keystone/rune).
+// rune init runs `sprig init <dir>` for the ui/ + server/ split, then OVERLAYS its
+// spec-driven keep backend under server/: it replaces sprig's empty
+// server/bootstrap/mod.ts with the registry-driven one (`renderMain`, whose `api`
+// export the sprig-written serve.ts already imports, and whose `import.meta.main`
+// listen keeps `rune dev` a backend-only loop), adds the module registry + config,
+// lays the shared spec/ layout at the git root, and merges rune's engine import map
+// into server/deno.json (additive — sprig already pins @mrg-keystone/rune).
 
 /** Locations to look for the installed sprig CLI: PATH first, then the default
  *  `deno install` bin. sprig's compiler/scaffold need the on-disk runtime (~/.sprig),
@@ -101,34 +144,48 @@ export async function overlayRuneBackend(
   appName: string,
   ioErrors: string[],
 ): Promise<void> {
-  // Merge rune's engine import map into the deno.json sprig wrote (additive —
+  // The keep backend is a `server/` package beside the sprig `ui/` package. Merge
+  // rune's engine import map into the server/deno.json sprig wrote (additive —
   // sprig already pins @mrg-keystone/rune, so this only ADDS @/, class-validator/
-  // -transformer, #std, #assert, #api-doc, etc.).
-  await ensureImportMap(dir, ioErrors);
+  // -transformer, #std, #assert, #api-doc, etc.). `@/` → `./` there scopes the
+  // generated `server/src/**` imports (`@/src/…`) to the server package.
+  const serverDir = join(dir, "server");
+  await ensureImportMap(serverDir, ioErrors);
 
-  // bootstrap/ — replace sprig's empty keep backend with the registry-driven one.
-  // `renderMain` exports the same `api` the sprig-written serve.ts imports, and its
-  // `import.meta.main` listen keeps `rune dev` a backend-only loop. modules.ts is
-  // the GENERATED registry `rune sync` rewrites as [ENT] surfaces are added.
-  await Deno.mkdir(join(dir, "bootstrap"), { recursive: true });
+  // server/bootstrap/ — replace sprig's empty keep backend with the registry-driven
+  // one. `renderMain` exports the same `api` the sprig-written git-root serve.ts
+  // imports (from `./server/bootstrap/mod.ts`), and its `import.meta.main` listen
+  // keeps `rune dev` a backend-only loop. modules.ts is the GENERATED registry
+  // `rune sync` rewrites as [ENT] surfaces are added.
+  await Deno.mkdir(join(serverDir, "bootstrap"), { recursive: true });
   await Deno.writeTextFile(
-    join(dir, "bootstrap", "modules.ts"),
+    join(serverDir, "bootstrap", "modules.ts"),
     renderAppRegistry([]),
   );
-  await Deno.writeTextFile(join(dir, "bootstrap", "config.ts"), renderConfig());
   await Deno.writeTextFile(
-    join(dir, "bootstrap", "mod.ts"),
+    join(serverDir, "bootstrap", "config.ts"),
+    renderConfig(),
+  );
+  await Deno.writeTextFile(
+    join(serverDir, "bootstrap", "mod.ts"),
     renderMain(appName),
   );
 
-  // spec/ — the authored layout: runes/ (specs you edit + sync), misc/ (data +
-  // cake artifacts), ui/ (the sprig UI prototype + design system).
+  // spec/ — the SHARED authored layout at the git root (beside ui/ and server/):
+  // runes/ (specs you edit + sync), misc/ (data + cake artifacts), ui/ (the sprig
+  // UI prototype + design system).
   await Deno.mkdir(join(dir, "spec", "runes"), { recursive: true });
   await Deno.mkdir(join(dir, "spec", "misc"), { recursive: true });
   await Deno.mkdir(join(dir, "spec", "ui"), { recursive: true });
   await Deno.writeTextFile(
     join(dir, "spec", "runes", "core.rune"),
     CORE_TEMPLATE,
+  );
+  // Record the canonical layout as an artifact, so the repo's shape is a decision a
+  // build can read (and record deviations against), not one re-invented each time.
+  await Deno.writeTextFile(
+    join(dir, "spec", "misc", "layout.md"),
+    LAYOUT_TEMPLATE,
   );
 }
 
@@ -222,7 +279,7 @@ export async function runInit(args: string[]): Promise<number> {
 ${DIM}${
       row(
         "deno.json",
-        "@sprig/core + @mrg-keystone/rune; tasks: dev=sprig dev, build=sprig build",
+        "Deno workspace [./ui, ./server]; tasks: dev=sprig dev, build=sprig build",
       )
     }
 ${
@@ -233,14 +290,14 @@ ${
     }
 ${
       row(
-        "src/",
-        "sprig UI (mod.ts, pages/home, shell); rune modules land here on sync",
+        "ui/",
+        "sprig UI package — ui/src/ (mod.ts, pages/home, shell)  [sprig]",
       )
     }
 ${
       row(
-        "bootstrap/",
-        "keep backend wiring (bootstrapServer); modules.ts fills in on sync",
+        "server/",
+        "keep backend — server/bootstrap/ (bootstrapServer); rune modules land in server/src/<m>/ on sync",
       )
     }
 ${
@@ -249,7 +306,7 @@ ${
         "shared-services spec — add module specs beside it",
       )
     }
-${row("spec/misc/", "data design (data.json) + cake artifacts (cake.json)")}
+${row("spec/misc/", "layout.md (repo shape) + data design + cake artifacts")}
 ${row("spec/ui/", "UI prototype + design system (sprig output)")}${RESET}
 
 Next:
@@ -257,9 +314,9 @@ Next:
   ${BOLD}deno task dev${RESET}                            ${DIM}# sprig HMR dev → http://localhost:8000/ui (compiles the client)${RESET}
   ${DIM}# draft a module spec under spec/runes/ as a work-in-progress (.in-prog.rune),${RESET}
   ${DIM}# which dev/run-all skip; iterate with rune check, then sync to scaffold:${RESET}
-  ${BOLD}rune sync spec/runes/tasks.in-prog.rune${RESET}  # generate into src/tasks/ (draft stays in spec/runes/)
+  ${BOLD}rune sync spec/runes/tasks.in-prog.rune${RESET}  # generate into server/src/tasks/ (draft stays in spec/runes/)
   ${BOLD}rune sync spec/runes/core.rune${RESET}           # generate the shared service clients
-  ${DIM}# read it from a page with inject(Backend) in src/pages/<p>/logic.ts (in-process)${RESET}
+  ${DIM}# read it from a page with inject(Backend) in ui/src/pages/<p>/logic.ts (in-process)${RESET}
 `,
   );
   return 0;

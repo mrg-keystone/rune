@@ -2,58 +2,79 @@ import { basename, dirname, join, resolve } from "#std/path";
 import { parse, type SrvNode } from "@rune/domain/business/rune-parse/mod.ts";
 import { CORE_SPEC_REL } from "@rune/domain/business/rune-bindings/mod.ts";
 
-// Where to scaffold, derived from the spec's OWN location (not cwd). Dead simple:
-//   - if the spec lives in the canonical `spec/runes/` staging dir (or its
-//     `specs/runes/` plural), the root is the dir ABOVE `spec/` — so codegen and
-//     the moved spec land in the sibling `src/<module>/` at the root, never
-//     nested under `spec/`. `spec/runes/` sits beside `spec/misc/` (data + cake
-//     artifacts) and `spec/ui/` (the sprig prototype), all under one `spec/`.
-//   - if the spec lives in a flat `spec/` / `specs/` folder (the legacy layout),
-//     the root is the dir above it — same STAGING semantics.
-//   - if the spec already lives inside a `src/<module>/` (i.e. it was moved there
-//     by a previous run), the root is the dir above that `src/` — so re-syncing
-//     the moved spec stays put and never nests a second `src/<module>/`.
+// Where to scaffold — the keep backend CODEGEN ROOT — derived from the spec's OWN
+// location (not cwd). In the canonical composed monorepo the backend lives in a
+// `server/` package beside the sprig `ui/` package, with the shared authoring
+// `spec/` at the git root: `<git>/{ui,server,spec}`. Codegen lands under
+// `<git>/server/src/<module>/` and the moved spec beside it. So:
+//   - a spec in the canonical `spec/runes/` staging dir (or `specs/runes/`) sits
+//     at the GIT ROOT (`<git>/spec/runes/<m>.rune`); the codegen root is its
+//     `server/` sibling — hop up past `runes/`+`spec/` to the git root, then into
+//     `server`. `spec/runes/` sits beside `spec/misc/` (data + cake artifacts)
+//     and `spec/ui/` (the sprig prototype), all under one shared `spec/`.
+//   - a spec in a flat `spec/` / `specs/` folder (the legacy staging layout) is
+//     also at the git root → the same `server/` sibling is the codegen root.
+//   - a spec already MOVED inside a `src/<module>/` (a previous run relocated it
+//     into `<git>/server/src/<module>/`) resolves to the dir above that `src/`,
+//     which IS `<git>/server` — so a staging sync and a re-sync of the moved spec
+//     agree on the ONE codegen root, and re-syncing never nests a second `src/`.
 //   - otherwise, scaffold right beside the spec, in its own directory.
 // Only the spec's immediate parents are inspected, so a `src`/`spec` dir higher
-// up the path can't hijack the root. `--root` overrides this at the call site.
+// up the path can't hijack the root. `--root` overrides this at the call site
+// (e.g. `--root <git>/server`).
 //
 // Shared by `rune sync` and `rune manifest` so the root-resolution rule has a
 // single source of truth and can't drift between the two entrypoints.
 export function resolveRoot(absRune: string): string {
   const specDir = dirname(absRune);
-  // spec/runes/ — the canonical staging subfolder: hop up TWO levels (past
-  // `runes/` and `spec/`) to the project root. Mirrors the singular-`spec/`
-  // staging rule below; the plural `specs/` stays the legacy resolve-to-self.
+  // spec/runes/ — the canonical staging subfolder at the git root: hop up TWO
+  // levels (past `runes/` and `spec/`) to the git root, then into the `server/`
+  // codegen root. Mirrors the singular-`spec/` staging rule below.
   if (basename(specDir) === "runes" && basename(dirname(specDir)) === "spec") {
-    return dirname(dirname(specDir));
+    return join(dirname(dirname(specDir)), "server");
   }
-  if (basename(specDir) === "spec") return dirname(specDir);
+  if (basename(specDir) === "spec") return join(dirname(specDir), "server");
+  // A moved spec inside `server/src/<module>/`: the dir above `src/` is already
+  // the `server/` codegen root — return it as-is (no extra `server/` hop).
   if (basename(dirname(specDir)) === "src") return dirname(dirname(specDir));
   return specDir;
 }
 
-/** The core-spec file locations probed under `root`, in resolution order: the
- * canonical `<root>/src/core/core.rune` first, then the `spec/runes/` staging
- * dir, the legacy flat `spec/`+`specs/` layouts, and a flat `<root>/core.rune`
- * sibling — each trailed (last) by its `.in-prog.rune` draft. A draft core
- * STILL supplies the shared services so every module resolves its boundary
- * calls while core is iterated on (core is infrastructure, not a composable
- * module — it declares no endpoints and is never mounted — so unlike a module
- * draft it must not be "ignored"); finalized core wins when both exist. Shared
- * by loadCoreSrvs (reads them) and coreSpecExists (stats them) so the two
- * can't drift. */
+/** The core-spec file locations probed under the `server/` codegen `root`, in
+ * resolution order: the canonical `<root>/src/core/core.rune` first, then the
+ * shared `spec/runes/` staging dir. In the composed monorepo that staging dir is
+ * the git-root `spec/` — a SIBLING of the `server/` codegen root — so each staging
+ * location is probed both one level UP (`<root>/../spec/...`, the canonical
+ * `<git>/spec/runes/core.rune`) AND under `<root>` (the legacy layout where spec/
+ * sat inside the codegen root), so old fixtures and the new split both resolve.
+ * The legacy flat `spec/`+`specs/` layouts and a flat `<root>/core.rune` sibling
+ * follow — each trailed (last) by its `.in-prog.rune` draft. A draft core STILL
+ * supplies the shared services so every module resolves its boundary calls while
+ * core is iterated on (core is infrastructure, not a composable module — it
+ * declares no endpoints and is never mounted — so unlike a module draft it must
+ * not be "ignored"); finalized core wins when both exist. Shared by loadCoreSrvs
+ * (reads them) and coreSpecExists (stats them) so the two can't drift. */
 function coreSpecCandidates(root: string): string[] {
+  const up = dirname(root); // the git root when `root` is `<git>/server`
   return [
-    join(root, CORE_SPEC_REL), // canonical: src/core/core.rune
-    join(root, "spec", "runes", "core.rune"), // spec/runes/ staging dir
-    join(root, "specs", "runes", "core.rune"), // specs/runes/ staging dir
-    join(root, "spec", "core.rune"), // legacy flat spec/ layout
-    join(root, "specs", "core.rune"), // legacy flat specs/ layout
+    join(root, CORE_SPEC_REL), // canonical: <server>/src/core/core.rune
+    join(up, "spec", "runes", "core.rune"), // shared <git>/spec/runes/ staging
+    join(root, "spec", "runes", "core.rune"), // legacy under-root spec/runes/
+    join(up, "specs", "runes", "core.rune"),
+    join(root, "specs", "runes", "core.rune"),
+    join(up, "spec", "core.rune"), // legacy flat spec/ layout
+    join(root, "spec", "core.rune"),
+    join(up, "specs", "core.rune"),
+    join(root, "specs", "core.rune"),
     join(root, "core.rune"), // flat sibling
     join(root, "src", "core", "core.in-prog.rune"),
+    join(up, "spec", "runes", "core.in-prog.rune"),
     join(root, "spec", "runes", "core.in-prog.rune"),
+    join(up, "specs", "runes", "core.in-prog.rune"),
     join(root, "specs", "runes", "core.in-prog.rune"),
+    join(up, "spec", "core.in-prog.rune"),
     join(root, "spec", "core.in-prog.rune"),
+    join(up, "specs", "core.in-prog.rune"),
     join(root, "specs", "core.in-prog.rune"),
     join(root, "core.in-prog.rune"),
   ];

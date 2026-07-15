@@ -2,6 +2,7 @@ import "#reflect-metadata";
 import { assertEquals } from "#assert";
 import { Controller, Get, Module, Post } from "#danet/core";
 import { Public } from "@foundation/domain/business/public-route/mod.ts";
+import { Internal } from "@foundation/domain/business/internal-route/mod.ts";
 import { Grant } from "@foundation/domain/business/grants/mod.ts";
 import { LoggedIn } from "@foundation/domain/business/grants/mod.ts";
 import {
@@ -87,6 +88,70 @@ Deno.test("warnOpenRoutes emits one aggregate line naming the bare route", () =>
   assertEquals(msgs[0].includes("POST /things/create"), true);
   assertEquals(msgs[0].includes("ThingsController.create"), true);
   assertEquals(msgs[0].includes("`*` universal grant"), true);
+  // points authors at @Internal() as the escape hatch for intentional in-process routes
+  assertEquals(msgs[0].includes("@Internal()"), true);
+});
+
+Deno.test("@Internal routes classify as internal, not open, and never trip the audit", () => {
+  @Controller("http")
+  class OrchestratorController {
+    // reached only by the in-process client's tick loop — bare, but deliberately so
+    @Internal()
+    @Post("orchestrator-tick")
+    tick() {}
+
+    // a genuinely-forgotten bare route on the same controller still surfaces
+    @Post("forgotten")
+    forgotten() {}
+  }
+  @Module({ controllers: [OrchestratorController] })
+  class OrchestratorModule {}
+
+  const rows = auditRoutes([OrchestratorModule]);
+  assertEquals(entry(rows, "tick").posture, "internal");
+  assertEquals(entry(rows, "forgotten").posture, "open");
+
+  // only the forgotten route is open; @Internal is excluded
+  const open = openRoutes([OrchestratorModule]);
+  assertEquals(open.map((r) => r.handler), ["forgotten"]);
+
+  const msgs: string[] = [];
+  warnOpenRoutes([OrchestratorModule], {
+    appName: "demo",
+    honorSkeleton: true,
+    warn: (m) => msgs.push(m),
+  });
+  // the warning names the forgotten route but NOT the @Internal tick route
+  assertEquals(msgs.length, 1);
+  assertEquals(msgs[0].includes("/http/forgotten"), true);
+  assertEquals(msgs[0].includes("orchestrator-tick"), false);
+});
+
+Deno.test("a fully @Internal controller is silent (no open routes)", () => {
+  @Internal()
+  @Controller("internal")
+  class FullyInternalController {
+    @Get()
+    read() {}
+
+    @Post("tick")
+    tick() {}
+  }
+  @Module({ controllers: [FullyInternalController] })
+  class FullyInternalModule {}
+
+  const rows = auditRoutes([FullyInternalModule]);
+  // class-level @Internal is inherited by every route, just like class-level @LoggedIn
+  assertEquals(rows.every((r) => r.posture === "internal"), true);
+
+  const msgs: string[] = [];
+  const open = warnOpenRoutes([FullyInternalModule], {
+    appName: "demo",
+    honorSkeleton: true,
+    warn: (m) => msgs.push(m),
+  });
+  assertEquals(open.length, 0);
+  assertEquals(msgs.length, 0);
 });
 
 Deno.test("warnOpenRoutes wording flips under honorSkeleton:false", () => {

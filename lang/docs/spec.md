@@ -392,7 +392,7 @@ The LSP enforces these rules:
 messages):
 
 - Unknown modifier:
-  `[TYP] unknown modifier "<m>" (allowed: ext, core, uuid, email, url, nonempty, int, min=<n>, max=<n>, positive, example=<value>, from=<path|path*|query|header>)`
+  `[TYP] unknown modifier "<m>" (allowed: ext, core, uuid, email, url, nonempty, json, int, min=<n>, max=<n>, positive, example=<value>, from=<path|path*|query|header>)`
 - Constraint on the wrong base primitive:
   `[TYP] modifier "<m>" requires a <string|number> type, but "<name>" is <declaredType>`
 - Missing or non-numeric value on `min`/`max`:
@@ -461,6 +461,7 @@ decorator, and the generated coordinator asserts them at every seam.
 | `email`    | `string` | `@IsEmail()`        | `@IsEmail(undefined, { each: true })`  |
 | `url`      | `string` | `@IsUrl()`          | `@IsUrl(undefined, { each: true })`    |
 | `nonempty` | `string` | `@IsNotEmpty()`     | `@IsNotEmpty({ each: true })`          |
+| `json`     | `string` | `@IsJSON()`         | `@IsJSON({ each: true })`              |
 | `int`      | `number` | `@IsInt()`          | `@IsInt({ each: true })`               |
 | `min=N`    | `number` | `@Min(N)`           | `@Min(N, { each: true })`              |
 | `max=N`    | `number` | `@Max(N)`           | `@Max(N, { each: true })`              |
@@ -473,6 +474,9 @@ decorator, and the generated coordinator asserts them at every seam.
   fill required, unbound input fields from. Typed by the declared primitive.
 - `ext` / `core` keep their semantics and compose with constraints
   (`[TYP:ext,uuid]` is both an external input and a UUID)
+- `json` marks a `string` field that carries a JSON-encoded object/array over
+  the wire (no typed `[DTO]`); `@IsJSON()` validates it PARSES at the boundary,
+  so invalid JSON 422s at the seam instead of degrading silently downstream
 - Only `min` / `max` take a value (`min=0`); the value must be numeric
 - A constraint requires its base primitive: string constraints on `string`
   types, number constraints on `number` types
@@ -678,6 +682,7 @@ Modifiers (appended inside the bracket; `[TYP]` takes a comma-separated list):
 | `:core`                              | `[DTO]`, `[TYP]` | routes to `src/core/...`               |
 | `:ext`                               | `[TYP]`          | value produced outside this module     |
 | `:uuid` `:email` `:url` `:nonempty`  | `[TYP]` (string) | constraint → class-validator decorator |
+| `:json`                              | `[TYP]` (string) | JSON-encoded blob; `@IsJSON()` parseability check |
 | `:int` `:min=N` `:max=N` `:positive` | `[TYP]` (number) | constraint → class-validator decorator |
 
 See **Constraint Modifiers** for the full decorator table.

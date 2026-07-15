@@ -35,7 +35,7 @@ The orchestrator passes:
 
 - **PROJECT ROOT** — absolute path.
 - **SPEC** — absolute path to the module's finalized spec (the contract). Post-sync it lives at
-  `<project>/src/<module>/<module>.rune` (`rune sync` relocates it out of `spec/runes/`); use
+  `<project>/server/src/<module>/<module>.rune` (`rune sync` relocates it out of `spec/runes/`); use
   whichever path the orchestrator passed.
 - **BATCH** — the test rows to judge, each `{ id, file, kind, behavior, assertion, targetFile }`
   with `file`/`targetFile` as absolute paths.
@@ -75,13 +75,20 @@ spurious TS2307.
   fires — a `Deno.test("timeout", …)` that asserts nothing is a shell, not coverage.
 - Is it gamed? Reject if it asserts the stub `throw`, tautologizes (`assert(true)`), or was written
   to match a body that doesn't do what the step says. A body that passes a wrong test is still wrong.
+- A `hardening` row must ACTUALLY exercise its `hardening_category`, not a happy path wearing the
+  label: `cross-entity` instantiates ≥2 instances and proves no cross-contamination;
+  `crash-restart` drives the durable state twice and proves no double-effect; `representation` uses
+  a value whose two representations disagree; `lifecycle-offpath` submits the non-happy state and
+  proves it is fully handled (not stranded); `wire-seam` feeds adversarial input and proves the seam
+  fails loudly, not silently changing meaning. A hardening row that only re-proves the happy path is
+  gamed — bounce it `write-tests`.
 - Anchor on the spec/DTO contract, not on how the code happens to look.
 
 **PROVE GREEN (run — once per test file, then ONE suite run for the whole batch)**
 
 - Run each batched TEST FILE once (`deno test <file>` covers all its `Deno.test`s): every batch
   test must PASS. Keep the output tails.
-- Then run the FULL module suite ONCE (`deno test <project>/src/<module>`) and compare against the
+- Then run the FULL module suite ONCE (`deno test <project>/server/src/<module>`) and compare against the
   pinned baseline. A body that fixed one test by breaking another is a regression — name the test
   that broke. Do NOT re-run the suite per test; one run judges the whole batch.
 - **A pre-existing failure is NOT a regression.** If the full-module run fails to COMPILE for a reason
@@ -124,7 +131,7 @@ Return your final message as this exact JSON, nothing else:
   "verdicts": [
     {
       "id": "int-create-happy",
-      "test": "src/tasks/domain/coordinators/task-create/int.test.ts::create — happy path",
+      "test": "server/src/tasks/domain/coordinators/task-create/int.test.ts::create — happy path",
       "correct": true,
       "green": true,
       "verdict": "pass",
