@@ -1,0 +1,747 @@
+{
+  "sourceDir": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec",
+  "outDir": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec-pieces",
+  "files": [
+    {
+      "outPath": "00-overview/00-overview.md",
+      "source": "00-overview.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/00-overview.md",
+      "startByte": 0,
+      "endByte": 181,
+      "rewrites": []
+    },
+    {
+      "outPath": "00-overview/01-what-rune-is.md",
+      "source": "00-overview.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/00-overview.md",
+      "startByte": 181,
+      "endByte": 1399,
+      "rewrites": []
+    },
+    {
+      "outPath": "00-overview/02-the-two-layers.md",
+      "source": "00-overview.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/00-overview.md",
+      "startByte": 1399,
+      "endByte": 2921,
+      "rewrites": []
+    },
+    {
+      "outPath": "00-overview/03-the-core-ideas.md",
+      "source": "00-overview.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/00-overview.md",
+      "startByte": 2921,
+      "endByte": 4966,
+      "rewrites": []
+    },
+    {
+      "outPath": "00-overview/04-the-loop-end-to-end.md",
+      "source": "00-overview.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/00-overview.md",
+      "startByte": 4966,
+      "endByte": 5916,
+      "rewrites": []
+    },
+    {
+      "outPath": "00-overview/05-glossary.md",
+      "source": "00-overview.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/00-overview.md",
+      "startByte": 5916,
+      "endByte": 8820,
+      "rewrites": []
+    },
+    {
+      "outPath": "01-architecture/00-overview.md",
+      "source": "01-architecture.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/01-architecture.md",
+      "startByte": 0,
+      "endByte": 192,
+      "rewrites": []
+    },
+    {
+      "outPath": "01-architecture/01-top-level-layout.md",
+      "source": "01-architecture.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/01-architecture.md",
+      "startByte": 192,
+      "endByte": 2489,
+      "rewrites": []
+    },
+    {
+      "outPath": "01-architecture/02-the-deno-workspace.md",
+      "source": "01-architecture.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/01-architecture.md",
+      "startByte": 2489,
+      "endByte": 4057,
+      "rewrites": []
+    },
+    {
+      "outPath": "01-architecture/03-layering-inside-the-engine-src.md",
+      "source": "01-architecture.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/01-architecture.md",
+      "startByte": 4057,
+      "endByte": 6736,
+      "rewrites": []
+    },
+    {
+      "outPath": "01-architecture/04-cross-boundary-contracts.md",
+      "source": "01-architecture.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/01-architecture.md",
+      "startByte": 6736,
+      "endByte": 10313,
+      "rewrites": []
+    },
+    {
+      "outPath": "01-architecture/05-the-canonical-generated-project-shape.md",
+      "source": "01-architecture.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/01-architecture.md",
+      "startByte": 10313,
+      "endByte": 14914,
+      "rewrites": []
+    },
+    {
+      "outPath": "01-architecture/06-the-durability-manifest-spec-as-a-portable-artifact.md",
+      "source": "01-architecture.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/01-architecture.md",
+      "startByte": 14914,
+      "endByte": 18889,
+      "rewrites": []
+    },
+    {
+      "outPath": "01-architecture/07-naming-conventions.md",
+      "source": "01-architecture.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/01-architecture.md",
+      "startByte": 18889,
+      "endByte": 19671,
+      "rewrites": []
+    },
+    {
+      "outPath": "02-language/00-overview.md",
+      "source": "02-language.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/02-language.md",
+      "startByte": 0,
+      "endByte": 952,
+      "rewrites": []
+    },
+    {
+      "outPath": "02-language/01-a-complete-example.md",
+      "source": "02-language.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/02-language.md",
+      "startByte": 952,
+      "endByte": 1804,
+      "rewrites": []
+    },
+    {
+      "outPath": "02-language/02-tags.md",
+      "source": "02-language.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/02-language.md",
+      "startByte": 1804,
+      "endByte": 3917,
+      "rewrites": []
+    },
+    {
+      "outPath": "02-language/03-requirements-and-steps.md",
+      "source": "02-language.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/02-language.md",
+      "startByte": 3917,
+      "endByte": 14025,
+      "rewrites": []
+    },
+    {
+      "outPath": "02-language/04-types-dtos-and-constraint-modifiers.md",
+      "source": "02-language.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/02-language.md",
+      "startByte": 14025,
+      "endByte": 18471,
+      "rewrites": []
+    },
+    {
+      "outPath": "02-language/05-entrypoints-ent.md",
+      "source": "02-language.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/02-language.md",
+      "startByte": 18471,
+      "endByte": 26475,
+      "rewrites": []
+    },
+    {
+      "outPath": "02-language/06-validation-summary.md",
+      "source": "02-language.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/02-language.md",
+      "startByte": 26475,
+      "endByte": 30189,
+      "rewrites": []
+    },
+    {
+      "outPath": "02-language/07-comments-and-file-conventions.md",
+      "source": "02-language.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/02-language.md",
+      "startByte": 30189,
+      "endByte": 31303,
+      "rewrites": []
+    },
+    {
+      "outPath": "03-cli/00-overview.md",
+      "source": "03-cli.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/03-cli.md",
+      "startByte": 0,
+      "endByte": 713,
+      "rewrites": []
+    },
+    {
+      "outPath": "03-cli/01-command-surface.md",
+      "source": "03-cli.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/03-cli.md",
+      "startByte": 713,
+      "endByte": 6997,
+      "rewrites": []
+    },
+    {
+      "outPath": "03-cli/02-rune-sync-semantics-that-matter.md",
+      "source": "03-cli.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/03-cli.md",
+      "startByte": 6997,
+      "endByte": 14191,
+      "rewrites": []
+    },
+    {
+      "outPath": "03-cli/03-rune-dev-the-live-loop.md",
+      "source": "03-cli.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/03-cli.md",
+      "startByte": 14191,
+      "endByte": 20781,
+      "rewrites": []
+    },
+    {
+      "outPath": "03-cli/04-the-authoring-loop-end-to-end.md",
+      "source": "03-cli.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/03-cli.md",
+      "startByte": 20781,
+      "endByte": 21793,
+      "rewrites": []
+    },
+    {
+      "outPath": "04-codegen/00-overview.md",
+      "source": "04-codegen.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/04-codegen.md",
+      "startByte": 0,
+      "endByte": 834,
+      "rewrites": [
+        {
+          "start": 461,
+          "end": 463,
+          "from": "§4",
+          "to": "[§4](04-heal-rules.md)"
+        }
+      ]
+    },
+    {
+      "outPath": "04-codegen/01-pipeline.md",
+      "source": "04-codegen.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/04-codegen.md",
+      "startByte": 834,
+      "endByte": 14387,
+      "rewrites": [
+        {
+          "start": 13355,
+          "end": 13357,
+          "from": "§3",
+          "to": "[§3](03-ghost-stubs-the-typ-ext-lifecycle.md)"
+        }
+      ]
+    },
+    {
+      "outPath": "04-codegen/02-the-contract-artifact-spec-contract.md",
+      "source": "04-codegen.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/04-codegen.md",
+      "startByte": 14387,
+      "endByte": 15559,
+      "rewrites": []
+    },
+    {
+      "outPath": "04-codegen/03-ghost-stubs-the-typ-ext-lifecycle.md",
+      "source": "04-codegen.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/04-codegen.md",
+      "startByte": 15559,
+      "endByte": 16914,
+      "rewrites": []
+    },
+    {
+      "outPath": "04-codegen/04-heal-rules.md",
+      "source": "04-codegen.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/04-codegen.md",
+      "startByte": 16914,
+      "endByte": 18245,
+      "rewrites": []
+    },
+    {
+      "outPath": "04-codegen/05-validation-swagger-details-worth-knowing.md",
+      "source": "04-codegen.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/04-codegen.md",
+      "startByte": 18245,
+      "endByte": 19966,
+      "rewrites": [
+        {
+          "start": 626,
+          "end": 628,
+          "from": "§3",
+          "to": "[§3](03-ghost-stubs-the-typ-ext-lifecycle.md)"
+        }
+      ]
+    },
+    {
+      "outPath": "04-codegen/06-the-run-all-gate.md",
+      "source": "04-codegen.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/04-codegen.md",
+      "startByte": 19966,
+      "endByte": 20415,
+      "rewrites": []
+    },
+    {
+      "outPath": "05-linter/00-overview.md",
+      "source": "05-linter.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/05-linter.md",
+      "startByte": 0,
+      "endByte": 6151,
+      "rewrites": []
+    },
+    {
+      "outPath": "05-linter/01-rule-families.md",
+      "source": "05-linter.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/05-linter.md",
+      "startByte": 6151,
+      "endByte": 24117,
+      "rewrites": []
+    },
+    {
+      "outPath": "05-linter/02-strict.md",
+      "source": "05-linter.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/05-linter.md",
+      "startByte": 24117,
+      "endByte": 24749,
+      "rewrites": []
+    },
+    {
+      "outPath": "05-linter/03-governance-built-not-yet-wired.md",
+      "source": "05-linter.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/05-linter.md",
+      "startByte": 24749,
+      "endByte": 25379,
+      "rewrites": []
+    },
+    {
+      "outPath": "06-runtime/00-overview.md",
+      "source": "06-runtime.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/06-runtime.md",
+      "startByte": 0,
+      "endByte": 1489,
+      "rewrites": []
+    },
+    {
+      "outPath": "06-runtime/01-bootstrapserver-appname-module-options.md",
+      "source": "06-runtime.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/06-runtime.md",
+      "startByte": 1489,
+      "endByte": 6166,
+      "rewrites": []
+    },
+    {
+      "outPath": "06-runtime/02-endpoint-endpointcontroller.md",
+      "source": "06-runtime.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/06-runtime.md",
+      "startByte": 6166,
+      "endByte": 10442,
+      "rewrites": []
+    },
+    {
+      "outPath": "06-runtime/03-the-assert-runtime-assert.md",
+      "source": "06-runtime.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/06-runtime.md",
+      "startByte": 10442,
+      "endByte": 11889,
+      "rewrites": []
+    },
+    {
+      "outPath": "06-runtime/04-logging-tracing-alerting.md",
+      "source": "06-runtime.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/06-runtime.md",
+      "startByte": 11889,
+      "endByte": 12798,
+      "rewrites": []
+    },
+    {
+      "outPath": "06-runtime/05-the-docs-surface-an-addable-module.md",
+      "source": "06-runtime.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/06-runtime.md",
+      "startByte": 12798,
+      "endByte": 14093,
+      "rewrites": []
+    },
+    {
+      "outPath": "06-runtime/06-composition-serving.md",
+      "source": "06-runtime.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/06-runtime.md",
+      "startByte": 14093,
+      "endByte": 15459,
+      "rewrites": []
+    },
+    {
+      "outPath": "06-runtime/07-package-hygiene.md",
+      "source": "06-runtime.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/06-runtime.md",
+      "startByte": 15459,
+      "endByte": 15949,
+      "rewrites": []
+    },
+    {
+      "outPath": "07-cake/00-overview.md",
+      "source": "07-cake.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/07-cake.md",
+      "startByte": 0,
+      "endByte": 2491,
+      "rewrites": []
+    },
+    {
+      "outPath": "07-cake/01-the-docs-module-docsmodule.md",
+      "source": "07-cake.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/07-cake.md",
+      "startByte": 2491,
+      "endByte": 3755,
+      "rewrites": []
+    },
+    {
+      "outPath": "07-cake/02-the-cake-docs-module.md",
+      "source": "07-cake.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/07-cake.md",
+      "startByte": 3755,
+      "endByte": 17149,
+      "rewrites": []
+    },
+    {
+      "outPath": "07-cake/03-the-system-map-docs-map.md",
+      "source": "07-cake.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/07-cake.md",
+      "startByte": 17149,
+      "endByte": 18563,
+      "rewrites": []
+    },
+    {
+      "outPath": "07-cake/04-the-headless-runner-exerciseendpoints-opts.md",
+      "source": "07-cake.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/07-cake.md",
+      "startByte": 18563,
+      "endByte": 28056,
+      "rewrites": []
+    },
+    {
+      "outPath": "07-cake/05-dev-mode-and-tracing-pages.md",
+      "source": "07-cake.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/07-cake.md",
+      "startByte": 28056,
+      "endByte": 29895,
+      "rewrites": []
+    },
+    {
+      "outPath": "08-language-tooling/00-overview.md",
+      "source": "08-language-tooling.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/08-language-tooling.md",
+      "startByte": 0,
+      "endByte": 781,
+      "rewrites": []
+    },
+    {
+      "outPath": "08-language-tooling/01-lang-keywords-json-the-artifact.md",
+      "source": "08-language-tooling.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/08-language-tooling.md",
+      "startByte": 781,
+      "endByte": 6535,
+      "rewrites": []
+    },
+    {
+      "outPath": "08-language-tooling/02-the-grammar-lang-grammar.md",
+      "source": "08-language-tooling.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/08-language-tooling.md",
+      "startByte": 6535,
+      "endByte": 9585,
+      "rewrites": []
+    },
+    {
+      "outPath": "08-language-tooling/03-the-rust-workspace-lang-parser-lsp-cli.md",
+      "source": "08-language-tooling.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/08-language-tooling.md",
+      "startByte": 9585,
+      "endByte": 15073,
+      "rewrites": []
+    },
+    {
+      "outPath": "08-language-tooling/04-rune-studio-rune-studio.md",
+      "source": "08-language-tooling.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/08-language-tooling.md",
+      "startByte": 15073,
+      "endByte": 17546,
+      "rewrites": []
+    },
+    {
+      "outPath": "09-claude-skills/00-overview.md",
+      "source": "09-claude-skills.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/09-claude-skills.md",
+      "startByte": 0,
+      "endByte": 999,
+      "rewrites": []
+    },
+    {
+      "outPath": "09-claude-skills/01-the-eight-skills-in-pipeline-order.md",
+      "source": "09-claude-skills.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/09-claude-skills.md",
+      "startByte": 999,
+      "endByte": 20747,
+      "rewrites": []
+    },
+    {
+      "outPath": "09-claude-skills/02-the-agent-fleet-claude-agents.md",
+      "source": "09-claude-skills.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/09-claude-skills.md",
+      "startByte": 20747,
+      "endByte": 23065,
+      "rewrites": []
+    },
+    {
+      "outPath": "09-claude-skills/03-distribution.md",
+      "source": "09-claude-skills.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/09-claude-skills.md",
+      "startByte": 23065,
+      "endByte": 25183,
+      "rewrites": []
+    },
+    {
+      "outPath": "09-claude-skills/04-drift-guards.md",
+      "source": "09-claude-skills.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/09-claude-skills.md",
+      "startByte": 25183,
+      "endByte": 25589,
+      "rewrites": []
+    },
+    {
+      "outPath": "10-testing-and-verification/00-overview.md",
+      "source": "10-testing-and-verification.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/10-testing-and-verification.md",
+      "startByte": 0,
+      "endByte": 615,
+      "rewrites": []
+    },
+    {
+      "outPath": "10-testing-and-verification/01-the-verify-ladder-deno-task-verify.md",
+      "source": "10-testing-and-verification.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/10-testing-and-verification.md",
+      "startByte": 615,
+      "endByte": 7231,
+      "rewrites": []
+    },
+    {
+      "outPath": "10-testing-and-verification/02-the-fixture-corpus-fixtures.md",
+      "source": "10-testing-and-verification.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/10-testing-and-verification.md",
+      "startByte": 7231,
+      "endByte": 8495,
+      "rewrites": []
+    },
+    {
+      "outPath": "10-testing-and-verification/03-acceptance-suites-e2e.md",
+      "source": "10-testing-and-verification.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/10-testing-and-verification.md",
+      "startByte": 8495,
+      "endByte": 10186,
+      "rewrites": []
+    },
+    {
+      "outPath": "10-testing-and-verification/04-per-layer-suites.md",
+      "source": "10-testing-and-verification.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/10-testing-and-verification.md",
+      "startByte": 10186,
+      "endByte": 11930,
+      "rewrites": []
+    },
+    {
+      "outPath": "10-testing-and-verification/05-drift-guards-the-other-half-of-testing.md",
+      "source": "10-testing-and-verification.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/10-testing-and-verification.md",
+      "startByte": 11930,
+      "endByte": 13569,
+      "rewrites": []
+    },
+    {
+      "outPath": "10-testing-and-verification/06-known-state.md",
+      "source": "10-testing-and-verification.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/10-testing-and-verification.md",
+      "startByte": 13569,
+      "endByte": 15255,
+      "rewrites": []
+    },
+    {
+      "outPath": "11-release-and-distribution/00-overview.md",
+      "source": "11-release-and-distribution.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/11-release-and-distribution.md",
+      "startByte": 0,
+      "endByte": 755,
+      "rewrites": []
+    },
+    {
+      "outPath": "11-release-and-distribution/01-train-1-the-rune-toolchain-github-releases.md",
+      "source": "11-release-and-distribution.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/11-release-and-distribution.md",
+      "startByte": 755,
+      "endByte": 4699,
+      "rewrites": []
+    },
+    {
+      "outPath": "11-release-and-distribution/02-train-2-the-runtime-jsr.md",
+      "source": "11-release-and-distribution.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/11-release-and-distribution.md",
+      "startByte": 4699,
+      "endByte": 7438,
+      "rewrites": []
+    },
+    {
+      "outPath": "11-release-and-distribution/03-install-uninstall.md",
+      "source": "11-release-and-distribution.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/11-release-and-distribution.md",
+      "startByte": 7438,
+      "endByte": 11105,
+      "rewrites": []
+    },
+    {
+      "outPath": "11-release-and-distribution/04-build-from-source.md",
+      "source": "11-release-and-distribution.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/11-release-and-distribution.md",
+      "startByte": 11105,
+      "endByte": 12884,
+      "rewrites": []
+    },
+    {
+      "outPath": "12-history-and-roadmap/00-overview.md",
+      "source": "12-history-and-roadmap.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/12-history-and-roadmap.md",
+      "startByte": 0,
+      "endByte": 239,
+      "rewrites": []
+    },
+    {
+      "outPath": "12-history-and-roadmap/01-architecture-decision-records-docs-adr.md",
+      "source": "12-history-and-roadmap.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/12-history-and-roadmap.md",
+      "startByte": 239,
+      "endByte": 1348,
+      "rewrites": []
+    },
+    {
+      "outPath": "12-history-and-roadmap/02-the-rebuild-docs-rebuild-progress-md.md",
+      "source": "12-history-and-roadmap.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/12-history-and-roadmap.md",
+      "startByte": 1348,
+      "endByte": 2527,
+      "rewrites": []
+    },
+    {
+      "outPath": "12-history-and-roadmap/03-the-dx-roadmap-todos-complete.md",
+      "source": "12-history-and-roadmap.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/12-history-and-roadmap.md",
+      "startByte": 2527,
+      "endByte": 3292,
+      "rewrites": []
+    },
+    {
+      "outPath": "12-history-and-roadmap/04-the-diamond-upgrades-md-the-strategic-direction.md",
+      "source": "12-history-and-roadmap.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/12-history-and-roadmap.md",
+      "startByte": 3292,
+      "endByte": 5015,
+      "rewrites": []
+    },
+    {
+      "outPath": "12-history-and-roadmap/05-parked-proposals-maybe.md",
+      "source": "12-history-and-roadmap.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/12-history-and-roadmap.md",
+      "startByte": 5015,
+      "endByte": 5522,
+      "rewrites": []
+    },
+    {
+      "outPath": "12-history-and-roadmap/06-field-feedback-feedback-feedback-md.md",
+      "source": "12-history-and-roadmap.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/12-history-and-roadmap.md",
+      "startByte": 5522,
+      "endByte": 6641,
+      "rewrites": []
+    },
+    {
+      "outPath": "12-history-and-roadmap/07-current-state-summarized.md",
+      "source": "12-history-and-roadmap.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/12-history-and-roadmap.md",
+      "startByte": 6641,
+      "endByte": 7637,
+      "rewrites": []
+    },
+    {
+      "outPath": "13-environment-variables/00-overview.md",
+      "source": "13-environment-variables.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/13-environment-variables.md",
+      "startByte": 0,
+      "endByte": 945,
+      "rewrites": []
+    },
+    {
+      "outPath": "13-environment-variables/01-substrate-variables-moved-to-bedrock.md",
+      "source": "13-environment-variables.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/13-environment-variables.md",
+      "startByte": 945,
+      "endByte": 1380,
+      "rewrites": []
+    },
+    {
+      "outPath": "13-environment-variables/02-keep-runtime-serving-behavior.md",
+      "source": "13-environment-variables.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/13-environment-variables.md",
+      "startByte": 1380,
+      "endByte": 3004,
+      "rewrites": []
+    },
+    {
+      "outPath": "13-environment-variables/03-rune-cli-engine.md",
+      "source": "13-environment-variables.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/13-environment-variables.md",
+      "startByte": 3004,
+      "endByte": 4353,
+      "rewrites": []
+    },
+    {
+      "outPath": "13-environment-variables/04-install-release-versioning.md",
+      "source": "13-environment-variables.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/13-environment-variables.md",
+      "startByte": 4353,
+      "endByte": 5448,
+      "rewrites": []
+    },
+    {
+      "outPath": "13-environment-variables/05-test-only.md",
+      "source": "13-environment-variables.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/13-environment-variables.md",
+      "startByte": 5448,
+      "endByte": 5978,
+      "rewrites": []
+    },
+    {
+      "outPath": "README/00-overview.md",
+      "source": "README.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/README.md",
+      "startByte": 0,
+      "endByte": 2798,
+      "rewrites": []
+    },
+    {
+      "outPath": "README/01-the-project-in-three-sentences.md",
+      "source": "README.md",
+      "sourcePath": "/Users/raphaelcastro/Documents/programming/tooling/rune/refactor/spec/README.md",
+      "startByte": 2798,
+      "endByte": 3993,
+      "rewrites": []
+    }
+  ]
+}

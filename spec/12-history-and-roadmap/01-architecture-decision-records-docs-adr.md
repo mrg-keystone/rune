@@ -1,0 +1,26 @@
+## Architecture Decision Records (`docs/adr/`)
+
+Eight made decisions (not open questions) from the Rune Studio rebuild's P0:
+
+| ADR | Decision | Why | Where it's realized | Source |
+| --- | --- | --- | --- | --- |
+| 0001 | **One engine** — the TypeScript engine is the sole artifact-driven engine; Rust is retired from generation but keeps the LSP and the `rune-syntax` CLI | Three parallel generation paths (Rust CLI, shape-checker TS, Studio previews) emitted different layouts and could never agree; Rust source can't be edited in a UI | [08-language-tooling → The Rust workspace](../08-language-tooling/03-the-rust-workspace-lang-parser-lsp-cli.md) (Rust retired from generation, kept for `rune-lsp` and the `rune-syntax` validate/format/completions/install CLI) · [04-codegen → Overview](../04-codegen/00-overview.md) (the one generating engine) | [`docs/adr/0001-one-engine.md`](../../docs/adr/0001-one-engine.md) |
+| 0002 | **Audience** — spec-author mode is the default surface; language-design is a separate expert/admin mode | "Low-code" was conflating expert language-design work (a bad rule silently breaks every spec) with day-to-day spec authoring, exposing the registry editor to every user | [08-language-tooling → Rune Studio](../08-language-tooling/04-rune-studio-rune-studio.md) (the admin/expert surface) | [`docs/adr/0002-audience.md`](../../docs/adr/0002-audience.md) |
+| 0003 | **Parser of record** — the engine parses with a TS parser driven by the artifact's tag table; tree-sitter is editor-only | Four hand-maintained parse definitions drifted in parallel, and a browser-only low-code UI can't run tree-sitter's compile toolchain | [08-language-tooling → The Rust workspace](../08-language-tooling/03-the-rust-workspace-lang-parser-lsp-cli.md) (tree-sitter, editor-only) · [04-codegen → Pipeline](../04-codegen/01-pipeline.md) (the TS parser of record) | [`docs/adr/0003-parser-of-record.md`](../../docs/adr/0003-parser-of-record.md) |
+| 0004 | **Lint model** — declarative rule DSL for reducible rules + a typed code escape hatch; one registration interface | Lint was configured by data but defined only in hardcoded checker code, so a user could tune params but never author a new check | [05-linter → Governance (built, not yet wired)](../05-linter/03-governance-built-not-yet-wired.md) | [`docs/adr/0004-lint-model.md`](../../docs/adr/0004-lint-model.md) |
+| 0005 | **Layout source** — `keywords.json`'s hand-authored `canonicalPaths` field is the single source for the generated-project layout contract; it generates `docs/canonical-shape.md`, not the other way around | `keywords.json`'s `canonicalPaths` field and the codegen path templates each stated the expected file shape and could drift apart | [08-language-tooling → `lang/keywords.json` — the artifact](../08-language-tooling/01-lang-keywords-json-the-artifact.md) (the hand-authored `canonicalPaths` field) · [01-architecture → The canonical generated-project shape](../01-architecture/05-the-canonical-generated-project-shape.md) (`docs/canonical-shape.md`, generated from `canonicalPaths`) | [`docs/adr/0005-layout-source.md`](../../docs/adr/0005-layout-source.md) |
+| 0006 | **Versioning** — the artifact carries `schemaVersion` (semver); ship migrations; stamp generated output | No artifact contract or version stamp meant a language change would break existing specs and generated code with no migration path | [05-linter → Governance (built, not yet wired)](../05-linter/03-governance-built-not-yet-wired.md) | [`docs/adr/0006-versioning.md`](../../docs/adr/0006-versioning.md) |
+| 0007 | **Governance** — locked org baseline + project overlay; provenance on every change | A freely user-editable lint/layout/codegen surface lets a user weaken the very guardrails meant to make output trustworthy — "a linter you can edit to pass is not a linter" | [05-linter → Governance (built, not yet wired)](../05-linter/03-governance-built-not-yet-wired.md) | [`docs/adr/0007-governance.md`](../../docs/adr/0007-governance.md) |
+| 0008 | **Axes** — target-independent `language` separate from N selectable per-target `codegen` profiles | The Studio baked target profile (runtime, validator lib, module system) into the registry as fixed singletons, so "editing the language" kept colliding with "switching stacks" | [08-language-tooling → `lang/keywords.json` — the artifact](../08-language-tooling/01-lang-keywords-json-the-artifact.md) (the `profiles[]` schema + L1's profile-gap check) | [`docs/adr/0008-axes.md`](../../docs/adr/0008-axes.md) |
+
+All eight are **accepted** — closed decisions, not open questions. Accepted is not the
+same as done: implementation status is owned by
+[The rebuild](02-the-rebuild-docs-rebuild-progress-md.md) and
+[Current state, summarized](07-current-state-summarized.md), not restated here.
+Concretely, ADRs 0004/0006/0007 are built but dormant — wired behind the
+artifact contract, no CLI entrypoint yet
+([05-linter → Governance (built, not yet wired)](../05-linter/03-governance-built-not-yet-wired.md)'s
+table owns this detail; [Current state, summarized](07-current-state-summarized.md)
+only summarizes it) — and ADR 0003's parser-dispatch follow-up (a tag *role*
+field, still hard-coded per-construct) remains open.
+
