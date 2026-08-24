@@ -7,10 +7,9 @@ description: >-
   return), the in-process `backend.fetch` client, forwarding conn info to
   `Deno.serve`, and why a request 401s/403s. Covers the infra-only trust model
   (in-process trusted, an infra-signed session bearer verified offline against
-  infra's JWKS, everything else deny-by-default — no localhost trust),
-  `@Public`/`@LoggedIn`/`@Grant` (deny-by-default, app-scoped grants, the `*`
-  skeleton), the `INFRA_URL` config keep verifies against
-  (`<INFRA_URL>/authz/jwks` + `/authz/status`), the `#assert`→`RuneAssertError`→HTTP
+  zero built-in auth since keep 5.0 — no guard, no infra trust, no sessions,
+  no grants; auth is an app-composed guard layer, and 401/403s trace to version
+  skew or the app's own guard), the `#assert`→`RuneAssertError`→HTTP
   422 mapping, the `@Endpoint`/`@EndpointController` option semantics
   (`order`/`dependsOn`/`bind`), the `exerciseEndpoints` headless runner +
   `POST /docs/_run`, the `/docs/_map` system map, and deployment (standalone,
@@ -20,7 +19,7 @@ description: >-
   Deploy, logging). Trigger phrases:
   "why is auth failing / 401 / 403", "forward remoteAddr / conn info",
   "host the backend under a sprig UI", "deploy a sprig+keep app",
-  "deploy to Deno Deploy", "verify an infra bearer / set INFRA_URL",
+  "deploy to Deno Deploy", "why does this 401/403 / how do I add auth",
   "what does bootstrapServer return", "run exerciseEndpoints in CI". NOT the
   `.rune` language or modeling → use `rune:spec`; NOT generating/filling/testing
   a module → use `rune:build`; NOT the interactive cake walk / `/docs/<m>` UI /
@@ -51,7 +50,7 @@ deploying / hosting under a sprig UI.
 
 - **`rune-framework-auth`** — auth & trust: why a request 401s/403s, the
   infra-only trust model, verifying the infra session bearer offline against
-  `INFRA_URL`'s JWKS, `@Public`/`@LoggedIn`/`@Grant`, grants + the `*` skeleton,
+  the zero-auth model, the removed 4.x trust stack + its inert env vars,
   the docs/browser bearer flow. Owns `references/auth.md`.
 - **`rune-framework-runtime`** — the process layer: `bootstrapServer`, in-process
   `backend.fetch`, `@Endpoint`/`@EndpointController` semantics, the
@@ -64,7 +63,7 @@ deploying / hosting under a sprig UI.
 ## Flow
 
 1. **Classify the question by domain** (main session):
-   - auth / 401 / 403 / infra bearer / grants / `INFRA_URL` / docs-access → `rune-framework-auth`
+   - auth / 401 / 403 / guard-layer placement / removed auth vars → `rune-framework-auth`
    - `bootstrapServer` / `@Endpoint` semantics / `order`·`dependsOn`·`bind` / the
      `exerciseEndpoints`·`/docs/_run`·`/docs/_map` runner surface / WS sockets →
      `rune-framework-runtime`

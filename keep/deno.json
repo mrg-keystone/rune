@@ -1,7 +1,7 @@
 {
   "name": "@mrg-keystone/rune",
-  "version": "4.3.0",
-  "description": "Opinionated Deno backend framework: DI bootstrap, token/Firebase auth & identity, auto Swagger docs, and an in-process API client for native sprig UI hosting. Built on @danet/core.",
+  "version": "5.0.0",
+  "description": "Opinionated Deno backend framework: DI bootstrap, auto Swagger docs, an interactive process cake, observability (Datadog/Postmark/tracing), and an in-process API client for native sprig UI hosting. Ships zero built-in auth \u2014 compose your own guard. Built on @danet/core.",
   "license": "MIT",
   "exports": {
     ".": "./src/bootstrap/mod.ts",

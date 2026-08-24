@@ -5,7 +5,7 @@ description: >-
   (Deno.serve with conn-info forwarding) or await api.listen(), hosting under a
   sprig UI via serveSprig({ keep, app }) / the framework-agnostic sprigUi()
   middleware, mounting under a prefix with withBasePath, Deno Deploy env
-  (INFRA_URL for infra-bearer verification, plus DD_API_KEY/POSTMARK_*), the
+  (DD_API_KEY/POSTMARK_* for observability; keep 5.0 ships zero built-in auth), the
   in-process backend client, and request logging. Use this agent when the
   orchestrator needs a deploy/hosting
   question answered or the serve/composition wiring set up — it does NOT debug
@@ -35,7 +35,7 @@ The orchestrator passes: the goal (e.g. "host this backend under the sprig UI", 
    - **Hosted under sprig** — `serveSprig({ keep: api, app })` from `@sprig/keep` → one `{ fetch }` default export run by `deno serve serve.ts` (NOT `Deno.serve`); routes `/api/*` + `/docs*` to the keep handler and the rest to the sprig SSR app, binding in-process `backend.fetch` to sprig's `Backend` DI token. To mount the UI inside an existing host, use `sprigUi(config)`.
    - **Under any prefix** — `withBasePath(prefix, handler)`.
 3. `bootstrapServer` initializes once (no `listen`) — import the shared `api` everywhere. Bundler-safe (lazy Swagger/handlebars).
-4. For Deno Deploy: `INFRA_URL` defaults to the keystone infra, so keep verifies infra session bearers against its JWKS and polls revoke-all out of the box — set it only to target a different infra, or empty to disable (+ `DD_API_KEY`/`POSTMARK_*`). keep mints nothing — clients obtain bearers from infra and present them; auth details → `rune-framework-auth`.
+4. For Deno Deploy: set `DD_API_KEY`/`POSTMARK_SERVER_TOKEN`/`POSTMARK_FROM` (+ optional `ALERT_RECIPIENTS`) for observability. keep 5.0 ships zero built-in auth — routes are open unless the app composes its own guard; auth details → `rune-framework-auth`.
 5. If wiring is needed, Edit only the named composition file(s) to match the chosen recipe. Reason with the sequential-thinking MCP first.
 
 ## Resources

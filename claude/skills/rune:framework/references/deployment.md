@@ -75,12 +75,11 @@ lower-level `withBasePath(prefix, handler)`: it dispatches `prefix`-rooted
 requests with the prefix stripped and 404s the rest. It's plain request
 routing — framework-agnostic, not tied to any UI.
 
-**Deno Deploy:** `INFRA_URL` defaults to the keystone infra, so keep verifies
-infra session bearers against its JWKS and polls the revoke-all flag out of the
-box — set it only to target a different infra (or empty to disable). Add
-`DD_API_KEY` / `POSTMARK_*` as needed. keep mints nothing — clients
-get their bearer from infra (`session.login` / `authz.exchange`) and present it;
-see `references/auth.md`.
+**Deno Deploy:** keep 5.0 ships zero built-in auth — no infra verification, no
+sessions, no grants; routes are open unless the app composes its own guard
+(model + removed env vars → `references/auth.md`). Configure observability as
+needed: `DD_API_KEY`, `POSTMARK_SERVER_TOKEN`/`POSTMARK_FROM` (+ optional
+`ALERT_RECIPIENTS`).
 
 ## `backend` — the in-process client
 

@@ -27,8 +27,8 @@ The orchestrator has started a real localhost server and wants the whole compose
 
 The orchestrator passes:
 
-- **A dispatch path — one of two, decided by the trust posture** (`/docs/_run` and `/docs/_heal` are deny-by-default: they accept the in-process caller OR an infra-signed bearer with a `dev`/`*` grant; there is **NO localhost trust** — an unauthenticated `POST` from localhost is REFUSED, and that refusal is the trust model working, not a server bug to diagnose):
-  - **Bearer path** — the base URL of a RUNNING server plus a dev-grant bearer (only possible when the app has `INFRA_URL`/a verifier). This certifies the deployed HTTP+auth surface. The server is PARENT-OWNED: if the URL doesn't respond, return `blocked: server unreachable at <url>` — never `lsof`/port-scan for it or start one yourself.
+- **A dispatch path — one of two** (`/docs/_run` and `/docs/_heal` are OPEN routes — keep 5.0 ships zero built-in auth; if a deployment composed its own guard, the parent must hand you whatever that guard requires):
+  - **HTTP path** — the base URL of a RUNNING server. This certifies the deployed HTTP surface. The server is PARENT-OWNED: if the URL doesn't respond, return `blocked: server unreachable at <url>` — never `lsof`/port-scan for it or start one yourself.
   - **In-process path** — when there is no bearer/verifier (typical sandbox/CI): dispatch through the composed app's in-process client. This is the CANONICAL script — verified green; write it under `/tmp` (heredoc via Bash; never inside the project tree) and adapt only the body/paths. Do NOT re-derive the `backend.fetch` signature via `deno doc`/cache reads (measured: a driver spent ~5 calls confirming this exact shape, then iterated the script 4 times):
 
     ```ts
@@ -116,4 +116,4 @@ escalate to a root-wide `find`.
 
 ## Never
 
-Never mock or hand-fake a response to force green — the cake proves the REAL call path. Your Edit tool covers exactly one surface: `@Endpoint` decorator args (`order`/`dependsOn`/`bind`) in `entrypoints/<surface>/mod.ts` — never specs, handler bodies, coordinators, business/data code, DTOs, or tests; those you diagnose and route. Never treat a deny-by-default refusal as a bug to bypass: an unauthenticated localhost `POST /docs/_run` being refused is correct behavior — switch to the in-process path or return blocked asking the parent for a dev-grant bearer; never spelunk framework source or process environments hunting a token. Never spawn another agent (no Task tool).
+Never mock or hand-fake a response to force green — the cake proves the REAL call path. Your Edit tool covers exactly one surface: `@Endpoint` decorator args (`order`/`dependsOn`/`bind`) in `entrypoints/<surface>/mod.ts` — never specs, handler bodies, coordinators, business/data code, DTOs, or tests; those you diagnose and route. Never hunt for tokens or bearers — keep 5.0 ships zero built-in auth and the doors are open; a 401/403 means an app-composed guard or an old (4.x) server, and both route back to the parent, not to credential-spelunking. Never spawn another agent (no Task tool).

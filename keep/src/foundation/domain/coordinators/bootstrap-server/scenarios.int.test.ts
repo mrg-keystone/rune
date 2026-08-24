@@ -136,7 +136,7 @@ Deno.test("/docs/_run - scenario param replays a saved scenario's literal bodies
   }
 });
 
-Deno.test("/docs/_heal-rules + /docs/_scenarios - localhost-only (403 off-host and without conn info)", async () => {
+Deno.test("/docs/_heal-rules + /docs/_scenarios - open to network callers (zero built-in auth)", async () => {
   const dir = await Deno.makeTempDir();
   Deno.env.set("KEEP_FIXTURES_DIR", dir);
   const server = await bootstrapServer("scen-app", ThingsModule);
@@ -146,9 +146,9 @@ Deno.test("/docs/_heal-rules + /docs/_scenarios - localhost-only (403 off-host a
     ) {
       assertEquals(
         (await server.handler(jsonReq(path), conn(offhost))).status,
-        403,
+        200,
       );
-      assertEquals((await server.handler(jsonReq(path))).status, 403);
+      assertEquals((await server.handler(jsonReq(path))).status, 200);
     }
   } finally {
     await server.stop();

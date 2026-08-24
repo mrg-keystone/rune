@@ -10,33 +10,7 @@ import { traceShipper } from "@foundation/domain/business/tracer/ship.ts";
 import { DatadogTransport } from "@foundation/domain/data/datadog/mod.ts";
 import { PostmarkAlerter } from "@foundation/domain/data/postmark/mod.ts";
 import { createRequestLoggingMiddleware } from "@foundation/domain/business/request-logger/mod.ts";
-import { GLOBAL_GUARD, type HttpContext } from "#danet/core";
-import { createCredentialGuard } from "@foundation/domain/business/token-auth/mod.ts";
-import {
-  createInfraClient,
-  type InfraClient,
-} from "@foundation/domain/business/infra-client/mod.ts";
-import {
-  createJwksVerifier,
-  type SessionVerifier,
-} from "@foundation/domain/business/token/mod.ts";
-import {
-  createKvSessionStore,
-  createMemorySessionStore,
-  type IntakeInput,
-  type IntakeResult,
-  intakeSession,
-  resolveSession,
-  type SessionStore,
-} from "@foundation/domain/business/session-store/mod.ts";
-import {
-  extractBearer,
-  grantsForApp,
-  isTrustedOrigin,
-  readCookie,
-  SESSION_COOKIE_NAME,
-  validateCredential,
-} from "@foundation/domain/business/token-auth/mod.ts";
+import type { HttpContext } from "#danet/core";
 import type { Context } from "#hono";
 import {
   exerciseEndpoints,
@@ -47,8 +21,6 @@ import {
   healConfigured,
 } from "@foundation/domain/business/heal/mod.ts";
 import { appModule } from "@foundation/domain/business/endpoint-decorator/mod.ts";
-import { Crawler } from "@foundation/domain/business/crawler/mod.ts";
-import { warnOpenRoutes } from "@foundation/domain/business/route-audit/mod.ts";
 import {
   createDocsJsonHandler,
   injectDocsScript,
@@ -108,23 +80,38 @@ export interface BootstrapOptions {
   onStop?: (ctx: ServerLifecycle) => void | Promise<void>;
 }
 
-// infra is the minting + signing authority; keep is a verifier + exchange broker. One env var points
-// keep at infra — it serves grants, the JWKS to verify session bearers, opaque-token exchange, and
-// the revocation poll. INFRA_URL overrides; when unset we fall back to the keystone infra so a keep
-// app authorizes out of the box without every environment re-declaring the same URL. Point a fork at
-// its own infra by exporting INFRA_URL (the org already ships this URL in the README + package name,
-// so it is not a secret — only the fallback, not a credential).
-const DEFAULT_INFRA_URL = "https://infra.mrg-keystone.deno.net";
-const INFRA_URL_ENV = "INFRA_URL"; // exchange + revocation poll + JWKS (the single infra endpoint)
-const INFRA_JWKS_URL_ENV = "INFRA_JWKS_URL"; // optional explicit JWKS URL (else derived from INFRA_URL)
-const HONOR_SKELETON_ENV = "HONOR_SKELETON"; // default true; set false for the infra service itself
+// keep ships ZERO built-in auth: no infra trust, no session store, no grants, no route
+// guard. Cookies are bytes the substrate transports faithfully on both channels; auth, if an
+// app wants it, is a guard the app composes into its own handler pipeline. The env vars the
+// old auth machinery read are REMOVED — a stale config announces itself with the one-time
+// boot warning below instead of silently steering nothing.
+const REMOVED_ENV_VARS = [
+  "INFRA_URL",
+  "INFRA_JWKS_URL",
+  "INFRA_JWKS_TTL_SECONDS",
+  "INFRA_POLL_INTERVAL_MS",
+  "KEEP_ROUTE_AUDIT",
+  "KEEP_SESSION_KV",
+  "KEEP_SESSION_TTL_DAYS",
+  "HONOR_SKELETON",
+] as const;
 
-// Defaults for the revocation poll cadence and how long a fetched JWKS is trusted before refetch.
-const DEFAULT_REVOCATION_POLL_MS = 60_000;
-const DEFAULT_JWKS_TTL_SECONDS = 600;
-// Upper bound on how long boot waits for the first revocation poll before proceeding — a hung
-// infra endpoint (getJson sets no fetch timeout) must never block startup indefinitely.
-const BOOT_REVOCATION_POLL_TIMEOUT_MS = 3_000;
+/** One-time boot warning naming any set-but-removed env vars (the removed-auth ledger). */
+function warnRemovedEnvVars(appName: string) {
+  const set = REMOVED_ENV_VARS.filter((v) => Deno.env.get(v) !== undefined);
+  if (set.length) {
+    warnOnce(
+      `[${appName}] removed env var(s) set but no longer read (auth machinery was removed — safe to delete): ${
+        set.join(", ")
+      }.`,
+    );
+  }
+  if (Deno.env.get("POSTMARK_TO") !== undefined) {
+    warnOnce(
+      `[${appName}] POSTMARK_TO was RENAMED to ALERT_RECIPIENTS and is no longer read — move the value or alert emails stay on the from-address default.`,
+    );
+  }
+}
 
 // Datadog region is fixed; alert routing is read from the environment so internal email
 // addresses stay out of the (public) package source.
@@ -143,46 +130,10 @@ function isTruthy(value: string | undefined): boolean {
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
 }
 
-/**
- * Gate for the framework's own `/docs/_*` control-plane routes (traces, run, heal, fixtures,
- * scenarios, heal-rules). There is NO localhost bypass: a caller is allowed only when it is the
- * **in-process client** (matching internal key) or presents an **infra bearer whose app-grants
- * include `dev` or `*`**. Everything else is denied.
- */
-async function controlPlaneAllowed(
-  c: Context,
-  internalKey: string,
-  verifier: SessionVerifier | undefined,
-  appName: string,
-): Promise<boolean> {
-  if (isTrustedOrigin(c, internalKey)) return true;
-  const cred = extractBearer(c.req.header("authorization")) ??
-    c.req.query("token");
-  if (!cred || !verifier) return false;
-  const r = await validateCredential(cred, { verifier });
-  if (!r) return false;
-  const g = grantsForApp(r.claims, appName);
-  return g.includes("dev") || g.includes("*");
-}
-
-/**
- * The message body for a denied control-plane door. Names the ONE sanctioned path — the
- * in-process client — because the door is discovered by failing and the old "available on
- * localhost only" wording was actively misleading: there is no localhost bypass (see
- * {@link controlPlaneAllowed}). An external caller either dispatches through
- * `api.backend.fetch` (the in-process client, which stamps the trust marker) or presents an
- * infra bearer whose app-grants include `dev`/`*`.
- */
-function controlPlaneForbiddenMessage(route: string): string {
-  return `Forbidden: ${route} is a control-plane door — call it with the in-process client ` +
-    `(api.backend.fetch), which needs no token. There is NO localhost bypass; an external ` +
-    `caller must present an infra bearer whose app-grants include "dev" or "*".`;
-}
-
-/** JSON 403 for a denied control-plane door (see {@link controlPlaneForbiddenMessage}). */
-function controlPlaneForbidden(c: Context, route: string): Response {
-  return c.json({ error: controlPlaneForbiddenMessage(route) }, 403);
-}
+// The `/docs/_*` control-plane routes (traces, run, heal, fixtures, scenarios, heal-rules)
+// carry NO built-in gate: keep ships zero auth, and these doors are ordinary backend routes.
+// A deployment that must restrict them composes a guard into its own handler pipeline — the
+// one placement that covers the network path and the in-process path alike.
 
 // Dev-mode boot identity (`rune dev`): minted once per process so the emulator pages' reload
 // poller can tell "the same app answered" from "a NEW process is serving" after a restart.
@@ -196,7 +147,7 @@ let runeAssertFilterRegistered = false;
 /**
  * Builds the logging transports from the environment:
  * - `DD_API_KEY` → Datadog (site fixed to DATADOG_SITE). Missing ⇒ warn, console only.
- * - `POSTMARK_SERVER_TOKEN` + `POSTMARK_FROM` (+ optional `POSTMARK_TO`, defaults to `FROM`)
+ * - `POSTMARK_SERVER_TOKEN` + `POSTMARK_FROM` (+ optional `ALERT_RECIPIENTS`, defaults to `FROM`)
  *   → failure-alert emails. Missing ⇒ warn, console fallback.
  */
 function configureLoggingFromEnv(appName: string) {
@@ -235,7 +186,7 @@ function configureLoggingFromEnv(appName: string) {
     ? new PostmarkAlerter({
       serverToken: pmToken,
       from: pmFrom,
-      to: Deno.env.get("POSTMARK_TO") ?? undefined,
+      to: Deno.env.get("ALERT_RECIPIENTS") ?? undefined,
     })
     : undefined;
   if (!alerter) {
@@ -260,32 +211,6 @@ function configureLoggingFromEnv(appName: string) {
   });
 }
 
-/** The session-store profile read a gateway surfaces as `GET /auth/me` — see {@link BootstrapServer.sessionProfile}. */
-export interface SessionProfile {
-  /** The user's real display name (infra profile), when known. */
-  name?: string;
-  /** The user's real email (infra profile), when known. */
-  email?: string;
-  /**
-   * The session's app-scoped grants — UX-only, so the UI can render the right controls. NOT a trust
-   * boundary: the guard still enforces grants deny-by-default from the *verified* bearer on every
-   * request, so a client that fakes these only fools its own UI and every gated call still 403s.
-   */
-  grants: string[];
-}
-
-/** The slice of the infra client {@link BootstrapServer} keeps for intake + silent refresh. */
-interface InfraExchange {
-  exchange(token: string): Promise<string>;
-  exchangeProfile(
-    token: string,
-  ): Promise<{ token: string; name?: string; email?: string }>;
-  loginProfile(
-    idToken: string,
-    email?: string,
-  ): Promise<{ token: string; name?: string; email?: string }>;
-}
-
 export class BootstrapServer {
   private adapter: DanetHttpAdapter;
   private module: Type;
@@ -293,20 +218,7 @@ export class BootstrapServer {
   /** The per-module OpenAPI docs (with `x-keep-process`) built at boot; empty when swagger is off. */
   readonly docs: SwaggerDocEntry[];
 
-  /** Cleared on stop() so the revocation poll timer never outlives the server. */
-  private revocationPoller?: number;
-
-  /**
-   * The server-side session store, present by default (absent only when explicitly disabled via
-   * `KEEP_SESSION_KV=false/0/off/empty` or when `INFRA_URL` is empty). The `sprig_session`
-   * cookie is resolved through this on every request (with silent refresh); a host gateway (e.g.
-   * sprig's `serveSprig`) mints sessions with {@link intakeSession} and clears them with
-   * {@link destroySession}, setting/clearing the httpOnly cookie itself. `undefined` ⇒ cookie
-   * sessions are off and only the `Authorization` header / `?token=` query authorize.
-   */
-  readonly sessions?: SessionStore;
   private readonly appName: string;
-  private readonly infra?: InfraExchange;
 
   /** Lifecycle callbacks (see {@link BootstrapOptions.onStart}/`onStop`) and their once-guard. */
   private readonly onStart?: BootstrapOptions["onStart"];
@@ -321,9 +233,6 @@ export class BootstrapServer {
     backend: BackendClient,
     docs: SwaggerDocEntry[],
     appName: string,
-    revocationPoller?: number,
-    sessions?: SessionStore,
-    infra?: InfraExchange,
     lifecycle?: Pick<BootstrapOptions, "onStart" | "onStop">,
   ) {
     this.module = module;
@@ -331,9 +240,6 @@ export class BootstrapServer {
     this.backend = backend;
     this.docs = docs;
     this.appName = appName;
-    this.revocationPoller = revocationPoller;
-    this.sessions = sessions;
-    this.infra = infra;
     this.onStart = lifecycle?.onStart;
     this.onStop = lifecycle?.onStop;
   }
@@ -349,51 +255,6 @@ export class BootstrapServer {
     this.lifecyclePort = port;
     const disposer = await this.onStart({ backend: this.backend, port });
     if (typeof disposer === "function") this.lifecycleDisposer = disposer;
-  }
-
-  /**
-   * Intake a credential into a server-side session: exchange it at infra for a signed bearer, store
-   * the ORIGINAL credential + bearer + profile, and return the opaque id a gateway drops into the
-   * httpOnly `sprig_session` cookie (the bearer never reaches the browser). Throws when the session
-   * store is off (`KEEP_SESSION_KV=false/0/off/empty`, or `INFRA_URL` empty) or infra rejects the
-   * credential. The gateway owns the
-   * `Set-Cookie`; keep owns the exchange + store + silent refresh on subsequent requests.
-   */
-  intakeSession(input: IntakeInput): Promise<IntakeResult> {
-    if (!this.sessions || !this.infra) {
-      throw new Error(
-        "Session store is disabled — it is on by default; re-enable by unsetting KEEP_SESSION_KV=false/0/off and leaving INFRA_URL non-empty.",
-      );
-    }
-    return intakeSession(this.sessions, this.infra, input, this.appName);
-  }
-
-  /** Destroy a session (logout): the gateway clears the cookie; this drops the stored credential. */
-  destroySession(id: string): Promise<void> {
-    return this.sessions?.destroy(id) ?? Promise.resolve();
-  }
-
-  /**
-   * Resolve the `sprig_session` cookie to the session's cached profile — the read behind a
-   * `GET /auth/me` (surfaced by sprig's `serveSprig` gateway). Because the client is cookie-based and
-   * never sees the bearer, this is the only way `getUserData()` learns `{ name, email, grants }`.
-   * Returns `null` when the cookie is absent, the session is gone, or the session store is off — the
-   * gateway maps `null` → 401. Silent refresh runs here too (via the stored credential), so a
-   * long-lived tab keeps a fresh session. `grants` are UX-only — see {@link SessionProfile.grants}.
-   */
-  async sessionProfile(
-    cookieHeader: string | undefined,
-  ): Promise<SessionProfile | null> {
-    if (!this.sessions) return null;
-    const id = readCookie(cookieHeader, SESSION_COOKIE_NAME);
-    if (!id) return null;
-    const rec = await resolveSession(
-      this.sessions,
-      id,
-      this.infra ? { exchange: (c) => this.infra!.exchange(c) } : {},
-    );
-    if (!rec) return null;
-    return { name: rec.name, email: rec.email, grants: rec.grants ?? [] };
   }
 
   static async create(
@@ -452,144 +313,13 @@ export class BootstrapServer {
       headers: otlpToken ? { "X-Keep-Token": otlpToken } : undefined,
     });
 
-    // infra connection: the exchange broker + JWKS verifier + revocation poller. INFRA_URL overrides;
-    // unset falls back to the keystone infra (DEFAULT_INFRA_URL) so a keep app can exchange opaque
-    // tokens and verify session bearers without every environment re-declaring the same URL. Setting
-    // INFRA_URL="" (empty) explicitly opts out — only trusted origins (in-process / localhost)
-    // authorize and every infra network call fails closed.
-    const infraEnv = Deno.env.get(INFRA_URL_ENV);
-    const infraBaseUrl = infraEnv === undefined ? DEFAULT_INFRA_URL : infraEnv;
-    const infraClient: InfraClient | undefined = infraBaseUrl
-      ? createInfraClient({
-        baseUrl: infraBaseUrl,
-        jwksUrl: Deno.env.get(INFRA_JWKS_URL_ENV) || undefined,
-      })
-      : undefined;
-    if (!infraClient) {
-      warnOnce(
-        `[${appName}] ${INFRA_URL_ENV} set empty — opaque-token exchange and session-bearer verification are disabled (only trusted origins authorize).`,
-      );
-    }
-    // Offline session-bearer verifier, backed by infra's JWKS (cached, kid-selected, alg-from-key).
-    const jwksTtl = Number(Deno.env.get("INFRA_JWKS_TTL_SECONDS"));
-    const verifier = infraClient
-      ? createJwksVerifier({
-        fetchJwks: () => infraClient.jwks(),
-        cacheTtlSeconds: Number.isFinite(jwksTtl) && jwksTtl > 0
-          ? jwksTtl
-          : DEFAULT_JWKS_TTL_SECONDS,
-      })
-      : undefined;
+    // keep ships zero built-in auth (no infra trust, no sessions, no grants, no guard). The
+    // one-time warning below names any set-but-removed auth env vars so a stale config
+    // announces itself.
+    warnRemovedEnvVars(appName);
 
-    // Server-side session store: ON by default so cookie sessions work out of the box. Holds the
-    // ORIGINAL credential so a lapsed ~1h bearer is re-minted transparently, and lets a request
-    // authenticate from the tiny httpOnly `sprig_session` cookie instead of the client holding the
-    // bearer. KEEP_SESSION_KV selects the store: unset or "1"/"true" → Deno KV at the default
-    // location; a path → KV at that path (native per-key TTL, survives restarts / scales across
-    // instances). Opt OUT with "false"/"0"/"off"/empty. If KV won't open (no --unstable-kv) it falls
-    // back to a process-local store (warns once) — fine for local dev; Deno Deploy has KV natively.
-    // Needs infra for the silent re-exchange (INFRA_URL, itself defaulted above). KEEP_SESSION_TTL_DAYS
-    // bounds idle retention.
-    const sessionEnv = Deno.env.get("KEEP_SESSION_KV") ?? "1";
-    const sessionOff = ["false", "0", "off", ""].includes(sessionEnv.toLowerCase());
-    let sessionStore: SessionStore | undefined;
-    if (!sessionOff) {
-      if (!infraClient) {
-        warnOnce(
-          `[${appName}] session store wanted but ${INFRA_URL_ENV} is empty — cookie sessions can't silently re-exchange; disabling the session store (set ${INFRA_URL_ENV} to re-enable).`,
-        );
-      } else {
-        const ttlDays = Number(Deno.env.get("KEEP_SESSION_TTL_DAYS"));
-        const ttl = Number.isFinite(ttlDays) && ttlDays > 0
-          ? ttlDays
-          : undefined;
-        const lower = sessionEnv.toLowerCase();
-        const path = lower === "1" || lower === "true" ? undefined : sessionEnv;
-        // The fallback lives HERE, not in the store: createKvSessionStore returns null when KV won't
-        // open, and THIS `??` is what actually substitutes the in-memory store — so announce it here
-        // (where it happens) rather than let the KV store's warning imply it fell back itself.
-        const kvStore = await createKvSessionStore(path, ttl);
-        if (!kvStore) {
-          warnOnce(
-            `[${appName}] session store: Deno KV unavailable → using in-memory sessions (process-local; lost on restart and not shared across instances; run with --unstable-kv, or deploy where Deno KV is native, to persist).`,
-          );
-        }
-        sessionStore = kvStore ?? createMemorySessionStore(ttl);
-      }
-    }
-    // Resolve the `sprig_session` cookie → a fresh bearer (silent refresh from the stored credential).
-    const cookieSession = sessionStore && infraClient
-      ? (id: string) =>
-        resolveSession(sessionStore!, id, {
-          exchange: (cred) => infraClient.exchange(cred),
-        }).then((r) => r?.bearer ?? null)
-      : undefined;
-
-    // The `*` skeleton key bypasses required claims — UNLESS disabled. The infra control plane sets
-    // HONOR_SKELETON=false so `*` never opens it; apps default to honoring it.
-    const honorSkeleton =
-      (Deno.env.get(HONOR_SKELETON_ENV) ?? "true").toLowerCase() !== "false";
-
-    // The polled global revoke-all flag (break glass). A poller updates `.value` ~every 60s; the
-    // guard reads it live. ON ⇒ keep stops trusting cached session bearers and re-exchanges/validates
-    // every auth against infra.
-    const revokeAllState = { value: false };
-    const pollMs = Number(Deno.env.get("INFRA_POLL_INTERVAL_MS"));
-    const revocationPollMs = Number.isFinite(pollMs) && pollMs > 0
-      ? pollMs
-      : DEFAULT_REVOCATION_POLL_MS;
-    let revocationPoller: number | undefined;
-    if (infraClient) {
-      const pollOnce = async () => {
-        try {
-          const status = await infraClient.revocationStatus();
-          revokeAllState.value = status.revokeAll;
-        } catch (err) {
-          warnOnce(
-            `[${appName}] revocation poll failed: ${
-              err instanceof Error ? err.message : String(err)
-            } (keeping last known revokeAll=${revokeAllState.value}).`,
-          );
-        }
-      };
-      // Kick once at boot AND wait for it, so the revokeAll flag is genuinely fresh before the
-      // first request can reach the guard. `pollOnce` swallows its own errors (a failed poll just
-      // logs and keeps the last-known flag), so the only hazard is a hung infra endpoint —
-      // `getJson` sets no fetch timeout — which would otherwise block boot indefinitely. Cap the
-      // wait: if the first poll hasn't settled within the boot budget, proceed anyway (the
-      // interval poller below will pick up the real value shortly) rather than stall startup.
-      const bootTimer = { id: undefined as number | undefined };
-      await Promise.race([
-        pollOnce(),
-        new Promise<void>((resolve) => {
-          // Deno's setTimeout returns a numeric id; cast guards against Node's
-          // `Timeout` typings leaking in under some toolchains (JSR publish check).
-          bootTimer.id = setTimeout(
-            resolve,
-            BOOT_REVOCATION_POLL_TIMEOUT_MS,
-          ) as unknown as number;
-        }),
-      ]).finally(() => {
-        if (bootTimer.id !== undefined) clearTimeout(bootTimer.id);
-      });
-      revocationPoller = setInterval(
-        pollOnce,
-        revocationPollMs,
-      ) as unknown as number;
-      // Don't keep the process (or test runner) alive on the poll timer alone.
-      try {
-        Deno.unrefTimer(revocationPoller);
-      } catch {
-        // older runtimes may lack unrefTimer — harmless
-      }
-    }
-
-    // Network callers authorize with an infra-signed session bearer (verified offline via infra's
-    // JWKS) or an opaque token exchanged at infra — both reached through INFRA_URL. There is no
-    // direct Firebase path here: users sign in at infra (which mints the bearer); keep only verifies.
-
-    // Process-private key that identifies in-process (BackendClient) requests. Minted per boot,
-    // shared only between the in-process client and the auth middleware; never leaves the process.
+    // Process-private key that identifies in-process (BackendClient) requests — the DISPATCH
+    // identity (the client routes via the non-stripping handler), not a trust or auth marker.
     const internalKey = crypto.randomUUID();
 
     const server = Server.create();
@@ -735,10 +465,6 @@ export class BootstrapServer {
           `/docs${path}/json`,
           createDocsJsonHandler({
             specJson: JSON.stringify(doc),
-            verifier,
-            appName,
-            internalKey,
-            logger: log,
           }) as RouteHandler,
         );
       }
@@ -774,9 +500,6 @@ export class BootstrapServer {
         "get",
         "/docs/_traces",
         (async (c: Context) => {
-          if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
-            return controlPlaneForbidden(c, "/docs/_traces");
-          }
           // `?user=` scopes to one user server-side (a fast indexed scan under KV); `?limit=`
           // caps the page (default 200, hard ceiling 1000).
           const user = c.req.query("user") || undefined;
@@ -801,9 +524,6 @@ export class BootstrapServer {
         "post",
         "/docs/_traces",
         (async (c: Context) => {
-          if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
-            return controlPlaneForbidden(c, "/docs/_traces");
-          }
           let body: Record<string, unknown> = {};
           try {
             body = (await c.req.json()) as Record<string, unknown>;
@@ -823,9 +543,6 @@ export class BootstrapServer {
         "post",
         "/docs/_run",
         (async (c: Context) => {
-          if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
-            return controlPlaneForbidden(c, "/docs/_run");
-          }
           if (!runTarget) {
             return c.json({ error: "Server still booting — try again." }, 503);
           }
@@ -978,12 +695,6 @@ export class BootstrapServer {
         "post",
         "/docs/_heal",
         (async (c: Context) => {
-          if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
-            return new Response(
-              controlPlaneForbiddenMessage("/docs/_heal"),
-              { status: 403 },
-            );
-          }
           if (!healConfigured()) {
             return Response.json({
               error:
@@ -1027,9 +738,6 @@ export class BootstrapServer {
         "get",
         "/docs/_fixtures",
         (async (c: Context) => {
-          if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
-            return controlPlaneForbidden(c, "/docs/_fixtures");
-          }
           return c.json(await readFixtures());
         }) as RouteHandler,
       );
@@ -1037,9 +745,6 @@ export class BootstrapServer {
         "post",
         "/docs/_fixtures",
         (async (c: Context) => {
-          if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
-            return controlPlaneForbidden(c, "/docs/_fixtures");
-          }
           let patch: FixturesPatch = {};
           try {
             patch = (await c.req.json()) as FixturesPatch;
@@ -1068,9 +773,6 @@ export class BootstrapServer {
         "get",
         "/docs/_heal-rules",
         (async (c: Context) => {
-          if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
-            return controlPlaneForbidden(c, "/docs/_heal-rules");
-          }
           return c.json(await readHealRules());
         }) as RouteHandler,
       );
@@ -1081,9 +783,6 @@ export class BootstrapServer {
         "get",
         "/docs/_scenarios",
         (async (c: Context) => {
-          if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
-            return controlPlaneForbidden(c, "/docs/_scenarios");
-          }
           return c.json({ scenarios: await readScenarios() });
         }) as RouteHandler,
       );
@@ -1091,9 +790,6 @@ export class BootstrapServer {
         "post",
         "/docs/_scenarios",
         (async (c: Context) => {
-          if (!(await controlPlaneAllowed(c, internalKey, verifier, appName))) {
-            return controlPlaneForbidden(c, "/docs/_scenarios");
-          }
           let parsed: unknown = null;
           try {
             parsed = await c.req.json();
@@ -1164,40 +860,6 @@ export class BootstrapServer {
       });
     }
 
-    // Register the credential auth as Danet's global guard — it governs every controller route
-    // and honors `@Public()`. A pre-built instance is bound to the GLOBAL_GUARD token.
-    const guard = createCredentialGuard({
-      appName,
-      verifier,
-      internalKey,
-      revokeAll: () => revokeAllState.value,
-      honorSkeleton,
-      logger: log,
-      cookieSession,
-    });
-    // deno-lint-ignore no-explicit-any
-    await (adapter.app as any).injector.registerInjectables([{
-      token: GLOBAL_GUARD,
-      useValue: guard,
-    }]);
-
-    // Authorization audit: name every controller route that declares neither @Public nor
-    // @Grant/@LoggedIn. Deny-by-default leaves such a route reachable only by `*` (or nobody under
-    // honorSkeleton:false) — safe, but indistinguishable from a route someone forgot to gate. Warn
-    // once so a bare route is a conscious choice. On by default; KEEP_ROUTE_AUDIT=off silences it.
-    if ((Deno.env.get("KEEP_ROUTE_AUDIT") ?? "on").toLowerCase() !== "off") {
-      const open = warnOpenRoutes(new Crawler().crawl([rootModule]), {
-        appName,
-        honorSkeleton,
-        warn: warnOnce,
-      });
-      if (open.length === 0) {
-        log.debug(
-          "route-audit: every controller route is @Public or explicitly gated.",
-        );
-      }
-    }
-
     // The in-process client dispatches via the non-stripping handler so its trust marker is
     // honored; the public `handler` (and what integrators mount) strips it.
     const backend = createBackendClient(
@@ -1213,9 +875,6 @@ export class BootstrapServer {
       backend,
       docs,
       appName,
-      revocationPoller,
-      sessionStore,
-      infraClient,
       { onStart, onStop },
     );
   }
@@ -1248,10 +907,6 @@ export class BootstrapServer {
   }
 
   async stop() {
-    if (this.revocationPoller !== undefined) {
-      clearInterval(this.revocationPoller);
-      this.revocationPoller = undefined;
-    }
     // Symmetric teardown: run the onStart disposer, then onStop, before the socket closes. Reset
     // the once-guard so a stopped server can be started again cleanly.
     if (this.lifecycleStarted) {
@@ -1277,13 +932,6 @@ export async function bootstrapServer(
   backend: BackendClient;
   handler: FetchHandler;
   docs: SwaggerDocEntry[];
-  // The session engine, surfaced so a host gateway (sprig's `serveSprig({ keep })`) can mint/read/clear
-  // the httpOnly `sprig_session` cookie. Without these three, serveSprig's /auth gateway stays in legacy
-  // bearer-proxy mode and NEVER sets a cookie, so an SSR guard reading `ctx.session` always bounces —
-  // even though the store is on by default. `sessions` is the store the SSR pipeline reads per request.
-  sessions?: SessionStore;
-  intakeSession: (input: IntakeInput) => Promise<IntakeResult>;
-  destroySession: (id: string) => Promise<void>;
 }> {
   const server = await BootstrapServer.create(appName, module, options);
   return {
@@ -1292,8 +940,5 @@ export async function bootstrapServer(
     backend: server.backend,
     handler: server.handler,
     docs: server.docs,
-    sessions: server.sessions,
-    intakeSession: (input) => server.intakeSession(input),
-    destroySession: (id) => server.destroySession(id),
   };
 }

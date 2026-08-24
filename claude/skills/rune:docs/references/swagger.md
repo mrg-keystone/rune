@@ -140,24 +140,11 @@ Module pages are named after the module class, lowercased, without the
 `Module` suffix (`endpointModule("Orders", …)` → `/docs/orders`). The same
 pages work mounted under Fresh (`/api/docs/...`).
 
-### Browser docs-access bearer flow (summary)
+### Docs access (summary)
 
-Doc *pages* load publicly; the OpenAPI *spec* (`/docs/<module>/json`) is gated to
-in-process or an infra bearer carrying the `dev` grant. The pages use a
-query-param → `localStorage` flow so a browser can present that bearer:
-
-1. Open any docs page with `?token=<infra bearer>` — an inline script stores it
-   and strips it from the URL.
-2. Swagger UI / the cake fetch the spec with
-   `Authorization: Bearer <stored bearer>` — persists across same-origin
-   navigation.
-3. A 401 wipes the stored bearer and asks for a fresh `?token=…` link.
-
-The bearer is an ordinary infra session bearer that happens to carry `dev`;
-obtain it from infra (`session.login` / `authz.exchange`).
-
-**Defer the trust posture** — that the docs `/json` and the `/docs/_*` control
-plane are gated to **in-process OR a `dev`-grant infra bearer** (no localhost
-trust), how the bearer is verified offline, and the `INFRA_URL` env that gates
-verification — to **`rune:framework`**'s `references/auth.md`. This skill only
-needs the page-level flow above to wire docs access for a browser.
+Since keep 5.0 the doc pages AND the OpenAPI spec (`/docs/<module>/json`) are
+**open routes** — keep ships zero built-in auth, so a browser just opens them;
+no token, no bearer. The legacy `?token=` → `localStorage` seeding script still
+rides along in the pages but is inert (a stray token is ignored). If a
+deployment composed its own guard over the app, satisfy that guard the app's
+way. Auth model details → **`rune:framework`**'s `references/auth.md`.

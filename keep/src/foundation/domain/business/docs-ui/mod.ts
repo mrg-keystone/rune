@@ -1,20 +1,9 @@
 /**
- * Token-aware Swagger docs UI. The doc pages (index + per-module shells) are served publicly so
- * they always load; the actual OpenAPI spec is fetched over XHR from a gated `/json` endpoint
- * with a bearer token. The token is seeded once from a `?token=` query param, stored in
- * `localStorage` (which survives same-origin navigation between doc pages), attached to every
- * spec request, and wiped if the server replies `401`.
+ * Swagger docs UI. The doc pages (index + per-module shells) and the OpenAPI spec at
+ * `/docs/<module>/json` are all served openly — keep ships zero built-in auth; a deployment
+ * that must restrict its docs composes a guard into its own handler pipeline. The legacy
+ * `?token=` seeding script survives as inert plumbing so old bookmarked URLs keep working.
  */
-
-import type { Context } from "#hono";
-import type { Logger } from "@foundation/domain/business/logger/mod.ts";
-import type { SessionVerifier } from "@foundation/domain/business/token/mod.ts";
-import {
-  extractBearer,
-  grantsForApp,
-  isTrustedOrigin,
-  validateCredential,
-} from "@foundation/domain/business/token-auth/mod.ts";
 
 const STORAGE_KEY = "danet_docs_token";
 const SWAGGER_UI_VERSION = "5";
@@ -22,52 +11,17 @@ const SWAGGER_UI_VERSION = "5";
 export interface DocsJsonHandlerOptions {
   /** The serialized OpenAPI document to serve. */
   specJson: string;
-  /** Offline verifier for infra session bearers (JWKS). */
-  verifier?: SessionVerifier;
-  /** This app's name — grant claims are namespaced per app. */
-  appName: string;
-  /** Process-private key identifying in-process (BackendClient) callers. */
-  internalKey: string;
-  logger: Logger;
 }
 
-/**
- * Builds the handler for a gated `/docs/<module>/json` endpoint. The OpenAPI spec is the API
- * surface, so this is deliberately strict, gated exactly like the control plane: only the
- * **in-process client** (matching internal key) or an **infra bearer whose app-grants include
- * `dev` or `*`** (`Authorization: Bearer` or `?token`) is served. There is no localhost bypass and
- * no keep-side exchange — a Firebase/opaque credential is resolved to a bearer at infra first.
- */
+/** Builds the handler for the open `/docs/<module>/json` endpoint. */
 export function createDocsJsonHandler(
   opts: DocsJsonHandlerOptions,
-): (c: Context) => Promise<Response> {
+): () => Promise<Response> {
   const json = () =>
     new Response(opts.specJson, {
       headers: { "content-type": "application/json; charset=utf-8" },
     });
-
-  return async (c) => {
-    if (isTrustedOrigin(c, opts.internalKey)) return json();
-
-    const credential = extractBearer(c.req.header("authorization")) ??
-      c.req.query("token");
-    if (credential && opts.verifier) {
-      const resolved = await validateCredential(credential, {
-        verifier: opts.verifier,
-      });
-      if (resolved) {
-        const grants = grantsForApp(resolved.claims, opts.appName);
-        if (grants.includes("dev") || grants.includes("*")) {
-          opts.logger.setSource(resolved.source);
-          return json();
-        }
-      }
-    }
-    return c.json({
-      error: "unauthorized",
-      message: "Invalid or missing docs token.",
-    }, 401);
-  };
+  return () => Promise.resolve(json());
 }
 
 /**

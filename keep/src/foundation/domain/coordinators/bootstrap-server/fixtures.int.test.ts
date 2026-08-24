@@ -95,19 +95,14 @@ Deno.test("/docs/_fixtures - POST writes cake.json, GET reads it back (in-proces
   }
 });
 
-Deno.test("/docs/_fixtures - non-localhost and missing conn info are denied (403)", async () => {
+Deno.test("/docs/_fixtures - open to network callers (zero built-in auth)", async () => {
   const dir = await Deno.makeTempDir();
   Deno.env.set("KEEP_FIXTURES_DIR", dir);
   const server = await bootstrapServer("orders-app", OrdersModule);
   try {
-    assertEquals((await server.handler(getReq(), conn(offhost))).status, 403);
-    assertEquals(
-      (await server.handler(postReq({}), conn(offhost))).status,
-      403,
-    );
-    // In-process dispatch carries no conn info ⇒ fail closed.
-    assertEquals((await server.handler(getReq())).status, 403);
-    assertEquals((await server.handler(postReq({}))).status, 403);
+    // keep ships no built-in gate: off-host and conn-less callers are served.
+    assertEquals((await server.handler(getReq(), conn(offhost))).status, 200);
+    assertEquals((await server.handler(getReq())).status, 200);
   } finally {
     await server.stop();
     Deno.env.delete("KEEP_FIXTURES_DIR");

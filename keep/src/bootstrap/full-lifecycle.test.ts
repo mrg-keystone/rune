@@ -5,14 +5,13 @@ import {
   DanetDocumentBuilder,
   DanetHttpAdapter,
   HttpAdapter,
+  InjectClass,
+  InjectFactory,
+  InjectValue,
+  log,
   Server,
   setupWithSwagger,
   SwaggerDescription,
-  InjectValue,
-  InjectFactory,
-  InjectClass,
-  log,
-  Public,
 } from "./mod.ts";
 import { Body, Controller, Get, Module, Post } from "#danet/core";
 
@@ -52,7 +51,6 @@ Deno.test("e2e: all public exports are defined", () => {
 // -- Full lifecycle: bootstrap, serve, swagger, teardown --
 
 @SwaggerDescription("Health API - system health checks")
-@Public() // health/echo/log are exercised over the network; no auth in the lifecycle tests
 @Controller("health")
 class HealthController {
   @Get()

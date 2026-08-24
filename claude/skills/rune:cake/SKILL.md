@@ -110,27 +110,24 @@ fix or visibly seed past, never a reason to mock.
 
 For unattended / CI / "drive it headless" runs, or an automated get-it-green loop:
 
-1. **Decide the dispatch path by trust posture.** `POST /docs/_run` (and `/docs/_heal`)
-   are **deny-by-default**: they accept the in-process caller OR an infra-signed bearer
-   with a `dev`/`*` grant — there is **NO localhost trust**, so a bare
-   `curl http://localhost:<port>/docs/_run` is refused no matter where it runs
-   (`controlPlaneAllowed` in keep's bootstrap-server: internal header or verified
-   bearer, nothing else). With `INFRA_URL` + a dev-grant bearer → run over real HTTP
-   against a live server (certifies the deployed auth surface). Without one (typical
-   sandbox/CI) → the sanctioned path is **in-process dispatch** via the composed app's
-   `backend.fetch` (`bootstrapServer` → `{ backend }`) — and **do NOT start a listening
-   server for it**: importing the bootstrap already boots the composed app, so a
-   listener is a redundant second boot serving zero walk requests (measured: an
-   orchestrator started, polled, and tore down a server its in-process walk never
-   touched). Start a listener only for the bearer/HTTP path, the interactive browser
-   walk, or when something else genuinely needs the port.
+1. **Pick the dispatch path.** `POST /docs/_run` (and `/docs/_heal`) are **open
+   routes** — keep 5.0 ships zero built-in auth, so a plain
+   `curl http://localhost:<port>/docs/_run` works against any running server (no
+   token, no bearer; if a deployment composed its OWN guard, satisfy that guard the
+   app's way). Against an already-running server → drive it over HTTP. With no
+   server running (typical sandbox/CI) → the leanest path is **in-process
+   dispatch** via the composed app's `backend.fetch` (`bootstrapServer` →
+   `{ backend }`) — and **do NOT start a listening server for it**: importing the
+   bootstrap already boots the composed app, so a listener is a redundant second
+   boot serving zero walk requests (measured: an orchestrator started, polled, and
+   tore down a server its in-process walk never touched). Start a listener only
+   for the HTTP path, the interactive browser walk, or when something else
+   genuinely needs the port.
 2. **Delegate** to `rune-cake-e2e-driver` (Task tool). Pass: the dispatch path (base
-   URL + bearer, or — for in-process — the project root, `<project>/server/bootstrap/mod.ts`,
-   `<project>/server/deno.json`, and the fact "no INFRA_URL here — unauthenticated localhost
-   POSTs are refused by design"), the modules in scope, each module's SPEC path
-   (post-sync: `src/<m>/<m>.rune` — generated-file headers still print the old
-   `spec/runes/` path, which no longer exists; measured: a driver `cat`'d the stale
-   path and went probing), the controller path (`src/<m>/entrypoints/<surface>/mod.ts`)
+   URL, or — for in-process — the project root, `<project>/server/bootstrap/mod.ts`
+   and `<project>/server/deno.json`), the modules in scope, each module's SPEC path
+   (`spec/runes/<m>.rune` — the durable home sync reads in place; legacy projects
+   may still hold it at `src/<m>/<m>.rune`), the controller path (`src/<m>/entrypoints/<surface>/mod.ts`)
    and the out-dir for saved artifacts, any known `seeds`, and the absolute paths to
    `claude/skills/rune:cake/references/cake.md` + `references/heal-rules.md` +
    `~/.claude/skills/rune:framework/references/endpoints.md` (the runtime recipe the

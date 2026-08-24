@@ -449,10 +449,10 @@ const REQUIRED_IMPORTS: Record<string, string> = {
   // class-transformer copy — the single-copy invariant assert relies on. A
   // sprig-overlaid project (rune init) inherits its main pin from sprig, so
   // sprig's @mrg-keystone/rune major must match this one too.
-  "@mrg-keystone/rune": "jsr:@mrg-keystone/rune@^4",
+  "@mrg-keystone/rune": "jsr:@mrg-keystone/rune@^5",
   // Generated coordinators validate their seams via keep's assert runtime,
   // published as the @mrg-keystone/rune/assert subpath (same major as above).
-  "#assert": "jsr:@mrg-keystone/rune@^4/assert",
+  "#assert": "jsr:@mrg-keystone/rune@^5/assert",
   // DTO [TYP:example=…] fields emit @ApiProperty({ example }) — the swagger
   // decorator keep's runner/cake read example values from. Same range keep
   // itself maps #danet/swagger to.

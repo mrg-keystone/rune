@@ -115,15 +115,20 @@ Deno.test("POST /docs/_run - in-process walks the composed process, ok:true", as
   }
 });
 
-Deno.test("POST /docs/_run - non-localhost and missing conn info are denied (403)", async () => {
+Deno.test("POST /docs/_run - open to network callers (zero built-in auth)", async () => {
   const server = await bootstrapServer("run-app", [
     ProducerModule,
     ConsumerModule,
   ]);
   try {
-    assertEquals((await server.handler(runReq({}), conn(offhost))).status, 403);
-    // The network handler strips the internal key ⇒ a no-conn network call fails closed.
-    assertEquals((await server.handler(runReq({}))).status, 403);
+    // keep ships no built-in gate: the door answers off-host and conn-less
+    // callers alike. A deployment that must restrict it composes its own guard.
+    const offRes = await server.handler(runReq({}), conn(offhost));
+    assertEquals(offRes.status, 200);
+    assertEquals((await offRes.json()).ok, true);
+    const noConn = await server.handler(runReq({}));
+    assertEquals(noConn.status, 200);
+    await noConn.body?.cancel();
   } finally {
     await server.stop();
   }
@@ -173,7 +178,7 @@ Deno.test("POST /docs/_run - dryRun reports unresolved inputs without executing"
   }
 });
 
-Deno.test("POST /docs/_heal - control-plane gated, 503 when no healer is configured", async () => {
+Deno.test("POST /docs/_heal - open door, 503 when no healer is configured", async () => {
   const savedUrl = Deno.env.get("PRIVATE_CLAUDE_URL");
   Deno.env.delete("PRIVATE_CLAUDE_URL");
   const server = await bootstrapServer("run-app", ConsumerModule);
@@ -184,10 +189,9 @@ Deno.test("POST /docs/_heal - control-plane gated, 503 when no healer is configu
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ endpoint: { id: "use" } }),
       });
-    // deny-by-default: off-host and missing conn info (network handler) both 403
-    assertEquals((await server.handler(req(), conn(offhost))).status, 403);
-    assertEquals((await server.handler(req())).status, 403);
-    // in-process (trusted) but unconfigured → explicit 503 naming the env var
+    // The door is open (zero built-in auth); unconfigured → explicit 503 naming
+    // the env var, for network and in-process callers alike.
+    assertEquals((await server.handler(req(), conn(offhost))).status, 503);
     const res = await server.backend.fetch(req());
     assertEquals(res.status, 503);
     const body = await res.json();

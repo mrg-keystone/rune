@@ -11,7 +11,6 @@ export type {
   BootstrapOptions,
   ServerDisposer,
   ServerLifecycle,
-  SessionProfile,
 } from "@foundation/domain/coordinators/bootstrap-server/mod.ts";
 export {
   InjectClass,
@@ -47,103 +46,8 @@ export {
 } from "@foundation/domain/business/tracer/kv-store.ts";
 export { traceShipper } from "@foundation/domain/business/tracer/ship.ts";
 export { traceShellHtml } from "@foundation/domain/business/trace-ui/mod.ts";
-export {
-  createJwksVerifier,
-  decodeBearer,
-  sessionExpiryOf,
-  TokenError,
-  verifyToken,
-} from "@foundation/domain/business/token/mod.ts";
-export type {
-  DecodedBearer,
-  InfraJwk,
-  InfraJwks,
-  JwksVerifierOptions,
-  SessionBearerPayload,
-  SessionVerifier,
-} from "@foundation/domain/business/token/mod.ts";
-export {
-  createKvSessionStore,
-  createMemorySessionStore,
-  DEFAULT_REFRESH_SKEW_SECONDS,
-  intakeSession,
-  KvSessionStore,
-  resolveSession,
-} from "@foundation/domain/business/session-store/mod.ts";
-export type {
-  CredentialKind,
-  ExchangeEnvelope,
-  IntakeInput,
-  IntakeResult,
-  NewSession,
-  ResolveOptions,
-  SessionExchange,
-  SessionRecord,
-  SessionStore,
-} from "@foundation/domain/business/session-store/mod.ts";
-export {
-  createInfraClient,
-  InfraError,
-} from "@foundation/domain/business/infra-client/mod.ts";
-export type {
-  AuthExchange,
-  InfraClient,
-  InfraClientConfig,
-  RevocationStatus,
-} from "@foundation/domain/business/infra-client/mod.ts";
-export {
-  createTokenAuthMiddleware,
-  readCookie,
-  SESSION_COOKIE_NAME,
-} from "@foundation/domain/business/token-auth/mod.ts";
-export type {
-  SessionResolver,
-  TokenAuthConfig,
-} from "@foundation/domain/business/token-auth/mod.ts";
 export { withBasePath } from "@foundation/domain/business/mount/mod.ts";
 export type { FetchHandler } from "@types";
-export {
-  isPublicContext,
-  Public,
-  PUBLIC_METADATA_KEY,
-} from "@foundation/domain/business/public-route/mod.ts";
-export {
-  InProcessOnly,
-  Internal,
-  INTERNAL_METADATA_KEY,
-  isInternalContext,
-} from "@foundation/domain/business/internal-route/mod.ts";
-export {
-  Grant,
-  Grants,
-  GRANTS_METADATA_KEY,
-  LoggedIn,
-  requiredGrants,
-} from "@foundation/domain/business/grants/mod.ts";
-export {
-  auditRoutes,
-  openRoutes,
-  warnOpenRoutes,
-} from "@foundation/domain/business/route-audit/mod.ts";
-export type {
-  RouteAuditEntry,
-  RoutePosture,
-  WarnOpenRoutesOptions,
-} from "@foundation/domain/business/route-audit/mod.ts";
-export {
-  createCredentialGuard,
-  getIdentity,
-  grantsForApp,
-  IDENTITY_CONTEXT_KEY,
-  resolveNetworkCredential,
-  validateCredential,
-} from "@foundation/domain/business/token-auth/mod.ts";
-export type {
-  CredentialGuardConfig,
-  DanetGuard,
-  Identity,
-  ResolvedCredential,
-} from "@foundation/domain/business/token-auth/mod.ts";
 export {
   createDocsJsonHandler,
   docsSeedScript,
