@@ -293,26 +293,30 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
     const mapNote = await ensureImportMap(root, ioErrors, written);
     if (mapNote) console.log(`\n  ${CYAN}${mapNote}${RESET}`);
 
-    // Move the spec into its module so it lives beside the code it generates.
-    // The destination name follows the CANONICAL convention isProjectSpec()
-    // recognises (`<module>.rune`) rather than the author's arbitrary basename —
-    // otherwise the moved spec lands at a path collectProjectSpecs() rejects, and
-    // ghost-stub planning / input diagnostics (run later in THIS same sync)
-    // silently skip it. Left in place when the spec is ALREADY canonical
-    // (spec.rune or <module>.rune in its module) OR is an `.in-prog.rune` DRAFT —
-    // drafts iterate freely in their staging folder (rune-bindings: "iterate
-    // freely … finalize by renaming"), so an explicit `rune sync` of a draft
-    // scaffolds src/<module>/ but never moves/renames the draft out from under
-    // you. Otherwise both staging layouts — the singular `spec/` folder (the
-    // `rune init` default) and the plural `specs/` — are STAGING areas: a
-    // FINALIZED spec authored there is MOVED into `src/<module>/<module>.rune` on
-    // its first sync, beside the code. resolveRoot keeps the project as the root
-    // for a `spec/`-folder spec, so the move target is the sibling `src/<module>/`
-    // (never nested under `spec/`). Idempotent: a no-op once it's already at a
-    // canonical project path. Happens BEFORE ensureBootstrap so the just-synced
-    // spec is collected.
+    // The spec's home. `spec/runes/` (and the legacy staging layouts) is the
+    // DURABLE CANONICAL HOME (D-durable-home): a spec authored there — draft or
+    // finalized — is read in place and NEVER relocated by a build; deleting or
+    // regenerating `src/<module>/` can never destroy the source spec, and the
+    // shared `spec/` artifact stays whole for every other toolchain reading it.
+    // The one remaining rename is WITHIN src/: a spec already resident in its
+    // module dir under an arbitrary basename is normalized to the CANONICAL
+    // convention isProjectSpec() recognises (`<module>.rune`) — otherwise it sits
+    // at a path collectProjectSpecs() rejects and ghost-stub planning / input
+    // diagnostics (run later in THIS same sync) silently skip it. Specs already
+    // at a canonical src path (spec.rune or <module>.rune) are untouched, so
+    // pre-D-durable-home projects keep working unchanged. Idempotent: a no-op
+    // once the spec is at any canonical home. Happens BEFORE ensureBootstrap so
+    // the just-synced spec is collected.
     const canonicalDir = join(root, "src", plan.module);
-    const leaveInPlace = isInProgSpec(absRune) ||
+    // D-durable-home: a finalized spec in a recognized staging dir (`spec/runes/`
+    // etc., under the root or the git-root sibling) is the spec's DURABLE
+    // CANONICAL HOME — sync reads it there and generates into src/<module>/ but
+    // never relocates it. Only a spec already resident under src/ may still be
+    // renamed to its module-canonical basename below.
+    const relSpecPath = relative(root, resolve(absRune)).replaceAll("\\", "/");
+    const stagingHome = isProjectSpec(relSpecPath) &&
+      !relSpecPath.replace(/^(?:\.\.\/)+/, "").startsWith("src/");
+    const leaveInPlace = stagingHome || isInProgSpec(absRune) ||
       (resolve(absRune) === resolve(join(canonicalDir, "spec.rune"))) ||
       (resolve(absRune) === resolve(join(canonicalDir, `${plan.module}.rune`)));
     const specTarget = leaveInPlace
@@ -324,7 +328,7 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
         await Deno.rename(absRune, specTarget);
         written?.push(absRune, resolve(specTarget));
         console.log(
-          `\n  ${CYAN}moved spec → ${relative(root, specTarget)}${RESET}`,
+          `\n  ${CYAN}normalized spec name → ${relative(root, specTarget)}${RESET}`,
         );
       } catch (e) {
         ioErrors.push(`move spec: ${errMessage(e)}`);
@@ -1179,6 +1183,26 @@ async function collectProjectSpecs(
     const text = await readMaybe(join(root, rel));
     if (text !== null) specs.push({ path: rel, text });
   }
+  // D-durable-home: in a composed app the shared authoring `spec/` sits at the
+  // GIT ROOT, a SIBLING of this codegen root, and finalized specs STAY there —
+  // so auto-discovery (ghost stubs, input diagnostics, heal-rules) must look
+  // across the boundary too. Crossed only when the immediate parent is the git
+  // root (`../.git` exists, dir or worktree file), so an in-repo fixture root
+  // never wanders into an unrelated sibling tree.
+  try {
+    await Deno.lstat(join(root, "..", ".git"));
+    for (const dir of ["spec/runes", "specs/runes"]) {
+      try {
+        for await (const entry of Deno.readDir(join(root, "..", dir))) {
+          if (!entry.isFile || !entry.name.endsWith(".rune")) continue;
+          const rel = `../${dir}/${entry.name}`;
+          if (!isProjectSpec(rel)) continue; // drafts and strays fall through
+          const text = await readMaybe(join(root, rel));
+          if (text !== null) specs.push({ path: rel, text });
+        }
+      } catch { /* this staging layout absent — fine */ }
+    }
+  } catch { /* parent is not a git root — no sibling staging to read */ }
   return specs;
 }
 

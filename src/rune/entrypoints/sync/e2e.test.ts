@@ -34,9 +34,14 @@ Deno.test("sync scaffolds, then preserves fill-ins and prunes orphans", async ()
       "cart/mod.ts should be scaffolded",
     );
 
-    // The spec is moved into its module; subsequent syncs target it there.
-    const movedRune = join(root, "src/orders/orders.rune");
-    assert((await Deno.stat(movedRune)).isFile, "spec moved into src/orders/");
+    // D-durable-home: the staging spec is read in place; subsequent syncs
+    // target it at its durable home.
+    assert((await Deno.stat(runePath)).isFile, "spec stays at specs/orders.rune");
+    assert(
+      !(await exists(join(root, "src/orders/orders.rune"))),
+      "spec is not relocated into src/orders/",
+    );
+    const movedRune = runePath;
 
     // sync makes a fresh project compile out of the box: it writes a deno.json
     // with the import aliases the generated code uses (@/, class-validator, …)
@@ -121,11 +126,11 @@ Deno.test("sync scaffolds beside the spec, moves the spec in, and re-syncs in pl
   }
 });
 
-Deno.test("sync moves a finalized spec from a shared spec/ folder into server/src/<module>/", async () => {
-  // The `rune init` layout: the shared spec/ is a STAGING area at the git root.
-  // resolveRoot maps spec/orders.rune to the sibling server/ codegen root, so a
-  // finalized spec is moved into <root>/server/src/orders/orders.rune — never
-  // nested under spec/ — while spec/ is left empty.
+Deno.test("sync reads a shared spec/ folder spec IN PLACE and generates into server/src/<module>/ (D-durable-home)", async () => {
+  // The `rune init` layout: the shared spec/ at the git root is the spec's
+  // DURABLE CANONICAL HOME. resolveRoot maps spec/orders.rune to the sibling
+  // server/ codegen root; codegen lands in <root>/server/src/orders/ while the
+  // spec STAYS at spec/orders.rune — a build never relocates durable source.
   const root = await Deno.makeTempDir();
   try {
     await Deno.mkdir(join(root, "spec"), { recursive: true });
@@ -133,9 +138,11 @@ Deno.test("sync moves a finalized spec from a shared spec/ folder into server/sr
     await Deno.writeTextFile(spec, SPEC);
 
     assertEquals(await runSync([spec]), 0);
-    const moved = join(root, "server/src/orders/orders.rune");
-    assert(await exists(moved), "finalized spec must move into server/src/orders/");
-    assert(!(await exists(spec)), "spec must no longer be in spec/");
+    assert(await exists(spec), "spec stays at its durable home in spec/");
+    assert(
+      !(await exists(join(root, "server/src/orders/orders.rune"))),
+      "spec is not relocated into server/src/orders/",
+    );
     assert(
       await exists(join(root, "server/src/orders/domain/business/cart/mod.ts")),
       "codegen lands in server/src/orders, beside the shared spec/",
@@ -149,9 +156,9 @@ Deno.test("sync moves a finalized spec from a shared spec/ folder into server/sr
       "must not nest codegen under spec/",
     );
 
-    // Re-sync the moved spec: idempotent, stays put (root = server, the dir above its src/).
-    assertEquals(await runSync([moved]), 0);
-    assert(await exists(moved), "moved spec stays put on re-sync");
+    // Re-sync from the durable home: idempotent, spec stays put.
+    assertEquals(await runSync([spec]), 0);
+    assert(await exists(spec), "spec stays put on re-sync");
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -189,17 +196,18 @@ Deno.test("sync collects written paths and is physically quiet on a no-change re
     const runePath = join(root, "specs", "orders.rune");
     await Deno.writeTextFile(runePath, SPEC);
 
-    // First sync: the collector records every write + BOTH sides of the spec move.
+    // First sync: the collector records every write. The spec itself is never
+    // touched (D-durable-home — no move, so neither side of one is recorded).
     const written: string[] = [];
     assertEquals(await runSync([runePath, "--root", root], written), 0);
     assert(written.length > 0, "first sync must record its writes");
     assert(
-      written.includes(runePath),
-      "spec move source must be recorded",
+      !written.includes(runePath),
+      "the staging spec is read in place, never written",
     );
     assert(
-      written.includes(join(root, "src/orders/orders.rune")),
-      "spec move target must be recorded",
+      !written.includes(join(root, "src/orders/orders.rune")),
+      "no spec move target is written",
     );
     assert(
       written.includes(join(root, "deno.json")),
@@ -211,7 +219,7 @@ Deno.test("sync collects written paths and is physically quiet on a no-change re
     const again: string[] = [];
     const before = await mtimes(root);
     assertEquals(
-      await runSync([join(root, "src/orders/orders.rune"), "--root", root], again),
+      await runSync([runePath, "--root", root], again),
       0,
     );
     assertEquals(again, [], "no-change re-sync must write nothing");
