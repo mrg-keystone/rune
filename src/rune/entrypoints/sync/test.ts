@@ -619,9 +619,8 @@ Deno.test("runSync --regen — no success log when the .new write fails", async 
     await Deno.mkdir(join(root, "specs"), { recursive: true });
     const runePath = join(root, "specs", "orders.rune");
     await Deno.writeTextFile(runePath, REGEN_SPEC);
-    // First sync scaffolds (and moves the spec into src/orders/).
+    // First sync scaffolds; the spec stays at its staging home (D-durable-home).
     assertEquals(await runSync([runePath, "--root", root, "--no-run"]), 0);
-    const movedRune = join(root, "src", "orders", "orders.rune");
     const target = join("src", "orders", "domain", "business", "cart", "mod.ts");
     const targetAbs = join(root, target);
     // Hand-edit the body so --regen takes the `.new` branch.
@@ -632,7 +631,7 @@ Deno.test("runSync --regen — no success log when the .new write fails", async 
     logs.length = 0;
     errs.length = 0;
     const code = await runSync(
-      [movedRune, "--root", root, "--regen", targetAbs, "--no-run"],
+      [runePath, "--root", root, "--regen", targetAbs, "--no-run"],
     );
     await Deno.chmod(parent, 0o700); // restore so cleanup can remove it
     assertEquals(code, 2, "a failed regen write exits 2");
@@ -734,7 +733,7 @@ Deno.test("ensureImportMap — S11: a malformed existing deno.json errors, never
   }
 });
 
-// ---- S10: a non-canonically-named spec is moved to a path collectProjectSpecs sees ----
+// ---- S10: a staging spec is READ IN PLACE (D-durable-home) and still discovered ----
 const S10_SPEC = `[MOD] checkout
 
 [ENT] http.start(StartDto): TicketDto
@@ -749,24 +748,24 @@ const S10_SPEC = `[MOD] checkout
 [TYP] ticketId: string
     a ticket id`;
 
-Deno.test("runSync — S10: a flow.rune spec lands at a project-spec path (ghost stub planned)", async () => {
+Deno.test("runSync — S10: a staging spec stays in place (D-durable-home) and the ghost stub is still planned", async () => {
   const root = await Deno.makeTempDir();
   const logs: string[] = [];
   const origLog = console.log;
   console.log = (...a: unknown[]) => logs.push(a.map(String).join(" "));
   try {
     await Deno.mkdir(join(root, "specs"), { recursive: true });
-    // Author the spec under a NON-canonical name (neither spec.rune nor
-    // checkout.rune) — historically it was moved to src/checkout/flow.rune,
-    // which isProjectSpec() rejects, so the ghost stub for $memberId was never
-    // planned.
+    // A finalized spec in a recognized staging dir is the DURABLE CANONICAL
+    // HOME — sync reads it there and never relocates it (D-durable-home), and
+    // auto-discovery (ghost stubs) must still see it at that path.
     const runePath = join(root, "specs", "flow.rune");
     await Deno.writeTextFile(runePath, S10_SPEC);
     const code = await runSync([runePath, "--root", root, "--no-run"]);
     assertEquals(code, 0);
-    // The spec must now live at a canonical project path.
-    const canonical = join(root, "src", "checkout", "checkout.rune");
-    assertEquals(await exists(canonical), true, "spec moved to a canonical path");
+    // The spec stays at its staging home — never moved into src/.
+    assertEquals(await exists(runePath), true, "spec stays at its staging home");
+    const oldCanonical = join(root, "src", "checkout", "checkout.rune");
+    assertEquals(await exists(oldCanonical), false, "spec is not relocated into src/");
     // And the ghost stub for the unproduced $memberId must have been generated.
     const stub = join(root, "bootstrap", "stubs.ts");
     assertEquals(await exists(stub), true, "ghost stub module was planned");
@@ -775,5 +774,46 @@ Deno.test("runSync — S10: a flow.rune spec lands at a project-spec path (ghost
   } finally {
     console.log = origLog;
     await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("runSync — D-durable-home: a git-root spec/runes/ spec is read in place across the server/ boundary", async () => {
+  const tmp = await Deno.makeTempDir();
+  const logs: string[] = [];
+  const origLog = console.log;
+  console.log = (...a: unknown[]) => logs.push(a.map(String).join(" "));
+  try {
+    // Composed-app shape: <git>/{.git, spec/runes/, server/} — the shared
+    // authoring spec/ is a SIBLING of the codegen root.
+    await Deno.mkdir(join(tmp, ".git"), { recursive: true });
+    await Deno.mkdir(join(tmp, "spec", "runes"), { recursive: true });
+    await Deno.mkdir(join(tmp, "server"), { recursive: true });
+    const runePath = join(tmp, "spec", "runes", "checkout.rune");
+    await Deno.writeTextFile(runePath, S10_SPEC);
+    const serverRoot = join(tmp, "server");
+    const code = await runSync([runePath, "--root", serverRoot, "--no-run"]);
+    assertEquals(code, 0);
+    // The spec stays at the durable home; codegen lands under server/src/.
+    assertEquals(await exists(runePath), true, "spec stays at spec/runes/");
+    assertEquals(
+      await exists(join(serverRoot, "src", "checkout", "checkout.rune")),
+      false,
+      "spec is not relocated into server/src/",
+    );
+    assertEquals(
+      await exists(join(serverRoot, "src", "checkout", "entrypoints", "http", "mod.ts")),
+      true,
+      "codegen landed under server/src/checkout/",
+    );
+    // Sibling-staging auto-discovery: the ghost stub for $memberId was planned,
+    // which requires collectProjectSpecs to have crossed the ../ boundary.
+    const stubText = await Deno.readTextFile(join(serverRoot, "bootstrap", "stubs.ts"));
+    assertStringIncludes(stubText, "memberId");
+    // Idempotency: a second sync neither moves the spec nor errors.
+    assertEquals(await runSync([runePath, "--root", serverRoot, "--no-run"]), 0);
+    assertEquals(await exists(runePath), true, "spec still at spec/runes/ after re-sync");
+  } finally {
+    console.log = origLog;
+    await Deno.remove(tmp, { recursive: true });
   }
 });

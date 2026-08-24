@@ -16,7 +16,8 @@ const CORE_TEMPLATE = `[MOD] core
 
 // This is a rune project. You author tiny .rune specs (here in spec/runes/),
 // and "rune sync spec/runes/<m>.rune" generates a typed, validated Deno module
-// into src/<m>/ AND moves the spec in beside its code (src/<m>/<m>.rune) —
+// into src/<m>/. The spec STAYS here — spec/runes/ is its durable home; a
+// build never relocates it (D-durable-home) —
 // routed endpoints, auto Swagger, an interactive "cake" at /docs. The sibling
 // spec/misc/ holds data design + cake artifacts; spec/ui/ holds the UI prototype.
 // The generated code runs on rune's runtime, @mrg-keystone/rune (on JSR).
@@ -194,8 +195,8 @@ export async function overlayRuneBackend(
 // by the sprig CLI; rune overlays its spec-driven keep backend (bootstrap/ + the
 // spec/ layout) on top. It does NOT generate module code — author module specs under
 // spec/runes/ (e.g. spec/runes/tasks.rune) and run `rune sync spec/runes/tasks.rune`
-// to generate them into src/tasks/; sync then moves the spec in beside its code
-// (src/tasks/tasks.rune). The bootstrap files come from the SAME renderers `rune sync`
+// to generate them into src/tasks/; the spec stays at spec/runes/ — its durable
+// home (D-durable-home). The bootstrap files come from the SAME renderers `rune sync`
 // uses, so they're byte-identical to engine output; bootstrap/modules.ts starts empty
 // and sync fills it in as modules with [ENT] surfaces are generated.
 export async function runInit(args: string[]): Promise<number> {
