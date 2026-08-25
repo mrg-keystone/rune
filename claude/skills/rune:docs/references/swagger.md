@@ -142,6 +142,11 @@ pages work mounted under Fresh (`/api/docs/...`).
 
 ### Docs access (summary)
 
+**Where the pages live:** on the composed app the backend layer mounts every
+backend route under `/api`, so the docs surface is `/api/docs/<module>` (spec at
+`/api/docs/<module>/json`); a bare backend serves the same pages at `/docs/*`.
+In-process dispatch is always unprefixed (`backend.fetch("/docs/app/json")`).
+
 Since keep 5.0 the doc pages AND the OpenAPI spec (`/docs/<module>/json`) are
 **open routes** — keep ships zero built-in auth, so a browser just opens them;
 no token, no bearer. The legacy `?token=` → `localStorage` seeding script still

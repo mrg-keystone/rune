@@ -31,7 +31,7 @@ export interface MapNode {
   flows: string[];
   optional: boolean;
   stub: boolean;
-  /** App-root-relative emulator page path, e.g. "/docs/checkout". */
+  /** App-root-relative emulator page path, e.g. "/docs/checkout" — the client prepends its own mount prefix, so it is mount-safe. */
   docsPath: string;
   description: string;
   /** Declared `$inputs` no composed producer satisfies — rendered as amber badges. */

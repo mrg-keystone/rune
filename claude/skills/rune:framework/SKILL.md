@@ -14,8 +14,10 @@ description: >-
   (`order`/`dependsOn`/`bind`), the `exerciseEndpoints` headless runner +
   `POST /docs/_run`, the `/docs/_map` system map, and deployment (standalone,
   hosting under a sprig UI in the canonical `ui/` + `server/` layout — the
-  git-root `serve.ts` runs `serveSprig({ keep: api })` importing
-  `./server/bootstrap/mod.ts` — via `serveSprig`/`sprigUi`, `withBasePath`, Deno
+  git-root `serve.ts` runs `api.compose({ frontend: Frontend() })` importing
+  `./server/bootstrap/mod.ts` (the canonical backend-layer composition; legacy
+  apps still run `serveSprig({ keep: api })`) — via `api.compose`, `Backend`/
+  `BackendFrom`, `withBasePath` (a layer: `(inner?) => handler`), Deno
   Deploy, logging). Trigger phrases:
   "why is auth failing / 401 / 403", "forward remoteAddr / conn info",
   "host the backend under a sprig UI", "deploy a sprig+keep app",
@@ -57,7 +59,7 @@ deploying / hosting under a sprig UI.
   `exerciseEndpoints` runner + `POST /docs/_run` + `/docs/_map`, `@WsEndpoint`.
   Owns `references/endpoints.md`.
 - **`rune-framework-deploy`** — deployment & hosting: standalone, sprig-hosted
-  (`serveSprig`/`sprigUi`), `withBasePath`, Deno Deploy, the in-process `backend`
+  (`api.compose`/`Backend` canonical; `serveSprig`/`sprigUi` legacy), `withBasePath`, Deno Deploy, the in-process `backend`
   client, logging. Owns `references/deployment.md`.
 
 ## Flow

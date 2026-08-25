@@ -11,6 +11,10 @@ import { DatadogTransport } from "@foundation/domain/data/datadog/mod.ts";
 import { PostmarkAlerter } from "@foundation/domain/data/postmark/mod.ts";
 import { createRequestLoggingMiddleware } from "@foundation/domain/business/request-logger/mod.ts";
 import type { HttpContext } from "#danet/core";
+import {
+  BackendFrom,
+  type Frontend,
+} from "@foundation/domain/business/composition/mod.ts";
 import type { Context } from "#hono";
 import {
   exerciseEndpoints,
@@ -932,6 +936,7 @@ export async function bootstrapServer(
   backend: BackendClient;
   handler: FetchHandler;
   docs: SwaggerDocEntry[];
+  compose: (options?: { frontend?: Frontend }) => FetchHandler;
 }> {
   const server = await BootstrapServer.create(appName, module, options);
   return {
@@ -940,5 +945,15 @@ export async function bootstrapServer(
     backend: server.backend,
     handler: server.handler,
     docs: server.docs,
+    // The composed app's canonical serving shape, from THIS single booted
+    // root: the backend layer (intrinsic /api/ mount, docs at /api/docs/*)
+    // wrapping an optional Frontend with a request-bound in-process client
+    // provisioned per request. serve.ts:
+    //   export default { fetch: api.compose({ frontend: Frontend() }) };
+    compose: (opts = {}) =>
+      BackendFrom(
+        { handler: server.handler, backend: server.backend },
+        opts,
+      ) as FetchHandler,
   };
 }

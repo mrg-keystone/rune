@@ -5,6 +5,11 @@ import "#reflect-metadata";
 
 export {
   appModule,
+  Backend,
+  BackendFrom,
+  collectSetCookies,
+  RequestJar,
+  requestBoundClient,
   canonicalize,
   emitContractOpenApi,
   mergedOpenApiDoc,
@@ -64,7 +69,11 @@ export {
 export { assert, RuneAssertError } from "../assert/mod.ts";
 export type { Assert, AssertFailure } from "../assert/mod.ts";
 export type {
+  BackendOptions,
+  BootedApi,
   BootstrapOptions,
+  ComposedHandler,
+  Frontend,
   DocsJsonHandlerOptions,
   EndpointMethod,
   EndpointOptions,

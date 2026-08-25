@@ -29,30 +29,43 @@ it and every request looks origin-less. (Auth no longer depends on `remoteAddr`
 — trust is in-process key or infra bearer only — but keep forwarding `info` so
 logs stay attributable.)
 
-### Hosted under a sprig UI
+### The canonical composition — the backend layer + a Frontend
 
-The frontend is **sprig**, and the composition lives in the sprig package
-`@mrg-keystone/sprig/keep`. `serveSprig({ keep })` returns a single `{ fetch }`
-default export — run it with `deno serve serve.ts` (**not** `Deno.serve()`). In
-the canonical `ui/` + `server/` layout the SSR app is the `ui/` workspace member
-(serveSprig derives it from the git-root serve.ts location), so the generated
-composition root is one line:
+The composed app serves ONE of three canonical shapes:
 
 ```ts
-// serve.ts  (git root)
-import { serveSprig } from "@mrg-keystone/sprig/keep";
-import { api } from "./server/bootstrap/mod.ts";
-export default serveSprig({ keep: api });
+Deno.serve(Backend(appName, modules))                            // backend alone
+Deno.serve(Backend(appName, modules, { frontend: Frontend() }))  // full-stack
+Deno.serve(Frontend())                                           // frontend alone
 ```
 
-`serveSprig` routes `/api/*` and `/docs*` to the keep's `handler` (forwarding
-conn info for request attribution) and everything else to the sprig SSR app —
-with the keep's in-process `backend.fetch` bound to sprig's `Backend` DI token.
-SSR pages read data through that in-process channel via `inject(Backend)` in a
-page's `resolve.ts` or a service — **no TCP, no credential**. Browser islands
-can't make in-process calls, so they reach the backend over the `/api/*` channel
-with an **infra session bearer** (see `references/auth.md`, "Browser access to
-your own API").
+The scaffolded `serve.ts` composes from the app's own booted root (single
+boot — `rune dev` and the headless runner reuse it) via `api.compose`:
+
+```ts
+// serve.ts  (git root — GENERATED)
+import { Frontend } from "@mrg-keystone/sprig/keep";
+import { api } from "./server/bootstrap/mod.ts";
+export default { fetch: api.compose({ frontend: Frontend() }) };
+```
+
+The backend layer owns `/api/` INTRINSICALLY: every backend route — including
+the docs/cake/map pages, now at **`/api/docs/*`** — lives under it, so it can
+never collide with a frontend that owns the root. Everything else delegates to
+the `Frontend`, which receives a fresh **request-bound in-process client** as
+its third argument each request: SSR's `inject(Backend)` reads in-process with
+the incoming request's own cookies (no TCP, zero cookie plumbing), and
+`Set-Cookie` from in-process calls is collected onto the outer browser
+response. Islands call `/api/*` over the wire; the two channels are
+byte-identical by contract — the parity suite gates it. keep ships zero
+built-in auth: wrap the composition in your own guard when you need one
+(`Deno.serve(Auth(api.compose({ frontend: Frontend() })))`).
+
+In-process dispatch is always UNPREFIXED (`backend.fetch("/users")`,
+`backend.fetch("/docs/_run")`) — the mount is the layer's, applied once; a
+browser reaches the same routes at `/api/users` / `/api/docs/_run`. Legacy
+apps composed with `serveSprig({ keep: api })` keep working (UI `/ui`, API
+`/api/*`, docs at bare `/docs*`); it is the retiring shape.
 
 `bootstrapServer` is bundler-safe (lazy-loads the Swagger builder and its
 CJS `handlebars` dep), so importing the backend into a bundled SSR frontend

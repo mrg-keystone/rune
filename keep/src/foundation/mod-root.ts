@@ -53,7 +53,21 @@ export {
 } from "@foundation/domain/business/tracer/kv-store.ts";
 export { traceShipper } from "@foundation/domain/business/tracer/ship.ts";
 export { traceShellHtml } from "@foundation/domain/business/trace-ui/mod.ts";
-export { withBasePath } from "@foundation/domain/business/mount/mod.ts";
+export { type ComposedHandler, withBasePath } from "@foundation/domain/business/mount/mod.ts";
+export {
+  BackendFrom,
+  type BootedApi,
+  type Frontend,
+} from "@foundation/domain/business/composition/mod.ts";
+export {
+  Backend,
+  type BackendOptions,
+} from "@foundation/domain/business/composition/boot.ts";
+export {
+  collectSetCookies,
+  RequestJar,
+  requestBoundClient,
+} from "@foundation/domain/business/request-jar/mod.ts";
 export type { FetchHandler } from "@types";
 export {
   createDocsJsonHandler,

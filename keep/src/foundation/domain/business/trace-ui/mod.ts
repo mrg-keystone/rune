@@ -36,7 +36,7 @@ export function traceShellHtml(
   appName: string,
   opts: { dev?: boolean } = {},
 ): string {
-  const payload = JSON.stringify({ app: appName, dataUrl: "/docs/_traces" })
+  const payload = JSON.stringify({ app: appName, dataUrl: "_traces" })
     .replace(/</g, "\\u003c");
   return `<!doctype html>
 <html lang="en">
@@ -51,8 +51,8 @@ export function traceShellHtml(
   <div>
     <h1>${escapeHtml(appName)} <span class="h-sub">request traces</span></h1>
     <nav>
-      <a id="link-index" href="/docs">Docs index &#8599;</a>
-      <a href="/docs/_map">System map &#8599;</a>
+      <a id="link-index" href=".">Docs index &#8599;</a>
+      <a href="_map">System map &#8599;</a>
     </nav>
   </div>
   <div class="bar">

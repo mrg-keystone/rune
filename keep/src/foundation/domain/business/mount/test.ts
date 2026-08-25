@@ -13,7 +13,7 @@ function spy() {
 
 Deno.test("strips the base path before dispatching", async () => {
   const { handler, seen } = spy();
-  const mounted = withBasePath("/api", handler);
+  const mounted = withBasePath("/api", handler)();
 
   const res = await mounted(new Request("http://app/api/users"));
   assertEquals(res.status, 200);
@@ -22,7 +22,7 @@ Deno.test("strips the base path before dispatching", async () => {
 
 Deno.test("the bare base path maps to root", async () => {
   const { handler, seen } = spy();
-  const mounted = withBasePath("/api", handler);
+  const mounted = withBasePath("/api", handler)();
 
   await mounted(new Request("http://app/api"));
   assertEquals(seen[0], "/");
@@ -30,7 +30,7 @@ Deno.test("the bare base path maps to root", async () => {
 
 Deno.test("non-matching paths return 404 without dispatching", async () => {
   const { handler, seen } = spy();
-  const mounted = withBasePath("/api", handler);
+  const mounted = withBasePath("/api", handler)();
 
   const res = await mounted(new Request("http://app/health"));
   assertEquals(res.status, 404);
@@ -39,7 +39,7 @@ Deno.test("non-matching paths return 404 without dispatching", async () => {
 
 Deno.test("a prefix that is only a substring does not match", async () => {
   const { handler, seen } = spy();
-  const mounted = withBasePath("/api", handler);
+  const mounted = withBasePath("/api", handler)();
 
   const res = await mounted(new Request("http://app/apiv2/x"));
   assertEquals(res.status, 404);
@@ -48,7 +48,7 @@ Deno.test("a prefix that is only a substring does not match", async () => {
 
 Deno.test("normalizes a base path given with/without slashes", async () => {
   const { handler, seen } = spy();
-  const mounted = withBasePath("api/", handler);
+  const mounted = withBasePath("api/", handler)();
 
   await mounted(new Request("http://app/api/orders/1"));
   assertEquals(seen[0], "/orders/1");
@@ -60,7 +60,7 @@ Deno.test("forwards Deno conn info to the mounted handler", async () => {
     seenInfo = info;
     return new Response("ok");
   };
-  const mounted = withBasePath("/api", handler);
+  const mounted = withBasePath("/api", handler)();
   const info = {
     remoteAddr: { transport: "tcp", hostname: "127.0.0.1", port: 1 },
   };
@@ -75,7 +75,7 @@ Deno.test("preserves method, headers, and query", async () => {
     seen.push(req);
     return new Response("ok");
   };
-  const mounted = withBasePath("/api", handler);
+  const mounted = withBasePath("/api", handler)();
 
   await mounted(
     new Request("http://app/api/users?role=admin", {
@@ -87,4 +87,27 @@ Deno.test("preserves method, headers, and query", async () => {
   assertEquals(seen[0].method, "POST");
   assertEquals(seen[0].headers.get("x-test"), "1");
   assertEquals(new URL(seen[0].url).search, "?role=admin");
+});
+
+Deno.test("layer form: an inner receives everything the prefix does not match", async () => {
+  const { handler, seen } = spy();
+  const innerSeen: string[] = [];
+  const layer = withBasePath("/api", handler)((req, _info, client) => {
+    innerSeen.push(new URL(req.url).pathname + ":" + String(client));
+    return new Response("front");
+  });
+  const res = await layer(new Request("http://app/dashboard"), undefined, "CAP");
+  assertEquals(await res.text(), "front");
+  assertEquals(innerSeen, ["/dashboard:CAP"], "delegate forwards the third argument unchanged");
+  assertEquals(seen.length, 0);
+});
+
+Deno.test("layer form: intercept also forwards the third argument", async () => {
+  let seenClient: unknown;
+  const layer = withBasePath("/api", (_req, _info, client) => {
+    seenClient = client;
+    return new Response("ok");
+  })();
+  await layer(new Request("http://app/api/x"), undefined, "CAP");
+  assertEquals(seenClient, "CAP");
 });

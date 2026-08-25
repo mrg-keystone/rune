@@ -3,7 +3,8 @@ name: rune-framework-deploy
 description: >-
   Explain and wire deployment and hosting for a rune/keep backend: standalone
   (Deno.serve with conn-info forwarding) or await api.listen(), hosting under a
-  sprig UI via serveSprig({ keep, app }) / the framework-agnostic sprigUi()
+  sprig UI via api.compose({ frontend: Frontend() }) — the canonical backend-layer
+  composition (/api intrinsic, docs at /api/docs/*) — or the legacy serveSprig({ keep, app }) / sprigUi()
   middleware, mounting under a prefix with withBasePath, Deno Deploy env
   (DD_API_KEY/POSTMARK_* for observability; keep 5.0 ships zero built-in auth), the
   in-process backend client, and request logging. Use this agent when the
@@ -21,7 +22,7 @@ Answer one deployment/hosting question for a keep backend — or wire the serve/
 
 ## Invoke when
 
-The orchestrator routes a deploy/hosting matter here: standalone `Deno.serve`/`api.listen`, hosting under sprig (`serveSprig`/`sprigUi`), `withBasePath`, Deno Deploy env, the in-process `backend` client surface, or logging internals. NOT auth posture (→ `rune-framework-auth`); NOT `@Endpoint`/runner semantics (→ `rune-framework-runtime`).
+The orchestrator routes a deploy/hosting matter here: standalone `Deno.serve`/`api.listen`, the canonical composition (`api.compose({ frontend: Frontend() })` — backend layer, /api intrinsic, docs at /api/docs/*; legacy `serveSprig`/`sprigUi`), `withBasePath` (a LAYER: `withBasePath(prefix, handler)(inner?)`), Deno Deploy env, the in-process `backend` client surface, or logging internals. NOT auth posture (→ `rune-framework-auth`); NOT `@Endpoint`/runner semantics (→ `rune-framework-runtime`).
 
 ## Input contract
 
@@ -32,7 +33,7 @@ The orchestrator passes: the goal (e.g. "host this backend under the sprig UI", 
 1. Read `references/deployment.md` (path provided) — the mounting recipes, the `backend` client, logging, Deno Deploy, the release flow. Source of truth.
 2. Pick the shape from three:
    - **Standalone** — `Deno.serve((req, info) => api.handler(req, info))` (forward `info` so `remoteAddr` stays available for request logging/tracing; auth no longer depends on it) or `await api.listen()`.
-   - **Hosted under sprig** — `serveSprig({ keep: api, app })` from `@sprig/keep` → one `{ fetch }` default export run by `deno serve serve.ts` (NOT `Deno.serve`); routes `/api/*` + `/docs*` to the keep handler and the rest to the sprig SSR app, binding in-process `backend.fetch` to sprig's `Backend` DI token. To mount the UI inside an existing host, use `sprigUi(config)`.
+   - **Hosted under sprig (canonical)** — `export default { fetch: api.compose({ frontend: Frontend() }) }` (Frontend from `@mrg-keystone/sprig/keep`): the backend layer intercepts `/api/*` (docs at `/api/docs/*`), delegates the rest to the Frontend, and provisions a fresh request-bound in-process client per request (SSR reads carry the request's cookies; Set-Cookie collects onto the outer response). LEGACY — `serveSprig({ keep: api, app })`: `/api/*` + bare `/docs*` to the keep handler, rest to the SSR app; still works, retiring. To mount the UI inside an existing host, `sprigUi(config)`.
    - **Under any prefix** — `withBasePath(prefix, handler)`.
 3. `bootstrapServer` initializes once (no `listen`) — import the shared `api` everywhere. Bundler-safe (lazy Swagger/handlebars).
 4. For Deno Deploy: set `DD_API_KEY`/`POSTMARK_SERVER_TOKEN`/`POSTMARK_FROM` (+ optional `ALERT_RECIPIENTS`) for observability. keep 5.0 ships zero built-in auth — routes are open unless the app composes its own guard; auth details → `rune-framework-auth`.
