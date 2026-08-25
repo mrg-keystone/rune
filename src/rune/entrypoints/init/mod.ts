@@ -5,6 +5,12 @@ import {
   renderConfig,
   renderMain,
 } from "@rune/entrypoints/sync/mod.ts";
+import {
+  checkArtifactVersion,
+  ensureSpecSkeleton,
+  registerManifestEntries,
+  RUNE_MANIFEST_ENTRIES,
+} from "./artifact.ts";
 
 const RED = "\x1b[31m";
 const GREEN = "\x1b[32m";
@@ -98,6 +104,9 @@ why) so the shape stays a decision, not an accident.
  *  `deno install` bin. sprig's compiler/scaffold need the on-disk runtime (~/.sprig),
  *  so it can't be run straight from `jsr:` — it must be `sprig install`ed first. */
 function sprigCandidates(): string[] {
+  // RUNE_INIT_NO_SPRIG=1 forces the backend-only (degraded) scaffold even when
+  // sprig is installed — for a deliberately UI-less service, and for tests.
+  if (Deno.env.get("RUNE_INIT_NO_SPRIG") === "1") return [];
   const home = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? "";
   return ["sprig", ...(home ? [join(home, ".deno", "bin", "sprig")] : [])];
 }
@@ -144,50 +153,107 @@ export async function overlayRuneBackend(
   dir: string,
   appName: string,
   ioErrors: string[],
+  opts: { freshScaffold?: boolean } = {},
 ): Promise<void> {
+  const fresh = opts.freshScaffold ?? true;
+  // Write a file of rune's OWN half. On a FRESH scaffold every write proceeds
+  // (sprig's empty placeholder bootstrap sits inside rune's server/ subtree, and
+  // rune reclaims it); on a LATER init (contributor mode against an existing
+  // repo) writes are only-if-absent — a dev-owned file is NEVER clobbered
+  // (artifact contract §8's additive-and-idempotent own-half rule).
+  const writeOwn = async (path: string, content: string) => {
+    if (!fresh) {
+      try {
+        await Deno.stat(path);
+        return; // present — later init never overwrites
+      } catch { /* absent — write it */ }
+    }
+    await Deno.writeTextFile(path, content);
+  };
+
   // The keep backend is a `server/` package beside the sprig `ui/` package. Merge
-  // rune's engine import map into the server/deno.json sprig wrote (additive —
-  // sprig already pins @mrg-keystone/rune, so this only ADDS @/, class-validator/
-  // -transformer, #std, #assert, #api-doc, etc.). `@/` → `./` there scopes the
-  // generated `server/src/**` imports (`@/src/…`) to the server package.
+  // rune's engine import map into any server/deno.json already there (additive —
+  // a sprig scaffold already pins @mrg-keystone/rune, so this only ADDS @/,
+  // class-validator/-transformer, #std, #assert, #api-doc, etc.). `@/` → `./`
+  // there scopes the generated `server/src/**` imports (`@/src/…`) to the server
+  // package.
   const serverDir = join(dir, "server");
+  await Deno.mkdir(serverDir, { recursive: true }); // degraded path: no sprig scaffold made it
   await ensureImportMap(serverDir, ioErrors);
 
-  // server/bootstrap/ — replace sprig's empty keep backend with the registry-driven
-  // one. `renderMain` exports the same `api` the sprig-written git-root serve.ts
-  // imports (from `./server/bootstrap/mod.ts`), and its `import.meta.main` listen
-  // keeps `rune dev` a backend-only loop. modules.ts is the GENERATED registry
-  // `rune sync` rewrites as [ENT] surfaces are added.
+  // server/bootstrap/ — the registry-driven keep backend. `renderMain` exports
+  // the `api` the git-root serve.ts imports (from `./server/bootstrap/mod.ts`),
+  // and its `import.meta.main` listen keeps `rune dev` a backend-only loop.
+  // modules.ts is the GENERATED registry `rune sync` rewrites as [ENT] surfaces
+  // are added.
   await Deno.mkdir(join(serverDir, "bootstrap"), { recursive: true });
-  await Deno.writeTextFile(
-    join(serverDir, "bootstrap", "modules.ts"),
-    renderAppRegistry([]),
-  );
-  await Deno.writeTextFile(
-    join(serverDir, "bootstrap", "config.ts"),
-    renderConfig(),
-  );
-  await Deno.writeTextFile(
-    join(serverDir, "bootstrap", "mod.ts"),
-    renderMain(appName),
-  );
+  await writeOwn(join(serverDir, "bootstrap", "modules.ts"), renderAppRegistry([]));
+  await writeOwn(join(serverDir, "bootstrap", "config.ts"), renderConfig());
+  await writeOwn(join(serverDir, "bootstrap", "mod.ts"), renderMain(appName));
 
-  // spec/ — the SHARED authored layout at the git root (beside ui/ and server/):
-  // runes/ (specs you edit + sync), misc/ (data + cake artifacts), ui/ (the sprig
-  // UI prototype + design system).
+  // spec/ — rune's authored contributions to the shared artifact (the skeleton
+  // dirs themselves come from ensureSpecSkeleton). core.rune and layout.md are
+  // written only-if-absent even on a fresh scaffold: they are durable/derived
+  // artifacts a re-run must never regress.
   await Deno.mkdir(join(dir, "spec", "runes"), { recursive: true });
   await Deno.mkdir(join(dir, "spec", "misc"), { recursive: true });
   await Deno.mkdir(join(dir, "spec", "ui"), { recursive: true });
-  await Deno.writeTextFile(
-    join(dir, "spec", "runes", "core.rune"),
-    CORE_TEMPLATE,
-  );
+  const onlyIfAbsent = async (path: string, content: string) => {
+    try {
+      await Deno.stat(path);
+    } catch {
+      await Deno.writeTextFile(path, content);
+    }
+  };
+  await onlyIfAbsent(join(dir, "spec", "runes", "core.rune"), CORE_TEMPLATE);
   // Record the canonical layout as an artifact, so the repo's shape is a decision a
   // build can read (and record deviations against), not one re-invented each time.
-  await Deno.writeTextFile(
-    join(dir, "spec", "misc", "layout.md"),
-    LAYOUT_TEMPLATE,
-  );
+  await onlyIfAbsent(join(dir, "spec", "misc", "layout.md"), LAYOUT_TEMPLATE);
+}
+
+// --- the degraded (sprig-absent) neutral scaffold ------------------------------
+//
+// Neither toolchain's `init` hard-fails on the other's absence (artifact §8): a
+// backend-only repo is a valid, buildable checkpoint. rune writes its own half
+// plus the NEUTRAL root files — the workspace config (additively; only its own
+// member) and a backend-only serve.ts carrying sprig's regeneration marker, so
+// when the UI half lands later, `sprig build --rune` recognizes the file as
+// generated and rewrites it to the composed shape.
+const SPRIG_SERVE_MARKER = "GENERATED by `sprig build --rune`";
+
+function backendOnlyServeTs(): string {
+  return `// ${SPRIG_SERVE_MARKER} — backend-only shape, written by \`rune init\`
+// (no sprig CLI present). Add the UI half later by installing sprig and running
+// \`sprig build\` here — it regenerates this file to the composed shape.
+import { api } from "./server/bootstrap/mod.ts";
+export default { fetch: api.handler };
+`;
+}
+
+/** Additively ensure the neutral git-root workspace config carries rune's own
+ *  member + the decorator compilerOptions the remote keep graph needs when the
+ *  app boots from the root. Never removes or rewrites another toolchain's keys. */
+async function ensureNeutralWorkspace(dir: string): Promise<void> {
+  const path = join(dir, "deno.json");
+  let cfg: Record<string, unknown> = {};
+  try {
+    cfg = JSON.parse(await Deno.readTextFile(path)) as Record<string, unknown>;
+  } catch { /* absent or unreadable-as-JSON → fresh config */ }
+  const ws = Array.isArray(cfg.workspace) ? cfg.workspace as string[] : [];
+  if (!ws.includes("./server")) ws.push("./server");
+  cfg.workspace = ws;
+  const tasks = (cfg.tasks && typeof cfg.tasks === "object")
+    ? cfg.tasks as Record<string, string>
+    : {};
+  tasks.start ??= "deno serve -A serve.ts";
+  cfg.tasks = tasks;
+  const co = (cfg.compilerOptions && typeof cfg.compilerOptions === "object")
+    ? cfg.compilerOptions as Record<string, unknown>
+    : {};
+  co.experimentalDecorators ??= true;
+  co.emitDecoratorMetadata ??= true;
+  cfg.compilerOptions = co;
+  await Deno.writeTextFile(path, JSON.stringify(cfg, null, 2) + "\n");
 }
 
 // `rune init <project-name>` — scaffold a fresh sprig + keep app. The UI half
@@ -215,14 +281,25 @@ export async function runInit(args: string[]): Promise<number> {
   }
 
   const dir = resolve(name);
-  // Refuse an existing target — `sprig init <dir>` refuses one too (it must create
-  // the dir), so reject up front with a clearer message than sprig's.
+  // An existing target is a CONTRIBUTOR run (artifact §8: every init is an
+  // idempotent contributor to the composed-app repo) — but only against a repo
+  // that reads as a composed-app root (has spec/ or .git). Anything else is
+  // refused so a typo can't scribble rune's half into an unrelated directory.
+  let laterInit = false;
   try {
     await Deno.stat(dir);
-    console.error(
-      `${RED}error: ${name}/ already exists — choose a new name or remove it first.${RESET}`,
-    );
-    return 2;
+    const looksComposed = await Promise.any([
+      Deno.stat(join(dir, "spec")).then(() => true),
+      Deno.lstat(join(dir, ".git")).then(() => true),
+    ]).catch(() => false);
+    if (!looksComposed) {
+      console.error(
+        `${RED}error: ${name}/ exists but has no spec/ or .git — refusing to write into it.${RESET}\n` +
+          `  A composed-app repo takes contributor runs; anything else needs a fresh name.`,
+      );
+      return 2;
+    }
+    laterInit = true;
   } catch (e) {
     if (!(e instanceof Deno.errors.NotFound)) {
       console.error(
@@ -232,35 +309,61 @@ export async function runInit(args: string[]): Promise<number> {
       );
       return 2;
     }
-    // NotFound → fresh directory; sprig init creates it below.
+    // NotFound → fresh directory.
   }
 
   // keep's app name: the project dir, normalized to a slug.
   const appName = basename(dir).toLowerCase().replace(/[^a-z0-9-]+/g, "-")
     .replace(/^-+|-+$/g, "") || "app";
 
-  // 1) Delegate the UI half to the sprig CLI (it owns the UI, the client
-  //    compilation via `sprig dev`/`sprig build`, and the @sprig/@rune pins).
-  const sprig = await runSprigInit(dir);
-  if (sprig.missing) {
-    console.error(
-      `${RED}rune init needs the sprig CLI to scaffold the UI (sprig is CLI-compilation now).${RESET}\n` +
-        `  Install it once:  ${BOLD}deno run -A jsr:@sprig/core/cli install${RESET}\n` +
-        `  then re-run:      ${BOLD}rune init ${name}${RESET}`,
-    );
-    return 2;
+  // 1) FRESH dir: delegate the UI half to the sprig CLI when it is installed
+  //    (it owns the UI, client compilation, and the @sprig pins). When sprig is
+  //    ABSENT, DEGRADE instead of failing (artifact §8: no init hard-fails on
+  //    another toolchain's absence): scaffold the backend half plus the neutral
+  //    root files, and say — transiently, never as a committed file — how to
+  //    add the UI half later. A LATER init never touches sprig's half at all.
+  let degraded = false;
+  if (!laterInit) {
+    const sprig = await runSprigInit(dir);
+    if (sprig.missing) {
+      degraded = true;
+      await Deno.mkdir(dir, { recursive: true });
+      await ensureNeutralWorkspace(dir);
+      await Deno.writeTextFile(join(dir, "serve.ts"), backendOnlyServeTs());
+    } else if (!sprig.ok) {
+      console.error(
+        `${RED}rune init: 'sprig init ${name}' failed:${RESET}\n${sprig.output.trimEnd()}`,
+      );
+      return 1;
+    }
   }
-  if (!sprig.ok) {
+
+  // 2) The shared spec/ artifact: skeleton (atomic, iff absent), the version
+  //    handshake, and rune's manifest entries (additive, only-if-absent).
+  try {
+    await ensureSpecSkeleton(dir);
+  } catch (e) {
     console.error(
-      `${RED}rune init: 'sprig init ${name}' failed:${RESET}\n${sprig.output.trimEnd()}`,
+      `${RED}error: could not create the spec/ skeleton: ${
+        e instanceof Error ? e.message : e
+      }${RESET}`,
     );
     return 1;
   }
+  const versionError = await checkArtifactVersion(dir);
+  if (versionError) {
+    console.error(`${RED}${versionError}${RESET}`);
+    return 2;
+  }
 
-  // 2) Overlay rune's spec-driven keep backend onto the sprig app.
+  // 3) Overlay rune's spec-driven keep backend (its own half; additive and
+  //    idempotent on a later init).
   const ioErrors: string[] = [];
   try {
-    await overlayRuneBackend(dir, appName, ioErrors);
+    await overlayRuneBackend(dir, appName, ioErrors, {
+      freshScaffold: !laterInit,
+    });
+    await registerManifestEntries(dir, RUNE_MANIFEST_ENTRIES);
   } catch (e) {
     console.error(
       `${RED}error: could not overlay the rune backend onto ${name}/: ${
@@ -272,6 +375,29 @@ export async function runInit(args: string[]): Promise<number> {
   if (ioErrors.length) {
     for (const e of ioErrors) console.error(`${RED}${e}${RESET}`);
     return 1;
+  }
+
+  if (degraded) {
+    console.log(
+      `${GREEN}${BOLD}✓ Created ${name}/${RESET} ${DIM}— rune keep backend (backend-only: no sprig CLI found)${RESET}
+${DIM}  server/, spec/ (manifest + vendored tests/), deno.json (workspace ./server), serve.ts (backend-only)${RESET}
+
+The UI half is absent — this is a valid, buildable backend-only app.
+Add the UI later:  ${BOLD}deno run -A jsr:@sprig/core/cli install${RESET} then run ${BOLD}sprig build${RESET} in ${name}/.
+
+Next:
+  ${BOLD}cd ${name}${RESET}
+  ${BOLD}rune sync spec/runes/core.rune${RESET}
+  ${BOLD}deno task start${RESET}   ${DIM}# serves /api-less backend routes + /docs${RESET}
+`,
+    );
+    return 0;
+  }
+  if (laterInit) {
+    console.log(
+      `${GREEN}${BOLD}✓ Contributed rune's half to ${name}/${RESET} ${DIM}— backend files written only where absent; manifest entries registered${RESET}`,
+    );
+    return 0;
   }
 
   const row = (path: string, desc: string) => `  ${path.padEnd(22)} ${desc}`;

@@ -1,5 +1,12 @@
 export { Server } from "@foundation/domain/business/server/mod.ts";
 export {
+  canonicalize,
+  emitContractOpenApi,
+  mergedOpenApiDoc,
+  sha256Hex,
+  stampSpecHash,
+} from "@foundation/domain/business/contract-stamp/mod.ts";
+export {
   DanetHttpAdapter,
   HttpAdapter,
 } from "@foundation/domain/data/http-adapter/mod.ts";

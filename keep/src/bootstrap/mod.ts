@@ -5,6 +5,11 @@ import "#reflect-metadata";
 
 export {
   appModule,
+  canonicalize,
+  emitContractOpenApi,
+  mergedOpenApiDoc,
+  sha256Hex,
+  stampSpecHash,
   BackendClient,
   bootstrapServer,
   buildMapModel,

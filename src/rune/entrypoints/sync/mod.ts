@@ -10,6 +10,7 @@ import {
   type ManifestOptions,
 } from "@rune/domain/business/rune-manifest/mod.ts";
 import { loadArtifact } from "@rune/domain/business/artifact/mod.ts";
+import { checkArtifactVersion } from "@rune/entrypoints/init/artifact.ts";
 import { applyCase, isInProgSpec, isProjectSpec } from "@rune/domain/business/rune-bindings/mod.ts";
 import {
   type CseNode,
@@ -147,6 +148,17 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
   const absRune = resolve(parsed.runePath);
   const root = parsed.root !== null ? resolve(parsed.root) : resolveRoot(absRune);
   const relRune = relative(root, absRune);
+
+  // Artifact version handshake: when a spec/manifest.json is present (at the
+  // git root beside this codegen root, or under the root itself), an
+  // out-of-range formatVersion fails loud — never a silent misread.
+  for (const artifactRoot of [dirname(root), root]) {
+    const versionError = await checkArtifactVersion(artifactRoot);
+    if (versionError) {
+      console.error(`${RED}${versionError}${RESET}`);
+      return 2;
+    }
+  }
 
   let runeText: string;
   try {
@@ -1084,6 +1096,21 @@ async function runAllGate(
   written?: string[],
 ): Promise<string[]> {
   if (noRun) return [];
+  // The shared spec/ artifact this app belongs to (git-root sibling of the
+  // codegen root, or under the root itself) — where the hash-stamped
+  // contract/openapi.json is emitted (artifact-mediated decoupling).
+  let specDir: string | null = null;
+  let appLabel = "app";
+  for (const candidate of [dirname(root), root]) {
+    try {
+      const st = await Deno.stat(join(candidate, "spec"));
+      if (st.isDirectory) {
+        specDir = join(candidate, "spec");
+        appLabel = basename(candidate);
+        break;
+      }
+    } catch { /* keep looking */ }
+  }
   // Only a keep app with surfaces can walk.
   if (await readMaybe(join(root, "bootstrap", "mod.ts")) === null) return [];
   if ((await scanSurfaceModules(root)).length === 0) return [];
@@ -1094,6 +1121,22 @@ async function runAllGate(
     'import { api } from "@/bootstrap/mod.ts";',
     'import { exerciseEndpoints } from "@mrg-keystone/rune";',
     "const report = await exerciseEndpoints({ api });",
+    ...(specDir
+      ? [
+        "// Artifact-mediated decoupling: emit the hash-stamped contract for the",
+        "// frontend toolchain to READ (it never invokes this side). Feature-checked",
+        "// so an app pinned to an older keep just skips it.",
+        "try {",
+        '  const keepMod = await import("@mrg-keystone/rune");',
+        '  if (typeof keepMod.emitContractOpenApi === "function") {',
+        `    const c = await keepMod.emitContractOpenApi(${JSON.stringify(specDir)}, api.docs, ${JSON.stringify(appLabel)});`,
+        '    if (c.wrote) console.error("contract: wrote spec/contract/openapi.json (x-spec-hash " + c.hash.slice(0, 12) + "…)");',
+        "  }",
+        "} catch (e) {",
+        '  console.error("contract: emission failed — " + (e instanceof Error ? e.message : String(e)));',
+        "}",
+      ]
+      : []),
     "// deno-lint-ignore no-explicit-any",
     "const slim = (r: any) => ({ id: r.id, module: r.module, status: r.status, error: r.error, body: r.body });",
     `console.log(${JSON.stringify(GATE_MARKER)} + JSON.stringify({`,
