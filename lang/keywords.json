@@ -28,7 +28,7 @@
       "description": "Feature entry point / happy path. Format: noun.verb(InputDto): OutputDto",
       "group": "Structure",
       "syntax": "[REQ] noun.verb(InputDto): OutputDto",
-      "summary": "A requirement — one feature entry point, the happy-path end-to-end. Faults live on its steps, not here.",
+      "summary": "A requirement \u2014 one feature entry point, the happy-path end-to-end. Faults live on its steps, not here.",
       "rules": [
         "Input must be a DTO (or inline {})",
         "Output must be a DTO",
@@ -60,7 +60,7 @@
       "follows": "signature",
       "color": "#89babf",
       "syntax": "[ENT] surface.action(InputDto): OutputDto",
-      "summary": "An inbound entrypoint (HTTP route, CLI command, queue handler) — the inverse of a boundary. Its body references the [REQ] it dispatches to. [ENT:ws] instead declares a WebSocket socket: a `[ENT:ws] <surface> @ /path` header with indented `verb(In): Out` message topics.",
+      "summary": "An inbound entrypoint (HTTP route, CLI command, queue handler) \u2014 the inverse of a boundary. Its body references the [REQ] it dispatches to. [ENT:ws] instead declares a WebSocket socket: a `[ENT:ws] <surface> @ /path` header with indented `verb(In): Out` message topics.",
       "rules": []
     },
     {
@@ -100,7 +100,7 @@
       "description": "Constructor shorthand. Instantiates a class and adds it to scope. No parens, no return type.",
       "group": "Flow & modifiers",
       "syntax": "[NEW] class",
-      "summary": "Constructor shorthand — instantiates a class and adds it to scope. No parentheses, no return type; construction details are an implementation concern.",
+      "summary": "Constructor shorthand \u2014 instantiates a class and adds it to scope. No parentheses, no return type; construction details are an implementation concern.",
       "rules": [],
       "synonyms": [
         "[CTR]"
@@ -116,7 +116,7 @@
       "description": "Return a value already created earlier in the flow. The value must be in scope.",
       "group": "Flow & modifiers",
       "syntax": "[RET] value",
-      "summary": "Returns a value created earlier in the flow — useful when the last operation is a side effect (like saving to a DB) but you need to return a DTO made earlier. The value must be in scope.",
+      "summary": "Returns a value created earlier in the flow \u2014 useful when the last operation is a side effect (like saving to a DB) but you need to return a DTO made earlier. The value must be in scope.",
       "rules": []
     },
     {
@@ -129,7 +129,7 @@
       "description": "Defines a named semantic type that resolves to a primitive. Format: name: primitive",
       "group": "Data",
       "syntax": "[TYP] name: primitive",
-      "summary": "A named semantic type built on a primitive (string, number, boolean, void, Uint8Array, Class). Gives meaning to a raw primitive — `id` vs `string`. Generics (Array<url>), tuples ([x, y]), and string enums (\"a\" | \"b\") are allowed.",
+      "summary": "A named semantic type built on a primitive (string, number, boolean, void, Uint8Array, Class). Gives meaning to a raw primitive \u2014 `id` vs `string`. Generics (Array<url>), tuples ([x, y]), and string enums (\"a\" | \"b\") are allowed.",
       "rules": []
     },
     {
@@ -376,7 +376,7 @@
       "severity": "error",
       "enabled": true,
       "params": {},
-      "message": "{prefix}: boundary params/return must be DTO or primitive — got {bad}"
+      "message": "{prefix}: boundary params/return must be DTO or primitive \u2014 got {bad}"
     },
     {
       "id": "signature-consistency",
@@ -478,7 +478,7 @@
       "severity": "error",
       "enabled": true,
       "params": {},
-      "message": "[TYP] {name} must be a primitive — it can't reference DTO {ref}"
+      "message": "[TYP] {name} must be a primitive \u2014 it can't reference DTO {ref}"
     },
     {
       "id": "typ-modifier",
@@ -541,7 +541,7 @@
       "severity": "warning",
       "enabled": true,
       "params": {},
-      "message": "generated file uses a \"../\" relative import — use an @ alias"
+      "message": "generated file uses a \"../\" relative import \u2014 use an @ alias"
     },
     {
       "id": "external-imports",
@@ -550,7 +550,7 @@
       "severity": "warning",
       "enabled": true,
       "params": {},
-      "message": "generated file imports npm:/jsr: directly — use a # alias"
+      "message": "generated file imports npm:/jsr: directly \u2014 use a # alias"
     },
     {
       "id": "signature-parity",
@@ -595,7 +595,7 @@
       "severity": "error",
       "enabled": true,
       "params": {},
-      "message": "module {from} may not import module {to}'s internals ({spec}) — use core/ or its mod-root"
+      "message": "module {from} may not import module {to}'s internals ({spec}) \u2014 use core/ or its mod-root"
     },
     {
       "id": "data-class-returns",
@@ -604,7 +604,7 @@
       "severity": "error",
       "enabled": true,
       "params": {},
-      "message": "data-layer method returns a raw object — return a validated instance (assert/plainToInstance)"
+      "message": "data-layer method returns a raw object \u2014 return a validated instance (assert/plainToInstance)"
     },
     {
       "id": "no-dto-cast",
@@ -613,7 +613,7 @@
       "severity": "error",
       "enabled": true,
       "params": {},
-      "message": "coordinator casts to \"{dto}\" — validate the seam with assert({dto}, ...) instead of a blind cast"
+      "message": "coordinator casts to \"{dto}\" \u2014 validate the seam with assert({dto}, ...) instead of a blind cast"
     },
     {
       "id": "poly-detection",
@@ -624,7 +624,7 @@
       "params": {
         "threshold": 3
       },
-      "message": "{count} sibling features export {name} with compatible signatures — extract a poly structure"
+      "message": "{count} sibling features export {name} with compatible signatures \u2014 extract a poly structure"
     },
     {
       "id": "poly-stray",
@@ -633,7 +633,7 @@
       "severity": "warning",
       "enabled": true,
       "params": {},
-      "message": "feature extends poly base {base} — it likely belongs inside that poly structure"
+      "message": "feature extends poly base {base} \u2014 it likely belongs inside that poly structure"
     },
     {
       "id": "forbidden-dirs",
@@ -648,7 +648,7 @@
           "internal"
         ]
       },
-      "message": "directory \"{name}\" is not allowed — name folders by role, not as generic buckets"
+      "message": "directory \"{name}\" is not allowed \u2014 name folders by role, not as generic buckets"
     },
     {
       "id": "loose-files",
@@ -666,7 +666,7 @@
           "helper"
         ]
       },
-      "message": "loose grab-bag file \"{name}\" — put code in a named feature/role folder"
+      "message": "loose grab-bag file \"{name}\" \u2014 put code in a named feature/role folder"
     },
     {
       "id": "module-fragmentation",
@@ -677,7 +677,7 @@
       "params": {
         "minFiles": 5
       },
-      "message": "module {module} has only {count} source files (< {min}) — consider consolidating"
+      "message": "module {module} has only {count} source files (< {min}) \u2014 consider consolidating"
     },
     {
       "id": "orphan-files",
@@ -695,7 +695,7 @@
       "severity": "warning",
       "enabled": true,
       "params": {},
-      "message": "heal-rules entry still carries todo: true — enrich it (strict-gated: errors under rune lint --strict)"
+      "message": "heal-rules entry still carries todo: true \u2014 enrich it (strict-gated: errors under rune lint --strict)"
     }
   ],
   "modifiers": [
@@ -708,7 +708,7 @@
         "typ"
       ],
       "syntax": "[DTO:core] / [TYP:core]",
-      "description": "Routes an element to the shared kernel (src/core/…) instead of the current module. Core elements are importable from any module; module elements are not. Allowed on [DTO] and [TYP]; not on [REQ]."
+      "description": "Routes an element to the shared kernel (src/core/\u2026) instead of the current module. Core elements are importable from any module; module elements are not. Allowed on [DTO] and [TYP]; not on [REQ]."
     },
     {
       "id": "ext",
@@ -848,7 +848,7 @@
       "decorator": "ApiProperty",
       "param": "text",
       "syntax": "[TYP:example=orders]",
-      "description": "A real sample value for the field, emitted as @ApiProperty({ example }) — keep's runner and cake fill required, unbound input fields from it so headless walks don't 422. The value runs to the next comma/], so it cannot contain a comma. Composes: [TYP:ext,example=orders]."
+      "description": "A real sample value for the field, emitted as @ApiProperty({ example }) \u2014 keep's runner and cake fill required, unbound input fields from it so headless walks don't 422. The value runs to the next comma/], so it cannot contain a comma. Composes: [TYP:ext,example=orders]."
     },
     {
       "id": "from",
@@ -860,7 +860,7 @@
       "kind": "constraint",
       "param": "text",
       "syntax": "[TYP:from=path]",
-      "description": "Field-source binding (OpenAPI's parameter model): where this field is populated from at the HTTP boundary — path | path* | query | header. Body is the default, so a field with no from= routes exactly as before. `path*` is the catch-all path remainder. The codegen appends a route segment for path fields and binds every sourced field into the DTO server-side (path/query in the URL, headers as request headers). Composes: [TYP:from=query,example=widgets]."
+      "description": "Field-source binding (OpenAPI's parameter model): where this field is populated from at the HTTP boundary \u2014 path | path* | query | header. Body is the default, so a field with no from= routes exactly as before. `path*` is the catch-all path remainder. The codegen appends a route segment for path fields and binds every sourced field into the DTO server-side (path/query in the URL, headers as request headers). Composes: [TYP:from=query,example=widgets]."
     }
   ],
   "bindings": {
@@ -913,14 +913,14 @@
   },
   "codegen": {
     "templates": {
-      "coordinator-int-test": "// Generated by rune manifest from {{runePath}}.\n// Edit the body. Re-running manifest will not overwrite this file.\n{{recipe}}\nimport { {{req.verb}} } from \"./mod.ts\";\n\nDeno.test(\"{{req.verb}} — happy path\", async () => {\n  // TODO: implement happy path test\n});\n{{#each faults}}\n\nDeno.test(\"{{this}}\", async () => {\n  // TODO: assert this fault path\n});\n{{/each}}\n",
+      "coordinator-int-test": "// Generated by rune manifest from {{runePath}}.\n// Edit the body. Re-running manifest will not overwrite this file.\n{{recipe}}\nimport { {{req.verb}} } from \"./mod.ts\";\n\nDeno.test(\"{{req.verb}} \u2014 happy path\", async () => {\n  // TODO: implement happy path test\n});\n{{#each faults}}\n\nDeno.test(\"{{this}}\", async () => {\n  // TODO: assert this fault path\n});\n{{/each}}\n",
       "poly-base-mod": "// Generated by rune manifest from {{runePath}}.\n// Edit the body. Re-running manifest will not overwrite this file.\n\n// Polymorphic base for \"{{ply.noun}}\". Variants extend this.\n{{nonDoc}}// rune signature: {{realSig}}\n// Variants (exactly one runs per call): {{variants}}\n\nexport abstract class {{ply.noun}}Base {\n  abstract {{ply.verb}}({{ply.params}}): {{ply.output}};\n}\n",
-      "poly-base-test": "// Generated by rune manifest from {{runePath}}.\n// Edit the body. Re-running manifest will not overwrite this file.\n\n// Dispatch coverage — one variant runs per call: {{variants}}\nDeno.test(\"{{ply.noun}} base — placeholder\", () => {\n  // TODO: tests against the base abstraction\n});\n",
+      "poly-base-test": "// Generated by rune manifest from {{runePath}}.\n// Edit the body. Re-running manifest will not overwrite this file.\n\n// Dispatch coverage \u2014 one variant runs per call: {{variants}}\nDeno.test(\"{{ply.noun}} base \u2014 placeholder\", () => {\n  // TODO: tests against the base abstraction\n});\n",
       "poly-mod": "// Generated by rune manifest from {{runePath}}.\n// Edit the body. Re-running manifest will not overwrite this file.\n\n// Polymorphic barrel for \"{{ply.noun}}\". Re-exports the active variant.\nexport { default } from \"./implementations/{{firstVariant}}/mod.ts\";\n",
       "poly-impl-mod": "// Generated by rune manifest from {{runePath}}.\n// Edit the body. Re-running manifest will not overwrite this file.\n\nimport { {{ply.noun}}Base } from \"{{baseImport}}\";\n\n// Variant: {{cse.name}}\n\nexport default class {{ply.noun}}{{cse.name}} extends {{ply.noun}}Base {\n  {{ply.verb}}({{ply.params}}): {{ply.output}} {\n    throw new Error(\"not implemented\");\n  }\n}\n",
-      "poly-impl-test": "// Generated by rune manifest from {{runePath}}.\n// Edit the body. Re-running manifest will not overwrite this file.\n\nimport {{ply.noun}}{{cse.name}} from \"./mod.ts\";\n\nDeno.test(\"{{ply.noun}}/{{cse.name}} — placeholder\", () => {\n  // Arrange — const variant = new {{ply.noun}}{{cse.name}}();\n  // Act — {{ply.verb}}(...)\n  // Assert — TODO: assert this variant's behavior\n});\n",
-      "adapter-smk-test": "// Generated by rune manifest from {{runePath}}.\n// Edit the body. Re-running manifest will not overwrite this file.\n{{methodList}}\nDeno.test(\"{{step.noun}} — connectivity\", () => {\n  // TODO: smoke test that verifies the boundary is reachable\n});\n{{#each faults}}\n\nDeno.test(\"{{this}}\", async () => {\n  // TODO: assert this fault path\n});\n{{/each}}\n",
-      "mod-root": "// Generated by rune manifest — DO NOT EDIT (regenerated on every `rune sync`).\n\n{{moduleDoc}}// Public API surface for module \"{{module}}\".\n{{#each reqs}}\nexport { {{this.binding}} } from \"./domain/coordinators/{{this.processFile}}/mod.ts\";\n{{/each}}\n"
+      "poly-impl-test": "// Generated by rune manifest from {{runePath}}.\n// Edit the body. Re-running manifest will not overwrite this file.\n\nimport {{ply.noun}}{{cse.name}} from \"./mod.ts\";\n\nDeno.test(\"{{ply.noun}}/{{cse.name}} \u2014 placeholder\", () => {\n  // Arrange \u2014 const variant = new {{ply.noun}}{{cse.name}}();\n  // Act \u2014 {{ply.verb}}(...)\n  // Assert \u2014 TODO: assert this variant's behavior\n});\n",
+      "adapter-smk-test": "// Generated by rune manifest from {{runePath}}.\n// Edit the body. Re-running manifest will not overwrite this file.\n{{methodList}}\nDeno.test(\"{{step.noun}} \u2014 connectivity\", () => {\n  // TODO: smoke test that verifies the boundary is reachable\n});\n{{#each faults}}\n\nDeno.test(\"{{this}}\", async () => {\n  // TODO: assert this fault path\n});\n{{/each}}\n",
+      "mod-root": "// Generated by rune manifest \u2014 DO NOT EDIT (regenerated on every `rune sync`).\n\n{{moduleDoc}}// Public API surface for module \"{{module}}\".\n{{#each reqs}}\nexport { {{this.binding}} } from \"./domain/coordinators/{{this.processFile}}/mod.ts\";\n{{/each}}\n"
     },
     "policies": {
       "business-sig": {
@@ -1021,7 +1021,7 @@
       "serve-dev"
     ],
     "bootstrap/": {
-      "$desc": "Composition root — wires modules, starts the app",
+      "$desc": "Composition root \u2014 wires modules, starts the app",
       "mod": {
         "ext": [
           ".ts"
@@ -1038,25 +1038,25 @@
         "ext": [
           ".ts"
         ],
-        "desc": "module registry — generated by rune sync as runes are added/removed",
+        "desc": "module registry \u2014 generated by rune sync as runes are added/removed",
         "optional": true
       },
       "stubs": {
         "ext": [
           ".ts"
         ],
-        "desc": "ghost-stub registry — generated by rune sync to mint placeholders for unfulfilled [TYP:ext] inputs; evaporates once every external input has a real producer",
+        "desc": "ghost-stub registry \u2014 generated by rune sync to mint placeholders for unfulfilled [TYP:ext] inputs; evaporates once every external input has a real producer",
         "optional": true
       }
     },
     "src/": {
       "core/": {
-        "$desc": "Shared kernel — importable from any module",
+        "$desc": "Shared kernel \u2014 importable from any module",
         "core": {
           "ext": [
             ".rune"
           ],
-          "desc": "shared-service rune spec — the single [SRV] declaration site for the whole project",
+          "desc": "shared-service rune spec \u2014 the single [SRV] declaration site for the whole project",
           "optional": true
         },
         "business/": {
@@ -1159,10 +1159,26 @@
             ],
             "desc": "Zod schema and type definition"
           }
+        },
+        "coordinators/": {
+          "<process>/": {
+            "mod": {
+              "ext": [
+                ".ts"
+              ],
+              "desc": "cross-cutting orchestration importable from any module (e.g. an auth guard) \u2014 may use core business + data"
+            },
+            "int.test": {
+              "ext": [
+                ".ts"
+              ],
+              "desc": "integration test for the shared workflow"
+            }
+          }
         }
       },
       "<module-name>/": {
-        "$desc": "Isolated module — imports only from core or itself",
+        "$desc": "Isolated module \u2014 imports only from core or itself",
         "mod-root": {
           "ext": [
             ".ts"
@@ -1173,7 +1189,7 @@
           "ext": [
             ".rune"
           ],
-          "desc": "module-level rune spec — the source this module is generated from",
+          "desc": "module-level rune spec \u2014 the source this module is generated from",
           "optional": true
         },
         "domain/": {
@@ -1359,16 +1375,16 @@
       }
     },
     "spec/": {
-      "$desc": "rune staging area — authored specs (runes/), data design + cake artifacts (misc/), UI prototype (ui/), founding product docs (product/), the ratified contract's machine faces (contract/)",
+      "$desc": "rune staging area \u2014 authored specs (runes/), data design + cake artifacts (misc/), UI prototype (ui/), founding product docs (product/), the ratified contract's machine faces (contract/)",
       "<name>": {
         "ext": [
           ".rune"
         ],
-        "desc": "rune spec for a module (legacy flat layout — prefer spec/runes/)",
+        "desc": "rune spec for a module (legacy flat layout \u2014 prefer spec/runes/)",
         "optional": true
       },
       "runes/": {
-        "$desc": "Rune spec files — one per module (the canonical authoring home; core.rune holds shared [SRV]s)",
+        "$desc": "Rune spec files \u2014 one per module (the canonical authoring home; core.rune holds shared [SRV]s)",
         "<name>": {
           "ext": [
             ".rune"
@@ -1385,16 +1401,16 @@
         "$ignore": "*"
       },
       "product/": {
-        "$desc": "founding product docs — spec.md + user-stories.md (rune:scope output)",
+        "$desc": "founding product docs \u2014 spec.md + user-stories.md (rune:scope output)",
         "$ignore": "*"
       },
       "contract/": {
-        "$desc": "the ratified cross-repo contract's machine faces — generated OpenAPI + typed client, the prototype-seeded draft, the breakdown binding (queries + commands; see sprig's contract.md)",
+        "$desc": "the ratified cross-repo contract's machine faces \u2014 generated OpenAPI + typed client, the prototype-seeded draft, the breakdown binding (queries + commands; see sprig's contract.md)",
         "$ignore": "*"
       }
     },
     "specs/": {
-      "$desc": "Rune spec files — one per module",
+      "$desc": "Rune spec files \u2014 one per module",
       "<name>": {
         "ext": [
           ".rune"
@@ -1415,7 +1431,7 @@
         "ext": [
           ".json"
         ],
-        "desc": "keep cake self-heal rules — rune-generated starter, merge-owned",
+        "desc": "keep cake self-heal rules \u2014 rune-generated starter, merge-owned",
         "optional": true
       },
       "<category>/": {
@@ -1428,11 +1444,11 @@
       }
     },
     "dist/": {
-      "$desc": "Compiled output — not source-controlled",
+      "$desc": "Compiled output \u2014 not source-controlled",
       "$ignore": "*"
     },
     "app/": {
-      "$desc": "sprig UI app (frontend) — its own layout (src/pages, shell, islands) is owned and validated by sprig, not rune; rune hosts it via serve.ts (serveSprig). Ignored here like spec/ui",
+      "$desc": "sprig UI app (frontend) \u2014 its own layout (src/pages, shell, islands) is owned and validated by sprig, not rune; rune hosts it via serve.ts (serveSprig). Ignored here like spec/ui",
       "$ignore": "*"
     }
   }

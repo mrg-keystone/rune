@@ -59,8 +59,12 @@ src/
     │   │   └── <service>/
     │   │       ├── mod.ts  # adapter for an external system
     │   │       └── smk.test.ts  # smoke test, verifies connectivity
-    │   └── dto/
-    │       └── <name>.ts  # Zod schema and type definition
+    │   ├── dto/
+    │   │   └── <name>.ts  # Zod schema and type definition
+    │   └── coordinators/
+    │       └── <process>/
+    │           ├── mod.ts  # cross-cutting orchestration importable from any module (e.g. an auth guard) — may use core business + data
+    │           └── int.test.ts  # integration test for the shared workflow
     └── <module-name>/  # Isolated module — imports only from core or itself
         ├── mod-root.ts  # public API, only external import surface
         ├── <module-name>.rune (optional)  # module-level rune spec — the source this module is generated from
