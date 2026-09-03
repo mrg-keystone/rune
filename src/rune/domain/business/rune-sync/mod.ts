@@ -331,6 +331,26 @@ function parseFreshClass(
   return { className, units };
 }
 
+/** Property names a constructor's parameter properties bind
+ * (`private readonly firebase = new FirebaseService()` → "firebase"). */
+function ctorProps(text: string): string[] {
+  return [
+    ...text.matchAll(
+      /(?:private|protected|public)\s+(?:readonly\s+)?([A-Za-z_$][\w$]*)/g,
+    ),
+  ].map((m) => m[1]);
+}
+
+/** Whether any OTHER missing unit references a property the constructor binds
+ * (`this.<prop>`) — the only case where appending the constructor is appending
+ * something the new spec-driven members actually need. */
+function ctorNeededBy(ctor: ClassUnit, missing: ClassUnit[]): boolean {
+  return ctorProps(ctor.text).some((p) => {
+    const re = new RegExp(`\\bthis\\.${p.replace(/\$/g, "\\$")}\\b`);
+    return missing.some((o) => o !== ctor && re.test(o.text));
+  });
+}
+
 /** Whether EXISTING (hand-owned) content already declares a class member named
  * `name` — method, field, or assigned property; any of these means the symbol
  * exists and appending would collide. */
@@ -482,7 +502,21 @@ export function planCreateOnceGrowth(
   if (kind === null) return null;
   const parsed = parseFreshClass(fresh);
   if (!parsed) return null;
-  const missing = parsed.units.filter((u) => !hasMember(existing, u.name));
+  const rawMissing = parsed.units.filter((u) => !hasMember(existing, u.name));
+  // Growth appends the new SPEC-DRIVEN members only (methods, fields,
+  // @Endpoint delegators). A constructor is inferred infrastructure — the
+  // default service wiring the generator hands a FRESH scaffold — never a spec
+  // member: retrofitting one onto a preserved file couples untouched hand-owned
+  // code to a service client nothing appended references, and its zero-arg
+  // `new XService()` default may not even compile against the service's real
+  // constructor (infra 2026-09-03: the create-once Claims adapter gained a
+  // FirebaseService param no method used — FirebaseService requires a mandatory
+  // arg, so the append broke `deno check` project-wide). It rides along ONLY
+  // when a newly appended member actually references a property it binds; its
+  // unused import then also stays out (missingImportLines keys on references).
+  const missing = rawMissing.filter((u) =>
+    u.name !== "constructor" || ctorNeededBy(u, rawMissing)
+  );
   if (missing.length === 0) return null;
 
   const word = kind === "dto"

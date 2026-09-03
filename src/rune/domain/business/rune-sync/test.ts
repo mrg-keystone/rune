@@ -377,6 +377,127 @@ Deno.test("growth — a class that can't be located is reported as owed, never w
   assertEquals(result.owed, ["method widgetPartAttached"]);
 });
 
+// ---- growth never retrofits inferred infrastructure (bug report 2026-09-03,
+// infra: access.rune) ---------------------------------------------------------
+//
+// Syncing a spec that GREW (new REQs NOT touching an existing adapter's
+// boundary) appended `constructor(private readonly firebase = new
+// FirebaseService()) {}` + the import to the preserved create-once Claims
+// adapter — a class whose methods never reference the service, against a
+// service whose real constructor requires a mandatory argument. Extending a
+// create-once file must append the new SPEC-DRIVEN members only; a constructor
+// is inferred wiring and rides along only when an appended member references a
+// property it binds.
+
+import { parse } from "@rune/domain/business/rune-parse/mod.ts";
+
+const ACCESS_CORE = `[MOD] core
+
+[SRV] (SIDECAR)firebase: FIREBASE_KEY
+    the firebase identity service
+    @docs https://example.com/firebase
+`;
+
+const ACCESS_V1 = `[MOD] access
+
+[REQ] member.allow(MemberGrantDto): MemberDto
+    firebase:claims.allow(ClaimKeyDto): void
+      timeout
+    [RET] MemberDto
+
+
+[TYP] userId: string
+    unique identifier of a user
+
+[DTO] MemberGrantDto: userId
+    input granting a member a claim
+[DTO] ClaimKeyDto: userId
+    the claim key to write
+[DTO] MemberDto: userId
+    a member record
+`;
+
+// The module GROWS with a REQ whose steps do NOT touch the claims boundary.
+const ACCESS_V2 = ACCESS_V1
+  .replace(
+    "[TYP] userId: string",
+    `[REQ] member.list(MemberFilterDto): MemberListDto
+    kv:member.list(MemberFilterDto): MemberListDto
+      timeout
+    [RET] MemberListDto
+
+
+[TYP] userId: string`,
+  )
+  .replace(
+    "[DTO] MemberDto: userId",
+    `[DTO] MemberFilterDto: userId
+    filter for listing members
+[DTO] MemberListDto: userId
+    a page of member records
+[DTO] MemberDto: userId`,
+  );
+
+// The module GROWS with a REQ that DOES add a new claims-boundary method.
+const ACCESS_V3 = ACCESS_V1.replace(
+  "[TYP] userId: string",
+  `[REQ] member.deny(MemberGrantDto): MemberDto
+    firebase:claims.deny(ClaimKeyDto): void
+      timeout
+    [RET] MemberDto
+
+
+[TYP] userId: string`,
+);
+
+const CLAIMS_PATH = "src/access/domain/data/claims/mod.ts";
+
+/** Fresh generated content per spec version, with the shared firebase [SRV]
+ * resolved (that's what makes the generator emit the service constructor). */
+function accessFresh(spec: string): Map<string, string> {
+  const srvs = new Map(parse(ACCESS_CORE).srvs.map((s) => [s.name, s]));
+  const p = planManifest("src/access/access.rune", spec, new Set(), {}, srvs);
+  assertEquals(p.errors, []);
+  return new Map([...p.toCreate, ...p.toRegenerate].map((f) => [f.path, f.content]));
+}
+
+/** The dev-owned on-disk state of the infra bug: the claims adapter exists with
+ * its methods filled, but WITHOUT the service constructor or its import (the
+ * dev rewrote the bodies against another store). */
+function devClaims(fresh: string): string {
+  return fresh.split("\n").filter((l) => !l.includes("FirebaseService")).join("\n");
+}
+
+Deno.test("growth — never appends a constructor no newly appended member references (infra 2026-09-03)", () => {
+  const v1 = accessFresh(ACCESS_V1);
+  const v2 = accessFresh(ACCESS_V2);
+  // Repro premise: the fresh adapter DOES carry the inferred service constructor.
+  assertStringIncludes(
+    v1.get(CLAIMS_PATH)!,
+    "constructor(private readonly firebase = new FirebaseService()) {}",
+  );
+  const existing = devClaims(v1.get(CLAIMS_PATH)!);
+  // The grown spec owes claims NOTHING (its new REQ never touches the boundary):
+  // growth must be a no-op — not a retrofitted constructor + import.
+  assertEquals(planCreateOnceGrowth(CLAIMS_PATH, existing, v2.get(CLAIMS_PATH)!), null);
+});
+
+Deno.test("growth — a new boundary method appends WITHOUT dragging the inferred constructor in", () => {
+  const v1 = accessFresh(ACCESS_V1);
+  const v3 = accessFresh(ACCESS_V3);
+  const existing = devClaims(v1.get(CLAIMS_PATH)!);
+  const result = planCreateOnceGrowth(CLAIMS_PATH, existing, v3.get(CLAIMS_PATH)!);
+  assert(result && "grown" in result, "the new claims.deny method must be appended");
+  const { content, added } = result.grown;
+  // The spec-driven member lands…
+  assertStringIncludes(content, "deny(claimKeyDto: ClaimKeyDto): Promise<void>");
+  assertEquals(added, ["method deny"]);
+  // …the inferred infrastructure does not: no member of this class references
+  // the service, and its zero-arg default may not even compile.
+  assert(!content.includes("constructor("), "no constructor may be retrofitted");
+  assert(!content.includes("FirebaseService"), "no unused service import may be added");
+});
+
 Deno.test("growth — braces inside strings/templates/comments don't break the class scan", () => {
   const { v1, v2 } = phases();
   const path = "src/widgets/domain/data/audit/mod.ts";
