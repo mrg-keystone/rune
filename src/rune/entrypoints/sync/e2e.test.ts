@@ -259,6 +259,58 @@ Deno.test("sync --regen offers a .new sibling instead of clobbering a hand-edite
   }
 });
 
+Deno.test("sync prunes only files it can prove it generated — a hand-authored dto/ file survives with a warning (infra 2026-09-03)", async () => {
+  const root = await Deno.makeTempDir();
+  const logs: string[] = [];
+  const origLog = console.log;
+  console.log = (...a: unknown[]) => logs.push(a.map(String).join(" "));
+  try {
+    await Deno.mkdir(join(root, "specs"), { recursive: true });
+    const runePath = join(root, "specs", "orders.rune");
+    await Deno.writeTextFile(runePath, SPEC);
+    assertEquals(await runSync([runePath, "--root", root]), 0);
+
+    // A hand-authored DTO parked in the sync-owned dto/ dir — never expressed
+    // in the DSL, header-marked as not rune's, still imported by dev-owned code.
+    const hand = join(root, "src/orders/dto/ship.ts");
+    await Deno.writeTextFile(
+      hand,
+      "// Hand-authored (not rune-generated): input to `orders/ship`.\n" +
+        "export class ShipDto {}\n",
+    );
+    // A PROVABLY generated orphan: real generated dto content under a name the
+    // spec doesn't declare — the prune must still take this one.
+    const generated = await Deno.readTextFile(join(root, "src/orders/dto/place.ts"));
+    const orphan = join(root, "src/orders/dto/old-order.ts");
+    await Deno.writeTextFile(orphan, generated);
+
+    logs.length = 0;
+    assertEquals(await runSync([runePath, "--root", root]), 0);
+    assert(await exists(hand), "hand-authored dto/ file must survive the prune");
+    assert(!(await exists(orphan)), "a provably generated orphan is still pruned");
+    // The warning block: a "not rune-generated" header line, the file listed
+    // under it (the report prints them on separate lines).
+    const warnAt = logs.findIndex((l) => l.includes("not rune-generated"));
+    assert(warnAt !== -1, `a foreign-file warning must print; logs: ${JSON.stringify(logs)}`);
+    assert(
+      logs.slice(warnAt).some((l) => l.includes("dto/ship.ts")),
+      `the warning must name the protected file; logs: ${JSON.stringify(logs)}`,
+    );
+    assert(
+      !logs.some((l) => l.includes("Pruned") || l.includes("- src/") ? l.includes("dto/ship.ts") : false),
+      "the protected file must not be listed as pruned",
+    );
+
+    // --force is consent to drop dev-owned GENERATED orphans — never a file
+    // rune cannot prove it owns.
+    assertEquals(await runSync([runePath, "--root", root, "--force"]), 0);
+    assert(await exists(hand), "--force must not delete a foreign file");
+  } finally {
+    console.log = origLog;
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 // Every file's mtime under root, as a stable fingerprint of "nothing was touched".
 async function mtimes(root: string): Promise<string> {
   const out: string[] = [];

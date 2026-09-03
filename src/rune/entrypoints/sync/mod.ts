@@ -1,5 +1,6 @@
 import { basename, dirname, join, relative, resolve } from "#std/path";
 import {
+  isRuneGenerated,
   parseBarrelTarget,
   planCreateOnceGrowth,
   planSync,
@@ -241,9 +242,37 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
   const blocked = parsed.force
     ? []
     : plan.toPrune.filter((p) => ownedSet.has(p));
-  const deletable = parsed.force
+  const forceGated = parsed.force
     ? plan.toPrune
     : plan.toPrune.filter((p) => !ownedSet.has(p));
+
+  // Honest-ownership gate: sync deletes ONLY what it can PROVE it generated.
+  // A file-level orphan (dto/*.ts — the one slot that prunes without --force)
+  // whose header carries no rune generation banner is FOREIGN — hand-authored
+  // code parked in a rune-owned slot — and is warned about, never deleted, not
+  // even under --force (--force is consent to drop dev-owned GENERATED
+  // orphans, not files rune never wrote). Dir-level orphans stay governed by
+  // the dev-owned --force gate above: every dir slot is rune-scaffolded and
+  // banner-marked at creation, and the ownership proof is per-file.
+  const foreign: string[] = [];
+  const deletable: string[] = [];
+  for (const target of forceGated) {
+    let isFile = false;
+    try {
+      isFile = (await Deno.lstat(join(root, target))).isFile;
+    } catch {
+      // Missing/unreadable: fall through — the deletion loop reports the I/O
+      // error exactly as before.
+    }
+    if (isFile) {
+      const content = await readMaybe(join(root, target));
+      if (content === null || !isRuneGenerated(content)) {
+        foreign.push(target);
+        continue;
+      }
+    }
+    deletable.push(target);
+  }
 
   // Incremental create-once growth: when the spec GREW an existing module, the
   // preserved files may now owe members the fresh plan predicts — adapter/
@@ -387,6 +416,7 @@ export async function runSync(args: string[], written?: string[]): Promise<numbe
     ioErrors,
     grown,
     growthOwed,
+    foreign,
   );
 
   // The run-all gate: execute the composed app's walk and print the verdict
@@ -1291,6 +1321,7 @@ function report(
   ioErrors: string[],
   grown: { path: string; added: string[] }[] = [],
   growthOwed: string[] = [],
+  foreign: string[] = [],
 ): void {
   console.log(
     `${BOLD}sync ${relRune} (module: ${module})${
@@ -1338,13 +1369,20 @@ function report(
     );
     for (const p of blocked) console.log(`    ${YELLOW}? ${p}${RESET}`);
   }
+  if (foreign.length > 0) {
+    console.log(
+      `\n  ${YELLOW}Left ${foreign.length} foreign file(s) in place — in a rune-owned slot but not rune-generated (no generation header); delete by hand if truly orphaned:${RESET}`,
+    );
+    for (const p of foreign) console.log(`    ${YELLOW}? ${p}${RESET}`);
+  }
   if (ioErrors.length > 0) {
     console.log(`\n  ${RED}I/O errors:${RESET}`);
     for (const e of ioErrors) console.log(`    ${RED}! ${e}${RESET}`);
   }
   if (
     created.length === 0 && grown.length === 0 && growthOwed.length === 0 &&
-    pruned.length === 0 && blocked.length === 0 && ioErrors.length === 0
+    pruned.length === 0 && blocked.length === 0 && foreign.length === 0 &&
+    ioErrors.length === 0
   ) {
     console.log(`\n  ${CYAN}In sync — nothing to create or prune.${RESET}`);
   }
