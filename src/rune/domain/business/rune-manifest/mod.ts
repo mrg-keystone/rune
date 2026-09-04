@@ -1551,14 +1551,45 @@ function renderCoordinator(
   while (queue.length) producers.get(queue.shift()!)!.params.forEach(consider);
   // A whole-DTO param is the coordinator's own input DTO — pass the validated input that's
   // already in scope (`validInput`, or `input` when there's no seam), not `undefined as never`.
-  // A scalar param resolves to its hoisted producer local when produced mid-flow,
-  // else to the validated input field (the residual `input.<p>` covers an unbound
-  // param — a spec error left visible, unchanged from before).
-  const scalarRef = (p: string): string =>
-    !inputFields.has(p) && hoisted.has(p) ? p : `${inputRef}.${p}`;
-  const stepArgs = (params: string[]): string =>
+  // A scalar param binds to a producer that ACTUALLY carries the field: the validated input
+  // when the input DTO DECLARES it (echoes-are-not-producers — the request's own value is
+  // authoritative), else a hoisted producer local when produced mid-flow, else the NEAREST
+  // prior read whose output DTO declares the field (the 2026-09-04 wrong-DTO bug: a chain
+  // `kv:a.get(x): ADto` then `kv:b.get(y): BDto` with `y` a field of ADto but not of the
+  // request DTO emitted `validInput.y` — TS2339, whole-tree `deno check` break). A field NO
+  // producer carries is a spec gap: emitted as a typed TODO (`undefined as never`) so the
+  // gap stays visible without breaking the tree's type-check. An opaque input (no [DTO]
+  // decl to consult) keeps the residual `inputRef.<p>`, unchanged from before.
+  const priorReadRef = (
+    p: string,
+    prior: readonly { name: string; type: string }[],
+  ): string | null => {
+    for (let i = prior.length - 1; i >= 0; i--) {
+      const d = types.dtoByName.get(prior[i].type);
+      if (d && dtoFieldNames(d).includes(p)) return `${prior[i].name}.${p}`;
+    }
+    return null;
+  };
+  const scalarRef = (
+    p: string,
+    prior: readonly { name: string; type: string }[],
+  ): string => {
+    if (inputFields.has(p)) return `${inputRef}.${p}`;
+    if (hoisted.has(p)) return p;
+    const chained = priorReadRef(p, prior);
+    if (chained) return chained;
+    if (inputDto) {
+      return `undefined as never /* TODO(spec): no producer carries '${p}' — ` +
+        `not on ${req.input} or a prior read output */`;
+    }
+    return `${inputRef}.${p}`;
+  };
+  const stepArgs = (
+    params: string[],
+    prior: readonly { name: string; type: string }[] = [],
+  ): string =>
     params
-      .map((p) => /Dto$/.test(p) ? inputRef : scalarRef(p))
+      .map((p) => /Dto$/.test(p) ? inputRef : scalarRef(p, prior))
       .join(", ");
   // ---- post-core argument resolution (the shared name-resolution table) ----
   //
@@ -1747,8 +1778,12 @@ function renderCoordinator(
   if (readVars.length) {
     B.push("");
     B.push("  // reads — load inputs through the data adapters (validated at the seam)");
-    for (const r of readVars) {
-      const call = `await ${camel(r.noun)}Data.${r.verb}(${stepArgs(r.params)})`;
+    for (const [i, r] of readVars.entries()) {
+      // a read may chain a field off any read already emitted ABOVE it — never
+      // off itself or a later one (spec order is the availability order).
+      const call = `await ${camel(r.noun)}Data.${r.verb}(${
+        stepArgs(r.params, readVars.slice(0, i))
+      })`;
       const seam = seamFor(r.type, typMap);
       const ctx = `"${r.noun}.${r.verb}"`;
       if (seam.kind === "dto") {

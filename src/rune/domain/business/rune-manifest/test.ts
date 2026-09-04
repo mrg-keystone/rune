@@ -1460,6 +1460,120 @@ Deno.test("planManifest — chained post-core mutations feed each other's result
   assertEquals(c.includes("out."), false);
 });
 
+// Bug report 2026-09-04 (infra) — rune sync chained a same-named field off the
+// WRONG DTO. With two chained kv reads where the SECOND read's argument names a
+// field of the FIRST read's OUTPUT DTO and NOT of the request input, sync
+// emitted `validInput.memberId` anyway — but VerifyUserDto declares no memberId
+// (TS2339; plain `deno check` broke for the whole tree on a fresh scaffold).
+// A read argument must bind to a producer that ACTUALLY carries the field:
+// the nearest prior read whose output DTO declares it.
+Deno.test("planManifest — read arg missing on the input DTO chains from the prior read that carries it", () => {
+  const rune = `[MOD] access
+
+[REQ] user.verify(VerifyUserDto): MemberDto
+    kv:credential.getByEmail(appId, email): CredentialDto
+      unauthorized
+    kv:member.get(memberId): MemberDto
+      not-found
+    [RET] MemberDto
+
+[DTO] VerifyUserDto: appId, email
+    input to check an app user — carries NO memberId
+[DTO] CredentialDto: memberId, appId, email
+    the stored credential — the only pre-core producer of memberId
+[DTO] MemberDto: memberId, appId
+    the member
+[TYP] appId: string
+    app id
+[TYP] email: string
+    email address
+[TYP] memberId: string
+    member id`;
+  const plan = planManifest("specs/access.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const c = plan.toCreate.find((f) => f.path.endsWith("user-verify/mod.ts"))!.content;
+  // the first read is input-fed…
+  assertStringIncludes(
+    c,
+    '  const credentialGetByEmail = assert(CredentialDto, await credentialData.getByEmail(validInput.appId, validInput.email), "credential.getByEmail");',
+  );
+  // …and the second chains off ITS output — the DTO that actually declares
+  // memberId — never off the input DTO that doesn't (the TS2339 shape).
+  assertStringIncludes(
+    c,
+    '  const memberGet = assert(MemberDto, await memberData.get(credentialGetByEmail.memberId), "member.get");',
+  );
+  assertEquals(c.includes("validInput.memberId"), false);
+});
+
+// Companion to the wrong-DTO fix: when SEVERAL prior read outputs declare the
+// field, the NEAREST one wins; a field carried by the input DTO still resolves
+// from the validated input (echoes-are-not-producers — the request's own value
+// is authoritative, and only previously-broken output changes shape).
+Deno.test("planManifest — nearest prior read wins; input-declared fields stay on validInput", () => {
+  const rune = `[MOD] graph
+
+[REQ] edge.link(LinkDto): EdgeDto
+    kv:alpha.get(alphaId): NodeDto
+      not-found
+    kv:beta.get(betaId): NodeDto
+      not-found
+    kv:edge.get(nodeId): EdgeDto
+      not-found
+    [RET] EdgeDto
+
+[DTO] LinkDto: alphaId, betaId
+    link request — carries NO nodeId
+[DTO] NodeDto: nodeId, alphaId
+    a node — both reads output one; the NEAREST must feed the edge read
+[DTO] EdgeDto: nodeId
+    the edge
+[TYP] alphaId: string
+    alpha id
+[TYP] betaId: string
+    beta id
+[TYP] nodeId: string
+    node id`;
+  const plan = planManifest("specs/graph.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const c = plan.toCreate.find((f) => f.path.endsWith("edge-link/mod.ts"))!.content;
+  // alphaId/betaId are input fields: resolved from validInput even though
+  // NodeDto also declares alphaId (input wins for input-declared fields).
+  assertStringIncludes(c, "await alphaData.get(validInput.alphaId)");
+  assertStringIncludes(c, "await betaData.get(validInput.betaId)");
+  // nodeId is not on LinkDto; BOTH prior reads carry it — the nearest wins.
+  assertStringIncludes(c, "await edgeData.get(betaGet.nodeId)");
+  assertEquals(c.includes("validInput.nodeId"), false);
+});
+
+// Companion to the wrong-DTO fix: a read argument NO producer carries (not the
+// input DTO, no hoisted pure producer, no prior read output) is a spec gap —
+// emitted as a visible typed TODO instead of a `validInput.<p>` TS2339 that
+// breaks `deno check` for the entire tree.
+Deno.test("planManifest — read arg nobody produces emits a typed TODO, not a type break", () => {
+  const rune = `[MOD] ghosts
+
+[REQ] thing.probe(ProbeDto): ThingDto
+    kv:thing.get(ghostId): ThingDto
+      not-found
+    [RET] ThingDto
+
+[DTO] ProbeDto: label
+    probe input — carries NO ghostId
+[DTO] ThingDto: label
+    the thing — does not carry ghostId either
+[TYP] label: string
+    a label
+[TYP] ghostId: string
+    an id nobody produces`;
+  const plan = planManifest("specs/ghosts.rune", rune, new Set());
+  assertEquals(plan.errors, []);
+  const c = plan.toCreate.find((f) => f.path.endsWith("thing-probe/mod.ts"))!.content;
+  // honest and type-safe: the gap is visible, the tree still checks.
+  assertStringIncludes(c, "undefined as never /* TODO(spec): no producer carries 'ghostId'");
+  assertEquals(c.includes("validInput.ghostId"), false);
+});
+
 // Bug report 2026-06-14 (Datrix) #2: a [REQ] whose noun has no instance steps
 // (boundary-only / [RET] / pure namespace) still imported + `new`ed a
 // business/<noun>/mod.ts that codegen never generates (business modules come
